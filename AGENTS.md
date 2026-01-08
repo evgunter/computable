@@ -1,0 +1,8 @@
+- Code quality is very important. Do not compromise on quality to deliver a result--if you don't know a good way to do something, ask. Also, whenever you need to make an architectural decision, come up with a few ideas and ask for feedback before implementing anything.
+- This project is in Rust. Always write Rust code unless explicitly asked.
+- It is fine to finish only part of a task. It is far more important to accurately represent your progress than to succeed.
+- Commit frequently and in general use git operations to your advantage (e.g. by reverting commits rather than manually undoing changes).
+- Don't make changes to the code that aren't necessary for the current task. If you see something that you think should be changed but isn't in scope for the current task, just put a TODO comment there.
+- Reuse code and use external dependencies heavily. Before implementing something, make sure that it doesn't already exist in the codebase, and consider if there's a library that can be imported instead of implementing it yourself. We want to be able to maintain the minimum amount of code that gets the job done, even if that means introducing dependencies. If you don't know of a library but think one might be plausible, search the web. (I'm even open to using random GitHub projects, but run anything that's not a well-established library by me first so I can check if it's likely to be reliable.)
+- Use the power of the type system to constrain your code and provide some assurance of correctness. If some required property can't be guaranteed by the type system, it should be runtime checked (i.e. explode if it fails) and should have a corresponding unit test.
+- To reiterate: code correctness and quality is the most important concern here.

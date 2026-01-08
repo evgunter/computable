@@ -1,0 +1,34 @@
+# goal
+
+this project will define computable numbers in a way that is suitable for performing reasonably efficient operations with guarantees of correctness.
+
+# formalism
+
+we represent a computable number in the following way.
+
+first, definitions:
+- let $S$ be the set of finite binary strings
+- let $D = S \times \mathbb{Z}$ be the set of binary numbers: for binary number $(s, n)$, the number represented is $1.s \times 2^n$
+- let $B = \{(x, y) \in D \times D \, | \, x \leq y\}$ be the set of valid bounds
+
+then, a computable number is represented as an element of $(X, X \to B, X \to X)$, where:
+- $x \in X$ is the 'current state': some information representing the status of the computation, which can be any type.
+- a function $b : X \to B$ which calculates the bounds based on the current state. for convenience, we use $b_\ell$ and $b_u$ to denote the projections onto the lower and upper bounds. so, if $c \in \mathbb{R}$ is the true value of the computable number being represented, then $b_\ell \leq c \leq b_u$.
+- a function $f : X \to X$ which takes the state $x$ and returns a new state for which at least one of the calculated lower and upper bounds is tighter than before (if they were not already identical), i.e. $b_\ell(f(x)) > b_\ell(x) \text{ or } b_u(f(x)) < b_u(x) \text{ or } b_\ell(x) = b_u(x)$.
+
+for example, $\sqrt{2}$ could be represented as a computable number by setting $x$ to just be the current lower and upper bound (e.g. $x$ could be initialized as $(0, 2)$), with an $f$ which takes the midpoint between the lower and upper bounds, squares it, compares it to 2, and depending on the result replaces the upper or lower bound with the former midpoint.
+
+note that this definition does not represent *only* computable numbers--there's no guarantee that the upper and lower bounds actually converge. it's the responsibility of whatever constructs the computable number to ensure that repeated applications of $f$ actually make the bounds converge! (maybe if we had an actual proof system we could require a proof that it does converge...)
+
+# features
+
+- there will be a function which takes a computable number $(x, b, f)$ and a precision $\epsilon$ and applies $f$ to $x$ until $b_u(f^n(x)) - b_\ell(f^n(x)) \leq \epsilon$ (where $n$ is the number of applications required).
+- there will be the ability to compose computable numbers with arithmetic operations. for example, given computable numbers $C_0 = (x_0, b_0, f_0)$ and $C_1 = (x_1, b_1, f_1)$, $$C_0 + C_1 = ((x_0, x_1), (x, y) \mapsto (b_{0\ell}(x) + b_{1\ell}(y), b_{0u}(x) + b_{1u}(y)), (x, y) \mapsto (f_0(x), f_1(y)))$$
+- there will be the ability to apply a function $g$ to computable numbers, if $g$ is supplied along with a function $G$ which computes a bound on $g$'s output based on bounds on its input such that the output bounds converge if the input bounds do. for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \mapsto (u^2, \ell^2)$ if $\ell,u \leq 0$, $(\ell, u) \mapsto (\ell^2, u^2)$ if $\ell,u \geq 0$, and $(\ell, u) \mapsto (0, \max(\ell^2, u^2))$ if $\ell \leq 0$ and $u \geq 0$; and $g((x, b, f)) = (x, G(b), f)$.
+
+# usage
+
+- all calculations on computable numbers should produce computable numbers as output
+- a computable number should only have its bounds refined when necessary, e.g. immediately before the final output or when required to satisfy conditions on the input of another function. for example:
+    - a program which graphs a computable number to the screen should refine the computable number to some $\epsilon$ smaller than the pixel size right before graphing
+    - a program which finds the (real) square root of a computable number and then does something with the result may refine that number until the lower bound is nonnegative (or the upper bound becomes negative and triggers an error). (it would also be permissible to defer the detection of this error until later, when the result is actually used.)
