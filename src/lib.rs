@@ -715,4 +715,20 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn computable_mul_combines_bounds_with_zero() {
+        let left = interval_computable(-2, 3);
+        let right = interval_computable(-1, 4);
+
+        let product = left.mul(right);
+        let bounds = product.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            OrderedPair::new(
+                bin(-8, 0),
+                bin(12, 0)
+            )
+        );
+    }
 }
