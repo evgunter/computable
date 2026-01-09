@@ -493,7 +493,7 @@ where
         impl Fn(State<X, BigInt>) -> State<X, BigInt>,
     > {
         self.with_state(
-            BigInt::zero(),
+            BigInt::zero(), // initial reciprocal precision in bits
             |inner_state, precision_bits, base_bounds| {
                 let existing = base_bounds(inner_state)?;
                 reciprocal_bounds(&existing, precision_bits)
