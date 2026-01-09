@@ -1,3 +1,17 @@
+#![warn(
+    clippy::shadow_reuse,
+    clippy::shadow_same,
+    clippy::shadow_unrelated,
+    clippy::dbg_macro,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr,
+    clippy::print_stdout,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used,
+)]
+
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -9,7 +23,7 @@ mod ordered_pair;
 
 pub use ordered_pair::{ordered_pair_checked, OrderedPair, OrderedPairError};
 
-/// Exponent type for `Binary`; alias to keep the representation flexible.
+/// exponent type for `Binary`; alias to keep the representation flexible.
 pub type Exponent = i64;
 
 impl OrderedPair<Exponent> {
@@ -64,7 +78,7 @@ impl From<BinaryError> for ExtendedBinaryError {
     }
 }
 
-/// Exact binary number represented as `mantissa * 2^exponent`.
+/// exact binary number represented as `mantissa * 2^exponent`.
 /// `mantissa` is normalized to be odd unless the value is zero.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binary {
@@ -477,7 +491,11 @@ where
         Computable::new(state, bounds, refine)
     }
 
-    pub fn with_state<S, B2, F2>(
+    /// represents application of a function to a computable number.
+    /// to apply a function, we sadly require more information than the function itself (at least practically):
+    /// we need to know how it transforms bounds.
+    /// the function being applied may also introduce new state, which needs to be tracked through refinements.
+    pub fn apply_with<S, B2, F2>(
         self,
         extra_state: S,
         bounds: B2,
@@ -497,11 +515,11 @@ where
             refine: base_refine,
         } = self;
 
-        let bounds = move |state: &State<X, S>| -> Result<Bounds, ComputableError> {
+        let derived_bounds = move |state: &State<X, S>| -> Result<Bounds, ComputableError> {
             bounds(&state.inner_state, &state.extra_state, &base_bounds)
         };
 
-        let refine = move |state: State<X, S>| -> State<X, S> {
+        let derived_refine = move |state: State<X, S>| -> State<X, S> {
             let (inner_state, extra_state) =
                 refine(state.inner_state, state.extra_state, &base_refine);
             State {
@@ -515,8 +533,8 @@ where
                 inner_state: state,
                 extra_state,
             },
-            bounds,
-            refine,
+            derived_bounds,
+            derived_refine,
         )
     }
 
@@ -527,12 +545,13 @@ where
         impl Fn(&State<X, BigInt>) -> Result<Bounds, ComputableError>,
         impl Fn(State<X, BigInt>) -> State<X, BigInt>,
     > {
-        self.with_state(
+        self.apply_with(
             BigInt::zero(), // initial reciprocal precision in bits
             |inner_state, precision_bits, base_bounds| {
                 let existing = base_bounds(inner_state)?;
                 reciprocal_bounds(&existing, precision_bits)
             },
+            // TODO: make this jump to a greater precision bits based on the width of the bounds
             |inner_state, precision_bits, base_refine| {
                 let inner_state = base_refine(inner_state);
                 let precision_bits = precision_bits + BigInt::one();
@@ -549,7 +568,7 @@ where
         B2: Fn(&Y) -> Result<Bounds, ComputableError>,
         F2: Fn(Y) -> Y,
     {
-        // Note: we don't implement std::ops::Add here because the composed type uses `impl Fn`
+        // note: we don't implement std::ops::Add here because the composed type uses `impl Fn`
         // in its return signature, which cannot be named for an associated Output type.
         let Computable {
             state: left_state,

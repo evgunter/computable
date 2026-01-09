@@ -46,7 +46,7 @@ sadly, the implementation cannot exactly realize the formalism.
 - to apply a function $g$ to computable numbers, you must define a function $G$ which computes a bound on $g$'s output based on bounds on its input such that the output bounds converge if the input bounds do.
 Then $g((x, b, f)) = (x, G(b), f)$.
 for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \mapsto (u^2, \ell^2)$ if $\ell,u \leq 0$, $(\ell, u) \mapsto (\ell^2, u^2)$ if $\ell,u \geq 0$, and $(\ell, u) \mapsto (0, \max(\ell^2, u^2))$ if $\ell \leq 0$ and $u \geq 0$. 
-`Computable::inv` demonstrates this pattern; `Computable::with_state` is a useful related function.
+`Computable::inv` demonstrates this pattern; `Computable::apply_with` is a useful related function.
 
 ## design norms
 
