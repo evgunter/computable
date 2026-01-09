@@ -172,4 +172,25 @@ mod tests {
         let result = ordered_pair_checked(lower, upper);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn binary_ordering_handles_large_exponent_gaps() {
+        let huge_pos = Binary::new(BigInt::from(1), Exponent::MAX).expect("binary should normalize");
+        let tiny_pos = Binary::new(BigInt::from(1), Exponent::MIN).expect("binary should normalize");
+        assert!(huge_pos > tiny_pos);
+
+        let huge_neg = Binary::new(BigInt::from(-1), Exponent::MAX).expect("binary should normalize");
+        assert!(huge_neg < tiny_pos);
+    }
+
+    #[test]
+    fn binary_ordering_overflow_path_uses_sign() {
+        let huge_pos = Binary::new(BigInt::from(1), Exponent::MAX).expect("binary should normalize");
+        let tiny_neg = Binary::new(BigInt::from(-1), Exponent::MIN).expect("binary should normalize");
+        assert!(huge_pos > tiny_neg);
+
+        let huge_neg = Binary::new(BigInt::from(-1), Exponent::MAX).expect("binary should normalize");
+        let tiny_pos = Binary::new(BigInt::from(1), Exponent::MIN).expect("binary should normalize");
+        assert!(huge_neg < tiny_pos);
+    }
 }
