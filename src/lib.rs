@@ -353,6 +353,12 @@ pub struct Computable<X, B, F> {
     refine: F,
 }
 
+#[derive(Clone, Debug)]
+pub struct State<X, S> {
+    inner_state: X,
+    extra_state: S,
+}
+
 impl<X, B, F> Computable<X, B, F>
 where
     B: Fn(&X) -> Result<Bounds, ComputableError>,
@@ -436,34 +442,67 @@ where
         Computable::new(state, bounds, refine)
     }
 
-    pub fn inv(self) -> Computable<InvState<X>, impl Fn(&InvState<X>) -> Result<Bounds, ComputableError>, impl Fn(InvState<X>) -> InvState<X>> {
+    pub fn with_state<S, B2, F2>(
+        self,
+        extra_state: S,
+        bounds: B2,
+        refine: F2,
+    ) -> Computable<
+        State<X, S>,
+        impl Fn(&State<X, S>) -> Result<Bounds, ComputableError>,
+        impl Fn(State<X, S>) -> State<X, S>,
+    >
+    where
+        B2: Fn(&X, &S, &B) -> Result<Bounds, ComputableError>,
+        F2: Fn(X, S, &F) -> (X, S),
+    {
         let Computable {
             state,
-            bounds,
-            refine,
+            bounds: base_bounds,
+            refine: base_refine,
         } = self;
 
-        let bounds = move |state: &InvState<X>| -> Result<Bounds, ComputableError> {
-            let existing = (bounds)(&state.inner_state)?;
-            reciprocal_bounds(&existing, &state.precision_bits)
+        let bounds = move |state: &State<X, S>| -> Result<Bounds, ComputableError> {
+            bounds(&state.inner_state, &state.extra_state, &base_bounds)
         };
 
-        let refine = move |state: InvState<X>| -> InvState<X> {
-            let inner_state = (refine)(state.inner_state);
-            let precision_bits = state.precision_bits + BigInt::one();
-            InvState {
+        let refine = move |state: State<X, S>| -> State<X, S> {
+            let (inner_state, extra_state) =
+                refine(state.inner_state, state.extra_state, &base_refine);
+            State {
                 inner_state,
-                precision_bits,
+                extra_state,
             }
         };
 
         Computable::new(
-            InvState {
+            State {
                 inner_state: state,
-                precision_bits: BigInt::zero(),
+                extra_state,
             },
             bounds,
             refine,
+        )
+    }
+
+    pub fn inv(
+        self,
+    ) -> Computable<
+        State<X, BigInt>,
+        impl Fn(&State<X, BigInt>) -> Result<Bounds, ComputableError>,
+        impl Fn(State<X, BigInt>) -> State<X, BigInt>,
+    > {
+        self.with_state(
+            BigInt::zero(),
+            |inner_state, precision_bits, base_bounds| {
+                let existing = base_bounds(inner_state)?;
+                reciprocal_bounds(&existing, precision_bits)
+            },
+            |inner_state, precision_bits, base_refine| {
+                let inner_state = base_refine(inner_state);
+                let precision_bits = precision_bits + BigInt::one();
+                (inner_state, precision_bits)
+            },
         )
     }
 
@@ -575,9 +614,9 @@ where
         self,
         other: Computable<Y, B2, F2>,
     ) -> Computable<
-        (X, InvState<Y>),
-        impl Fn(&(X, InvState<Y>)) -> Result<Bounds, ComputableError>,
-        impl Fn((X, InvState<Y>)) -> (X, InvState<Y>),
+        (X, State<Y, BigInt>),
+        impl Fn(&(X, State<Y, BigInt>)) -> Result<Bounds, ComputableError>,
+        impl Fn((X, State<Y, BigInt>)) -> (X, State<Y, BigInt>),
     >
     where
         B2: Fn(&Y) -> Result<Bounds, ComputableError>,
@@ -592,12 +631,6 @@ where
 pub const DEFAULT_INV_MAX_REFINES: usize = 64;
 #[cfg(not(debug_assertions))]
 pub const DEFAULT_INV_MAX_REFINES: usize = 4096;
-
-#[derive(Clone, Debug)]
-pub struct InvState<X> {
-    inner_state: X,
-    precision_bits: BigInt,
-}
 
 #[derive(Clone, Copy, Debug)]
 enum ReciprocalRounding {
