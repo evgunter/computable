@@ -36,5 +36,5 @@ for example, given computable numbers $C_0 = (x_0, b_0, f_0)$ and $C_1 = (x_1, b
 
 # norms
 
-everything is designed not to panic, and to instead return Result types.
-we avoid interior mutability whenever possible.
+- everything is designed not to panic, and to instead return Result types.
+- we avoid interior mutability whenever possible.
