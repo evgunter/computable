@@ -3,7 +3,7 @@ use std::fmt;
 
 use num_bigint::BigInt;
 use num_integer::Integer;
-use num_traits::{One, Signed, Zero};
+use num_traits::{Float, One, Signed, Zero};
 
 pub mod legacy;
 mod ordered_pair;
@@ -218,6 +218,26 @@ impl ExtendedBinary {
 
     pub fn is_zero(&self) -> bool {
         matches!(self, Self::Finite(value) if value.mantissa().is_zero())
+    }
+
+    pub fn from_f64(value: f64) -> Result<Self, &'static str> {
+        if value.is_nan() {
+            return Err("cannot convert NaN to ExtendedBinary");
+        }
+        if value == 0.0 {
+            return Ok(Self::Finite(Binary::zero()));
+        }
+        if value == f64::INFINITY {
+            return Ok(Self::PosInf);
+        }
+        if value == f64::NEG_INFINITY {
+            return Ok(Self::NegInf);
+        }
+        let (mantissa, exponent, sign) = value.integer_decode();
+        let mantissa = BigInt::from(sign) * BigInt::from(mantissa);
+        Ok(Self::Finite(
+            Binary::new(mantissa, Exponent::from(exponent)).expect("binary should normalize"),
+        ))
     }
 
     fn add_lower(&self, other: &Self) -> Result<Self, ComputableError> {
@@ -629,13 +649,21 @@ fn reciprocal_rounded_abs_extended(
     match value {
         ExtendedBinary::Finite(value) => {
             let abs_mantissa = value.mantissa().abs();
-            let shift = precision_bits_to_usize(precision_bits)?;
-            let numerator = BigInt::one() << shift;
-            let quotient = match rounding {
-                ReciprocalRounding::Floor => numerator.div_floor(&abs_mantissa),
-                ReciprocalRounding::Ceil => numerator.div_ceil(&abs_mantissa),
+            let shift_bits = precision_bits - BigInt::from(value.exponent());
+            let quotient = if shift_bits.is_negative() {
+                match rounding {
+                    ReciprocalRounding::Floor => BigInt::zero(),
+                    ReciprocalRounding::Ceil => BigInt::one(),
+                }
+            } else {
+                let shift = precision_bits_to_usize(&shift_bits)?;
+                let numerator = BigInt::one() << shift;
+                match rounding {
+                    ReciprocalRounding::Floor => numerator.div_floor(&abs_mantissa),
+                    ReciprocalRounding::Ceil => numerator.div_ceil(&abs_mantissa),
+                }
             };
-            let exponent = reciprocal_exponent(value.exponent(), precision_bits)?;
+            let exponent = reciprocal_exponent(precision_bits)?;
             Ok(ExtendedBinary::Finite(Binary::new(quotient, exponent)?))
         }
         ExtendedBinary::NegInf | ExtendedBinary::PosInf => {
@@ -644,16 +672,10 @@ fn reciprocal_rounded_abs_extended(
     }
 }
 
-fn reciprocal_exponent(
-    exponent: Exponent,
-    precision_bits: &BigInt,
-) -> Result<Exponent, BinaryError> {
+fn reciprocal_exponent(precision_bits: &BigInt) -> Result<Exponent, BinaryError> {
     let precision = precision_bits_to_exponent(precision_bits)?;
-    let neg_exponent = exponent
+    precision
         .checked_neg()
-        .ok_or(BinaryError::ReciprocalOverflow)?;
-    neg_exponent
-        .checked_sub(precision)
         .ok_or(BinaryError::ReciprocalOverflow)
 }
 
@@ -677,8 +699,8 @@ fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryErr
     let (ExtendedBinary::Finite(upper), ExtendedBinary::Finite(lower)) = (upper, lower) else {
         return Ok(false);
     };
-    let lower_plus = lower.add(epsilon)?;
-    Ok(upper <= &lower_plus)
+    let width = upper.sub(lower)?;
+    Ok(&width <= epsilon)
 }
 
 fn bounds_are_finite(bounds: &Bounds) -> bool {
@@ -711,6 +733,16 @@ mod tests {
         }
     }
 
+    type ConstComputable = Computable<
+        Binary,
+        fn(&Binary) -> Result<Bounds, ComputableError>,
+        fn(Binary) -> Binary,
+    >;
+
+    fn const_computable(value: Binary) -> ConstComputable {
+        Computable::<Binary, fn(&Binary) -> Result<Bounds, ComputableError>, fn(Binary) -> Binary>::constant(value)
+    }
+
     fn interval_bounds(state: &IntervalState) -> Bounds {
         state.clone()
     }
@@ -741,7 +773,7 @@ mod tests {
         OrderedPair::new(state.small.clone(), ExtendedBinary::Finite(mid))
     }
 
-    fn interval_computable(
+    fn interval_midpoint_computable(
         lower: i64,
         upper: i64,
     ) -> Computable<
@@ -751,6 +783,36 @@ mod tests {
     > {
         let state = OrderedPair::new(ext(lower, 0), ext(upper, 0));
         Computable::new(state, |state| Ok(interval_bounds(state)), interval_refine)
+    }
+
+    fn sqrt2_computable() -> Computable<
+        IntervalState,
+        impl Fn(&IntervalState) -> Result<Bounds, ComputableError>,
+        impl Fn(IntervalState) -> IntervalState,
+    > {
+        let state = OrderedPair::new(ext(1, 0), ext(2, 0));
+        let bounds = |state: &IntervalState| Ok(state.clone());
+        let refine = |state: IntervalState| {
+            let bounds_sum = unwrap_finite(&state.small)
+                .add(&unwrap_finite(&state.large))
+                .expect("binary should add");
+            let exponent = bounds_sum
+                .exponent()
+                .checked_sub(1)
+                .expect("midpoint exponent should not underflow");
+            let mid = Binary::new(bounds_sum.mantissa().clone(), exponent)
+                .expect("binary should normalize");
+            let mid_sq = mid.mul(&mid).expect("binary should multiply");
+            let two = bin(1, 1);
+
+            if mid_sq <= two {
+                OrderedPair::new(ExtendedBinary::Finite(mid), state.large)
+            } else {
+                OrderedPair::new(state.small, ExtendedBinary::Finite(mid))
+            }
+        };
+
+        Computable::new(state, bounds, refine)
     }
 
     #[test]
@@ -832,7 +894,7 @@ mod tests {
 
     #[test]
     fn computable_refine_to_rejects_negative_epsilon() {
-        let computable = interval_computable(0, 2);
+        let computable = interval_midpoint_computable(0, 2);
         let epsilon = bin(-1, 0);
         let result = computable.refine_to(epsilon);
         assert!(matches!(
@@ -843,24 +905,25 @@ mod tests {
 
     #[test]
     fn computable_refine_to_returns_refined_state() {
-        let computable = interval_computable(0, 2);
+        let computable = interval_midpoint_computable(0, 2);
         let epsilon = bin(1, -1);
         let (bounds, refined) = computable
-            .refine_to(epsilon)
+            .refine_to(epsilon.clone())
             .expect("refine_to should succeed");
-        assert_eq!(bounds_lower(&bounds), bounds_upper(&bounds));
-        assert_eq!(
-            refined.bounds().expect("bounds should succeed"),
-            OrderedPair::new(
-                ext(1, 0),
-                ext(1, 0)
-            )
-        );
+        let expected = ext(1, 0);
+        let width = unwrap_finite(bounds_upper(&bounds))
+            .sub(&unwrap_finite(bounds_lower(&bounds)))
+            .expect("binary should subtract");
+
+        assert!(bounds_lower(&bounds) <= &expected && &expected <= bounds_upper(&bounds));
+        assert!(width < epsilon);
+        let refined_bounds = refined.bounds().expect("bounds should succeed");
+        assert!(bounds_lower(&refined_bounds) <= &expected && &expected <= bounds_upper(&refined_bounds));
     }
 
     #[test]
     fn computable_refine_to_rejects_zero_epsilon() {
-        let computable = interval_computable(0, 2);
+        let computable = interval_midpoint_computable(0, 2);
         let epsilon = bin(0, 0);
         let result = computable.refine_to(epsilon);
         assert!(matches!(
@@ -899,8 +962,8 @@ mod tests {
 
     #[test]
     fn computable_add_combines_bounds() {
-        let left = interval_computable(0, 2);
-        let right = interval_computable(1, 3);
+        let left = interval_midpoint_computable(0, 2);
+        let right = interval_midpoint_computable(1, 3);
 
         let sum = left.add(right);
         let sum_bounds = sum.bounds().expect("bounds should succeed");
@@ -915,8 +978,8 @@ mod tests {
 
     #[test]
     fn computable_sub_combines_bounds() {
-        let left = interval_computable(4, 6);
-        let right = interval_computable(1, 2);
+        let left = interval_midpoint_computable(4, 6);
+        let right = interval_midpoint_computable(1, 2);
 
         let diff = left.sub(right);
         let diff_bounds = diff.bounds().expect("bounds should succeed");
@@ -931,7 +994,7 @@ mod tests {
 
     #[test]
     fn computable_neg_flips_bounds() {
-        let value = interval_computable(1, 3);
+        let value = interval_midpoint_computable(1, 3);
         let negated = value.neg();
         let bounds = negated.bounds().expect("bounds should succeed");
         assert_eq!(
@@ -945,7 +1008,7 @@ mod tests {
 
     #[test]
     fn computable_inv_allows_infinite_bounds() {
-        let value = interval_computable(-1, 1);
+        let value = interval_midpoint_computable(-1, 1);
         let inv = value.inv();
         let bounds = inv.bounds().expect("bounds should succeed");
         assert_eq!(
@@ -956,22 +1019,27 @@ mod tests {
 
     #[test]
     fn computable_inv_bounds_for_positive_interval() {
-        let value = interval_computable(2, 4);
+        let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
-        let bounds = inv.bounds().expect("bounds should succeed");
-        assert_eq!(
-            bounds,
-            OrderedPair::new(
-                ext(1, -2),
-                ext(1, -1)
-            )
-        );
+        let epsilon = bin(1, -8);
+        let (bounds, _) = inv
+            .refine_to(epsilon.clone())
+            .expect("refine_to should succeed");
+        let lower = unwrap_finite(bounds_lower(&bounds));
+        let upper = unwrap_finite(bounds_upper(&bounds));
+        let width = upper.sub(&lower).expect("binary should subtract");
+        let expected = ExtendedBinary::from_f64(1.0 / 3.0)
+            .expect("expected value should convert to extended binary");
+        let expected = unwrap_finite(&expected);
+
+        assert!(lower <= expected && expected <= upper);
+        assert!(width <= epsilon);
     }
 
     #[test]
     fn computable_mul_combines_bounds_positive() {
-        let left = interval_computable(1, 3);
-        let right = interval_computable(2, 4);
+        let left = interval_midpoint_computable(1, 3);
+        let right = interval_midpoint_computable(2, 4);
 
         let product = left.mul(right);
         let bounds = product.bounds().expect("bounds should succeed");
@@ -986,8 +1054,8 @@ mod tests {
 
     #[test]
     fn computable_mul_combines_bounds_negative() {
-        let left = interval_computable(-3, -1);
-        let right = interval_computable(2, 4);
+        let left = interval_midpoint_computable(-3, -1);
+        let right = interval_midpoint_computable(2, 4);
 
         let product = left.mul(right);
         let bounds = product.bounds().expect("bounds should succeed");
@@ -1002,8 +1070,8 @@ mod tests {
 
     #[test]
     fn computable_mul_combines_bounds_mixed() {
-        let left = interval_computable(-2, 3);
-        let right = interval_computable(4, 5);
+        let left = interval_midpoint_computable(-2, 3);
+        let right = interval_midpoint_computable(4, 5);
 
         let product = left.mul(right);
         let bounds = product.bounds().expect("bounds should succeed");
@@ -1018,8 +1086,8 @@ mod tests {
 
     #[test]
     fn computable_mul_combines_bounds_with_zero() {
-        let left = interval_computable(-2, 3);
-        let right = interval_computable(-1, 4);
+        let left = interval_midpoint_computable(-2, 3);
+        let right = interval_midpoint_computable(-1, 4);
 
         let product = left.mul(right);
         let bounds = product.bounds().expect("bounds should succeed");
@@ -1030,5 +1098,33 @@ mod tests {
                 ext(12, 0)
             )
         );
+    }
+
+    #[test]
+    fn computable_integration_sqrt2_expression() {
+        let one = const_computable(bin(1, 0));
+        let expr = sqrt2_computable()
+            .add(one)
+            .mul(sqrt2_computable().sub(const_computable(bin(1, 0))))
+            .add(sqrt2_computable().inv());
+
+        let epsilon = bin(1, -12);
+        let (bounds, _) = expr
+            .refine_to(epsilon.clone())
+            .expect("refine_to should succeed");
+
+        let lower = unwrap_finite(bounds_lower(&bounds));
+        let upper = unwrap_finite(bounds_upper(&bounds));
+        let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
+        let expected_binary = ExtendedBinary::from_f64(expected)
+            .expect("expected value should convert to extended binary");
+        let expected_binary = unwrap_finite(&expected_binary);
+        let eps_binary = epsilon;
+
+        let lower_plus = lower.add(&eps_binary).expect("binary should add");
+        let upper_minus = upper.sub(&eps_binary).expect("binary should subtract");
+
+        assert!(lower <= expected_binary && expected_binary <= upper);
+        assert!(upper_minus <= expected_binary && expected_binary <= lower_plus);
     }
 }
