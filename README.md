@@ -20,21 +20,35 @@ for example, $\sqrt{2}$ could be represented as a computable number by setting $
 
 note that this definition does not represent *only* computable numbers--there's no guarantee that the upper and lower bounds actually converge. it's the responsibility of whatever constructs the computable number to ensure that repeated applications of $f$ actually make the bounds converge! (maybe if we had an actual proof system we could require a proof that it does converge...)
 
+there are a few ways the implementation diverges from this abstraction; see [deviations from the formalism](#deviations-from-the-formalism) below.
+
 # features
 
 - there is a function (`Computable::refine_to`) which takes a computable number $(x, b, f)$ and a precision $\epsilon$ and applies $f$ to $x$ until $b_u(f^n(x)) - b_\ell(f^n(x)) \leq \epsilon$ (where $n$ is the number of applications required).
 - computable numbers may be composed using arithmetic operations via `Computable::add`, `Computable::sub`, `Computable::mul`, `Computable::div`, `Computable::neg`, and `Computable::inv`.
 for example, given computable numbers $C_0 = (x_0, b_0, f_0)$ and $C_1 = (x_1, b_1, f_1)$, $$C_0 + C_1 = ((x_0, x_1), (x, y) \mapsto (b_{0\ell}(x) + b_{1\ell}(y), b_{0u}(x) + b_{1u}(y)), (x, y) \mapsto (f_0(x), f_1(y)))$$
-- there will be the ability to apply a function $g$ to computable numbers, if $g$ is supplied along with a function $G$ which computes a bound on $g$'s output based on bounds on its input such that the output bounds converge if the input bounds do. for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \mapsto (u^2, \ell^2)$ if $\ell,u \leq 0$, $(\ell, u) \mapsto (\ell^2, u^2)$ if $\ell,u \geq 0$, and $(\ell, u) \mapsto (0, \max(\ell^2, u^2))$ if $\ell \leq 0$ and $u \geq 0$; and $g((x, b, f)) = (x, G(b), f)$.
 
-# usage
+# deviations from the formalism
+
+sadly, the implementation cannot exactly realize the formalism.
+
+- many operations are fallible: bounds and refinement functions return `Result` rather than only the types specified above.
+- refinement is bounded: `Computable::refine_to` stops after a maximum number of iterations and returns an error instead of looping forever. note that default iteration limits differ by build: debug builds use a smaller max to catch issues quickly, while release builds allow more refinements for accuracy.
+
+# norms
+
+## usage norms
 
 - all calculations on computable numbers should produce computable numbers as output
 - a computable number should only have its bounds refined when necessary, e.g. immediately before the final output or when required to satisfy conditions on the input of another function. for example:
     - a program which graphs a computable number to the screen should refine the computable number to some $\epsilon$ smaller than the pixel size right before graphing
     - a program which finds the (real) square root of a computable number and then does something with the result may refine that number until the lower bound is nonnegative (or the upper bound becomes negative and triggers an error). (it would also be permissible to defer the detection of this error until later, when the result is actually used.)
+- to apply a function $g$ to computable numbers, you must define a function $G$ which computes a bound on $g$'s output based on bounds on its input such that the output bounds converge if the input bounds do.
+Then $g((x, b, f)) = (x, G(b), f)$.
+for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \mapsto (u^2, \ell^2)$ if $\ell,u \leq 0$, $(\ell, u) \mapsto (\ell^2, u^2)$ if $\ell,u \geq 0$, and $(\ell, u) \mapsto (0, \max(\ell^2, u^2))$ if $\ell \leq 0$ and $u \geq 0$. 
+`Computable::inv` demonstrates this pattern; `Computable::with_state` is a useful related function.
 
-# norms
+## design norms
 
-- everything is designed not to panic, and to instead return Result types.
+- everything is designed not to panic, and to instead return `Result`.
 - we avoid interior mutability whenever possible.
