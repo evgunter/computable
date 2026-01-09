@@ -8,7 +8,8 @@ we represent a computable number in the following way.
 
 first, definitions:
 - let $D = \mathbb{Z} \times \mathbb{Z}$ be the set of binary numbers: for binary number $(m, e)$, the number represented is $m \times 2^e$
-- let $B = \{(x, y) \in D \times D \, | \, x \leq y\}$ be the set of valid bounds
+- let $D_\infty = D \cup \{-\infty, +\infty\}$ be the set of extended binary bounds
+- let $B = \{(x, y) \in D_\infty \times D_\infty \, | \, x \leq y\}$ be the set of valid bounds
 
 then, a computable number is represented as an element of $(X, X \to B, X \to X)$, where:
 - $x \in X$ is the 'current state': some information representing the status of the computation, which can be any type.

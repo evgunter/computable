@@ -3,8 +3,9 @@ use std::fmt;
 
 use num_bigint::BigInt;
 use num_integer::Integer;
-use num_traits::{Signed, Zero};
+use num_traits::{One, Signed, Zero};
 
+pub mod legacy;
 mod ordered_pair;
 
 pub use ordered_pair::{ordered_pair_checked, OrderedPair, OrderedPairError};
@@ -25,6 +26,7 @@ pub enum BinaryError {
     ExponentOverflow,
     ShiftOverflow,
     MultiplicationOverflow,
+    ReciprocalOverflow,
 }
 
 impl fmt::Display for BinaryError {
@@ -33,6 +35,7 @@ impl fmt::Display for BinaryError {
             Self::ExponentOverflow => write!(f, "exponent overflow during normalization"),
             Self::ShiftOverflow => write!(f, "exponent shift overflow during alignment"),
             Self::MultiplicationOverflow => write!(f, "exponent overflow during multiplication"),
+            Self::ReciprocalOverflow => write!(f, "exponent overflow during reciprocal"),
         }
     }
 }
@@ -50,6 +53,13 @@ pub struct Binary {
 impl Binary {
     pub fn new(mantissa: BigInt, exponent: Exponent) -> Result<Self, BinaryError> {
         Self::normalize(mantissa, exponent)
+    }
+
+    pub fn zero() -> Self {
+        Self {
+            mantissa: BigInt::zero(),
+            exponent: 0,
+        }
     }
 
     pub fn mantissa(&self) -> &BigInt {
@@ -186,13 +196,102 @@ impl PartialOrd for Binary {
     }
 }
 
-pub type Bounds = OrderedPair<Binary>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtendedBinary {
+    NegInf,
+    Finite(Binary),
+    PosInf,
+}
 
-pub fn bounds_lower(bounds: &Bounds) -> &Binary {
+impl ExtendedBinary {
+    pub fn zero() -> Self {
+        Self::Finite(Binary::zero())
+    }
+
+    pub fn neg(&self) -> Self {
+        match self {
+            Self::NegInf => Self::PosInf,
+            Self::PosInf => Self::NegInf,
+            Self::Finite(value) => Self::Finite(value.neg()),
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        matches!(self, Self::Finite(value) if value.mantissa().is_zero())
+    }
+
+    fn add_lower(&self, other: &Self) -> Result<Self, ComputableError> {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, other) {
+            (NegInf, _) | (_, NegInf) => Ok(NegInf),
+            (PosInf, _) | (_, PosInf) => Ok(PosInf),
+            (Finite(lhs), Finite(rhs)) => Ok(Finite(lhs.add(rhs)?)),
+        }
+    }
+
+    fn add_upper(&self, other: &Self) -> Result<Self, ComputableError> {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, other) {
+            (PosInf, _) | (_, PosInf) => Ok(PosInf),
+            (NegInf, _) | (_, NegInf) => Ok(NegInf),
+            (Finite(lhs), Finite(rhs)) => Ok(Finite(lhs.add(rhs)?)),
+        }
+    }
+
+    fn mul(&self, other: &Self) -> Result<Self, ComputableError> {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        if self.is_zero() || other.is_zero() {
+            return Ok(Finite(Binary::zero()));
+        }
+        match (self, other) {
+            (Finite(lhs), Finite(rhs)) => Ok(Finite(lhs.mul(rhs)?)),
+            (Finite(lhs), PosInf) | (PosInf, Finite(lhs)) => {
+                if lhs.mantissa().is_positive() {
+                    Ok(PosInf)
+                } else {
+                    Ok(NegInf)
+                }
+            }
+            (Finite(lhs), NegInf) | (NegInf, Finite(lhs)) => {
+                if lhs.mantissa().is_positive() {
+                    Ok(NegInf)
+                } else {
+                    Ok(PosInf)
+                }
+            }
+            (PosInf, PosInf) | (NegInf, NegInf) => Ok(PosInf),
+            (PosInf, NegInf) | (NegInf, PosInf) => Ok(NegInf),
+        }
+    }
+}
+
+impl Ord for ExtendedBinary {
+    fn cmp(&self, other: &Self) -> Ordering {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, other) {
+            (NegInf, NegInf) | (PosInf, PosInf) => Ordering::Equal,
+            (NegInf, _) => Ordering::Less,
+            (_, NegInf) => Ordering::Greater,
+            (PosInf, _) => Ordering::Greater,
+            (_, PosInf) => Ordering::Less,
+            (Finite(lhs), Finite(rhs)) => lhs.cmp(rhs),
+        }
+    }
+}
+
+impl PartialOrd for ExtendedBinary {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+pub type Bounds = OrderedPair<ExtendedBinary>;
+
+pub fn bounds_lower(bounds: &Bounds) -> &ExtendedBinary {
     &bounds.small
 }
 
-pub fn bounds_upper(bounds: &Bounds) -> &Binary {
+pub fn bounds_upper(bounds: &Bounds) -> &ExtendedBinary {
     &bounds.large
 }
 
@@ -201,6 +300,8 @@ pub enum ComputableError {
     NonpositiveEpsilon,
     InvalidBoundsOrder,
     NonImprovingBounds,
+    ExcludedValueUnreachable,
+    MaxRefinementIterations { max: usize },
     Binary(BinaryError),
 }
 
@@ -210,6 +311,10 @@ impl fmt::Display for ComputableError {
             Self::NonpositiveEpsilon => write!(f, "epsilon must be positive"),
             Self::InvalidBoundsOrder => write!(f, "computed bounds are not ordered"),
             Self::NonImprovingBounds => write!(f, "refinement did not tighten bounds"),
+            Self::ExcludedValueUnreachable => write!(f, "cannot refine bounds to exclude value"),
+            Self::MaxRefinementIterations { max } => {
+                write!(f, "maximum refinement iterations ({max}) reached")
+            }
             Self::Binary(err) => write!(f, "{err}"),
         }
     }
@@ -257,10 +362,16 @@ where
                 let previous = bounds.clone();
                 self.state = (self.refine)(self.state);
                 bounds = (self.bounds)(&self.state)?;
-                let lower_improved = bounds_lower(&bounds) > bounds_lower(&previous);
-                let upper_improved = bounds_upper(&bounds) < bounds_upper(&previous);
-                if !(lower_improved || upper_improved) {
-                    return Err(ComputableError::NonImprovingBounds);
+                if bounds_are_finite(&previous) {
+                    if bounds_are_finite(&bounds) {
+                        let lower_improved = bounds_lower(&bounds) > bounds_lower(&previous);
+                        let upper_improved = bounds_upper(&bounds) < bounds_upper(&previous);
+                        if !(lower_improved || upper_improved) {
+                            return Err(ComputableError::NonImprovingBounds);
+                        }
+                    } else {
+                        return Err(ComputableError::NonImprovingBounds);
+                    }
                 }
             } else {
                 self.state = (self.refine)(self.state);
@@ -269,6 +380,24 @@ where
         }
 
         Ok((bounds, self))
+    }
+
+    pub fn constant(
+        value: Binary,
+    ) -> Computable<Binary, fn(&Binary) -> Result<Bounds, ComputableError>, fn(Binary) -> Binary>
+    {
+        fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
+            Ok(OrderedPair::new(
+                ExtendedBinary::Finite(value.clone()),
+                ExtendedBinary::Finite(value.clone()),
+            ))
+        }
+
+        fn refine(value: Binary) -> Binary {
+            value
+        }
+
+        Computable::new(value, bounds, refine)
     }
 
     pub fn neg(self) -> Computable<X, impl Fn(&X) -> Result<Bounds, ComputableError>, impl Fn(X) -> X> {
@@ -286,6 +415,37 @@ where
         };
 
         Computable::new(state, bounds, refine)
+    }
+
+    pub fn inv(self) -> Computable<InvState<X>, impl Fn(&InvState<X>) -> Result<Bounds, ComputableError>, impl Fn(InvState<X>) -> InvState<X>> {
+        let Computable {
+            state,
+            bounds,
+            refine,
+        } = self;
+
+        let bounds = move |state: &InvState<X>| -> Result<Bounds, ComputableError> {
+            let existing = (bounds)(&state.inner_state)?;
+            reciprocal_bounds(&existing, &state.precision_bits)
+        };
+
+        let refine = move |state: InvState<X>| -> InvState<X> {
+            let inner_state = (refine)(state.inner_state);
+            let precision_bits = state.precision_bits + BigInt::one();
+            InvState {
+                inner_state,
+                precision_bits,
+            }
+        };
+
+        Computable::new(
+            InvState {
+                inner_state: state,
+                precision_bits: BigInt::zero(),
+            },
+            bounds,
+            refine,
+        )
     }
 
     pub fn add<Y, B2, F2>(
@@ -312,8 +472,8 @@ where
         let bounds = move |state: &(X, Y)| -> Result<Bounds, ComputableError> {
             let left = (left_bounds)(&state.0)?;
             let right = (right_bounds)(&state.1)?;
-            let lower = bounds_lower(&left).add(bounds_lower(&right))?;
-            let upper = bounds_upper(&left).add(bounds_upper(&right))?;
+            let lower = bounds_lower(&left).add_lower(bounds_lower(&right))?;
+            let upper = bounds_upper(&left).add_upper(bounds_upper(&right))?;
             ordered_pair_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
         };
 
@@ -391,13 +551,141 @@ where
 
         Computable::new((left_state, right_state), bounds, refine)
     }
+
+    pub fn div<Y, B2, F2>(
+        self,
+        other: Computable<Y, B2, F2>,
+    ) -> Computable<
+        (X, InvState<Y>),
+        impl Fn(&(X, InvState<Y>)) -> Result<Bounds, ComputableError>,
+        impl Fn((X, InvState<Y>)) -> (X, InvState<Y>),
+    >
+    where
+        B2: Fn(&Y) -> Result<Bounds, ComputableError>,
+        F2: Fn(Y) -> Y,
+    {
+        self.mul(other.inv())
+    }
+
+}
+
+#[cfg(debug_assertions)]
+pub const DEFAULT_INV_MAX_REFINES: usize = 64;
+#[cfg(not(debug_assertions))]
+pub const DEFAULT_INV_MAX_REFINES: usize = 4096;
+
+#[derive(Clone, Debug)]
+pub struct InvState<X> {
+    inner_state: X,
+    precision_bits: BigInt,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ReciprocalRounding {
+    Floor,
+    Ceil,
+}
+
+pub(crate) fn bounds_excludes_value(bounds: &Bounds, value: &ExtendedBinary) -> bool {
+    value < bounds_lower(bounds) || value > bounds_upper(bounds)
+}
+
+fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds, ComputableError> {
+    let lower = bounds_lower(bounds);
+    let upper = bounds_upper(bounds);
+    let zero = ExtendedBinary::zero();
+    if lower <= &zero && upper >= &zero {
+        return Ok(OrderedPair::new(
+            ExtendedBinary::NegInf,
+            ExtendedBinary::PosInf,
+        ));
+    }
+
+    let (lower_bound, upper_bound) = if upper < &zero {
+        let lower_bound =
+            reciprocal_rounded_abs_extended(upper, precision_bits, ReciprocalRounding::Ceil)?
+                .neg();
+        let upper_bound =
+            reciprocal_rounded_abs_extended(lower, precision_bits, ReciprocalRounding::Floor)?
+                .neg();
+        (lower_bound, upper_bound)
+    } else {
+        let lower_bound =
+            reciprocal_rounded_abs_extended(upper, precision_bits, ReciprocalRounding::Floor)?;
+        let upper_bound =
+            reciprocal_rounded_abs_extended(lower, precision_bits, ReciprocalRounding::Ceil)?;
+        (lower_bound, upper_bound)
+    };
+
+    ordered_pair_checked(lower_bound, upper_bound)
+        .map_err(|_| ComputableError::InvalidBoundsOrder)
+}
+
+fn reciprocal_rounded_abs_extended(
+    value: &ExtendedBinary,
+    precision_bits: &BigInt,
+    rounding: ReciprocalRounding,
+) -> Result<ExtendedBinary, BinaryError> {
+    match value {
+        ExtendedBinary::Finite(value) => {
+            let abs_mantissa = value.mantissa().abs();
+            let shift = precision_bits_to_usize(precision_bits)?;
+            let numerator = BigInt::one() << shift;
+            let quotient = match rounding {
+                ReciprocalRounding::Floor => numerator.div_floor(&abs_mantissa),
+                ReciprocalRounding::Ceil => numerator.div_ceil(&abs_mantissa),
+            };
+            let exponent = reciprocal_exponent(value.exponent(), precision_bits)?;
+            Ok(ExtendedBinary::Finite(Binary::new(quotient, exponent)?))
+        }
+        ExtendedBinary::NegInf | ExtendedBinary::PosInf => {
+            Ok(ExtendedBinary::Finite(Binary::zero()))
+        }
+    }
+}
+
+fn reciprocal_exponent(
+    exponent: Exponent,
+    precision_bits: &BigInt,
+) -> Result<Exponent, BinaryError> {
+    let precision = precision_bits_to_exponent(precision_bits)?;
+    let neg_exponent = exponent
+        .checked_neg()
+        .ok_or(BinaryError::ReciprocalOverflow)?;
+    neg_exponent
+        .checked_sub(precision)
+        .ok_or(BinaryError::ReciprocalOverflow)
+}
+
+fn precision_bits_to_usize(precision_bits: &BigInt) -> Result<usize, BinaryError> {
+    if precision_bits.is_negative() {
+        return Err(BinaryError::ReciprocalOverflow);
+    }
+    usize::try_from(precision_bits).map_err(|_| BinaryError::ReciprocalOverflow)
+}
+
+fn precision_bits_to_exponent(precision_bits: &BigInt) -> Result<Exponent, BinaryError> {
+    if precision_bits.is_negative() {
+        return Err(BinaryError::ReciprocalOverflow);
+    }
+    Exponent::try_from(precision_bits).map_err(|_| BinaryError::ReciprocalOverflow)
 }
 
 fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryError> {
     let upper = bounds_upper(bounds);
     let lower = bounds_lower(bounds);
+    let (ExtendedBinary::Finite(upper), ExtendedBinary::Finite(lower)) = (upper, lower) else {
+        return Ok(false);
+    };
     let lower_plus = lower.add(epsilon)?;
     Ok(upper <= &lower_plus)
+}
+
+fn bounds_are_finite(bounds: &Bounds) -> bool {
+    matches!(
+        (bounds_lower(bounds), bounds_upper(bounds)),
+        (ExtendedBinary::Finite(_), ExtendedBinary::Finite(_))
+    )
 }
 
 #[cfg(test)]
@@ -410,14 +698,26 @@ mod tests {
         Binary::new(BigInt::from(mantissa), exponent).expect("binary should normalize")
     }
 
+    fn ext(mantissa: i64, exponent: i64) -> ExtendedBinary {
+        ExtendedBinary::Finite(bin(mantissa, exponent))
+    }
+
+    fn unwrap_finite(value: &ExtendedBinary) -> Binary {
+        match value {
+            ExtendedBinary::Finite(value) => value.clone(),
+            ExtendedBinary::NegInf | ExtendedBinary::PosInf => {
+                panic!("expected finite extended binary")
+            }
+        }
+    }
+
     fn interval_bounds(state: &IntervalState) -> Bounds {
         state.clone()
     }
 
     fn interval_refine(state: IntervalState) -> IntervalState {
-        let mid = state
-            .small
-            .add(&state.large)
+        let mid = unwrap_finite(&state.small)
+            .add(&unwrap_finite(&state.large))
             .expect("binary should add");
         let exponent = mid
             .exponent()
@@ -425,13 +725,12 @@ mod tests {
             .expect("midpoint exponent should not underflow");
         let mid = Binary::new(mid.mantissa().clone(), exponent)
             .expect("binary should normalize");
-        OrderedPair::new(mid.clone(), mid)
+        OrderedPair::new(ExtendedBinary::Finite(mid.clone()), ExtendedBinary::Finite(mid))
     }
 
     fn interval_refine_strict(state: IntervalState) -> IntervalState {
-        let mid = state
-            .small
-            .add(&state.large)
+        let mid = unwrap_finite(&state.small)
+            .add(&unwrap_finite(&state.large))
             .expect("binary should add");
         let exponent = mid
             .exponent()
@@ -439,7 +738,7 @@ mod tests {
             .expect("midpoint exponent should not underflow");
         let mid = Binary::new(mid.mantissa().clone(), exponent)
             .expect("binary should normalize");
-        OrderedPair::new(state.small.clone(), mid)
+        OrderedPair::new(state.small.clone(), ExtendedBinary::Finite(mid))
     }
 
     fn interval_computable(
@@ -450,7 +749,7 @@ mod tests {
         impl Fn(&IntervalState) -> Result<Bounds, ComputableError>,
         impl Fn(IntervalState) -> IntervalState,
     > {
-        let state = OrderedPair::new(bin(lower, 0), bin(upper, 0));
+        let state = OrderedPair::new(ext(lower, 0), ext(upper, 0));
         Computable::new(state, |state| Ok(interval_bounds(state)), interval_refine)
     }
 
@@ -553,8 +852,8 @@ mod tests {
         assert_eq!(
             refined.bounds().expect("bounds should succeed"),
             OrderedPair::new(
-                bin(1, 0),
-                bin(1, 0)
+                ext(1, 0),
+                ext(1, 0)
             )
         );
     }
@@ -572,7 +871,7 @@ mod tests {
 
     #[test]
     fn computable_refine_to_rejects_non_improving_refine() {
-        let state = OrderedPair::new(bin(0, 0), bin(2, 0));
+        let state = OrderedPair::new(ext(0, 0), ext(2, 0));
         let computable = Computable::new(state, |state| Ok(interval_bounds(state)), |state| state);
         let epsilon = bin(1, -2);
         let result = computable.refine_to(epsilon);
@@ -584,7 +883,7 @@ mod tests {
 
     #[test]
     fn computable_refine_to_handles_non_meeting_bounds() {
-        let state = OrderedPair::new(bin(0, 0), bin(4, 0));
+        let state = OrderedPair::new(ext(0, 0), ext(4, 0));
         let computable = Computable::new(
             state,
             |state| Ok(interval_bounds(state)),
@@ -608,8 +907,8 @@ mod tests {
         assert_eq!(
             sum_bounds,
             OrderedPair::new(
-                bin(1, 0),
-                bin(5, 0)
+                ext(1, 0),
+                ext(5, 0)
             )
         );
     }
@@ -624,8 +923,8 @@ mod tests {
         assert_eq!(
             diff_bounds,
             OrderedPair::new(
-                bin(2, 0),
-                bin(5, 0)
+                ext(2, 0),
+                ext(5, 0)
             )
         );
     }
@@ -638,8 +937,33 @@ mod tests {
         assert_eq!(
             bounds,
             OrderedPair::new(
-                bin(-3, 0),
-                bin(-1, 0)
+                ext(-3, 0),
+                ext(-1, 0)
+            )
+        );
+    }
+
+    #[test]
+    fn computable_inv_allows_infinite_bounds() {
+        let value = interval_computable(-1, 1);
+        let inv = value.inv();
+        let bounds = inv.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)
+        );
+    }
+
+    #[test]
+    fn computable_inv_bounds_for_positive_interval() {
+        let value = interval_computable(2, 4);
+        let inv = value.inv();
+        let bounds = inv.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            OrderedPair::new(
+                ext(1, -2),
+                ext(1, -1)
             )
         );
     }
@@ -654,8 +978,8 @@ mod tests {
         assert_eq!(
             bounds,
             OrderedPair::new(
-                bin(2, 0),
-                bin(12, 0)
+                ext(2, 0),
+                ext(12, 0)
             )
         );
     }
@@ -670,8 +994,8 @@ mod tests {
         assert_eq!(
             bounds,
             OrderedPair::new(
-                bin(-12, 0),
-                bin(-2, 0)
+                ext(-12, 0),
+                ext(-2, 0)
             )
         );
     }
@@ -686,8 +1010,8 @@ mod tests {
         assert_eq!(
             bounds,
             OrderedPair::new(
-                bin(-10, 0),
-                bin(15, 0)
+                ext(-10, 0),
+                ext(15, 0)
             )
         );
     }
@@ -702,8 +1026,8 @@ mod tests {
         assert_eq!(
             bounds,
             OrderedPair::new(
-                bin(-8, 0),
-                bin(12, 0)
+                ext(-8, 0),
+                ext(12, 0)
             )
         );
     }
