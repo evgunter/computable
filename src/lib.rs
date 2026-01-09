@@ -5,7 +5,6 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Float, One, Signed, Zero};
 
-pub mod legacy;
 mod ordered_pair;
 
 pub use ordered_pair::{ordered_pair_checked, OrderedPair, OrderedPairError};
@@ -604,10 +603,6 @@ pub struct InvState<X> {
 enum ReciprocalRounding {
     Floor,
     Ceil,
-}
-
-pub(crate) fn bounds_excludes_value(bounds: &Bounds, value: &ExtendedBinary) -> bool {
-    value < bounds_lower(bounds) || value > bounds_upper(bounds)
 }
 
 fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds, ComputableError> {
