@@ -14,7 +14,7 @@ first, definitions:
 then, a computable number is represented as an element of $(X, X \to B, X \to X)$, where:
 - $x \in X$ is the 'current state': some information representing the status of the computation, which can be any type.
 - a function $b : X \to B$ which calculates the bounds based on the current state. for convenience, we use $b_\ell$ and $b_u$ to denote the projections onto the lower and upper bounds. so, if $c \in \mathbb{R}$ is the true value of the computable number being represented, then $b_\ell \leq c \leq b_u$.
-- a function $f : X \to X$ which takes the state $x$ and returns a new state for which at least one of the calculated lower and upper bounds is tighter than before (if they were not already identical), i.e. $b_\ell(f(x)) > b_\ell(x) \text{ or } b_u(f(x)) < b_u(x) \text{ or } b_\ell(x) = b_u(x)$.
+- a refinement function $f : X \to X$ which takes the state $x$ and returns a new state for which the calculated lower and upper bounds are no looser than before, i.e. $b_\ell(f(x)) \geq b_\ell(x) \text{ and } b_u(f(x)) \leq b_u(x)$. repeated refinement by $f$ must converge to a single value, i.e. $\lim_{n \to \infty} b_\ell(f^n(x)) = \lim_{n \to \infty} b_u(f^n(x))$.
 
 for example, $\sqrt{2}$ could be represented as a computable number by setting $x$ to just be the current lower and upper bound (e.g. $x$ could be initialized as $(0, 2)$), with an $f$ which takes the midpoint between the lower and upper bounds, squares it, compares it to 2, and depending on the result replaces the upper or lower bound with the former midpoint.
 
@@ -34,7 +34,7 @@ sadly, the implementation cannot exactly realize the formalism.
 
 - many operations are fallible: bounds functions, refinement, and composed operations return `Result` rather than only the types specified above.
 - refinement is bounded: `Computable::refine_to` stops after a maximum number of iterations and returns an error instead of looping forever. note that default iteration limits differ by build: debug builds use a smaller max to catch issues quickly, while release builds allow more refinements for accuracy.
-- we do not (and cannot) enforce that the provided `b` and `f` actually satisfy the convergence and tightening requirements from the formalism; this is the caller's responsibility. the implementation checks for non-worsening bounds and requires that the state changes on refinement, but it does not require strict improvement. violations may lead to runtime errors.
+- we do not (and cannot) enforce that the provided `f` actually satisfies the convergence requirement from the formalism; this is the caller's responsibility. violations may lead to runtime errors. the implementation only checks that, on refinement, the state does change and the bounds don't get worse (since these are necessary conditions which are easy to check).
 <!-- TODO: reconsider `Exponent = i64` vs `BigInt` for a more faithful D = Z × Z representation. -->
 
 # norms
