@@ -24,6 +24,7 @@ impl OrderedPair<Exponent> {
 pub enum BinaryError {
     ExponentOverflow,
     ShiftOverflow,
+    MultiplicationOverflow,
 }
 
 impl fmt::Display for BinaryError {
@@ -31,6 +32,7 @@ impl fmt::Display for BinaryError {
         match self {
             Self::ExponentOverflow => write!(f, "exponent overflow during normalization"),
             Self::ShiftOverflow => write!(f, "exponent shift overflow during alignment"),
+            Self::MultiplicationOverflow => write!(f, "exponent overflow during multiplication"),
         }
     }
 }
@@ -76,6 +78,15 @@ impl Binary {
             mantissa: -self.mantissa.clone(),
             exponent: self.exponent,
         }
+    }
+
+    pub fn mul(&self, other: &Self) -> Result<Self, BinaryError> {
+        let exponent = self
+            .exponent
+            .checked_add(other.exponent)
+            .ok_or(BinaryError::MultiplicationOverflow)?;
+        let mantissa = &self.mantissa * &other.mantissa;
+        Self::normalize(mantissa, exponent)
     }
 
     fn normalize(mut mantissa: BigInt, mut exponent: Exponent) -> Result<Self, BinaryError> {
@@ -348,6 +359,62 @@ where
 
         Computable::new(state, bounds, refine)
     }
+
+    pub fn mul<Y, B2, F2>(
+        self,
+        other: Computable<Y, B2, F2>,
+    ) -> Computable<(X, Y), impl Fn(&(X, Y)) -> Result<Bounds, ComputableError>, impl Fn((X, Y)) -> (X, Y)>
+    where
+        B2: Fn(&Y) -> Result<Bounds, ComputableError>,
+        F2: Fn(Y) -> Y,
+    {
+        let Computable {
+            state: left_state,
+            bounds: left_bounds,
+            refine: left_refine,
+        } = self;
+        let Computable {
+            state: right_state,
+            bounds: right_bounds,
+            refine: right_refine,
+        } = other;
+
+        let bounds = move |state: &(X, Y)| -> Result<Bounds, ComputableError> {
+            let left = (left_bounds)(&state.0)?;
+            let right = (right_bounds)(&state.1)?;
+            let left_lower = bounds_lower(&left);
+            let left_upper = bounds_upper(&left);
+            let right_lower = bounds_lower(&right);
+            let right_upper = bounds_upper(&right);
+
+            let candidates = [
+                left_lower.mul(right_lower)?,
+                left_lower.mul(right_upper)?,
+                left_upper.mul(right_lower)?,
+                left_upper.mul(right_upper)?,
+            ];
+
+            let mut min = candidates[0].clone();
+            let mut max = candidates[0].clone();
+            for candidate in candidates.iter().skip(1) {
+                if candidate < &min {
+                    min = candidate.clone();
+                }
+                if candidate > &max {
+                    max = candidate.clone();
+                }
+            }
+
+            ordered_pair_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
+        };
+
+        let refine = move |state: (X, Y)| -> (X, Y) {
+            let (left, right) = state;
+            ((left_refine)(left), (right_refine)(right))
+        };
+
+        Computable::new((left_state, right_state), bounds, refine)
+    }
 }
 
 fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryError> {
@@ -480,6 +547,15 @@ mod tests {
     }
 
     #[test]
+    fn binary_mul_adds_exponents() {
+        let two = bin(1, 1);
+        let half = bin(1, -1);
+        let product = two.mul(&half).expect("binary should multiply");
+        let expected = bin(1, 0);
+        assert_eq!(product, expected);
+    }
+
+    #[test]
     fn computable_refine_to_rejects_negative_epsilon() {
         let computable = interval_computable(0, 2);
         let epsilon = bin(-1, 0);
@@ -588,6 +664,54 @@ mod tests {
             OrderedPair::new(
                 bin(-3, 0),
                 bin(-1, 0)
+            )
+        );
+    }
+
+    #[test]
+    fn computable_mul_combines_bounds_positive() {
+        let left = interval_computable(1, 3);
+        let right = interval_computable(2, 4);
+
+        let product = left.mul(right);
+        let bounds = product.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            OrderedPair::new(
+                bin(2, 0),
+                bin(12, 0)
+            )
+        );
+    }
+
+    #[test]
+    fn computable_mul_combines_bounds_negative() {
+        let left = interval_computable(-3, -1);
+        let right = interval_computable(2, 4);
+
+        let product = left.mul(right);
+        let bounds = product.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            OrderedPair::new(
+                bin(-12, 0),
+                bin(-2, 0)
+            )
+        );
+    }
+
+    #[test]
+    fn computable_mul_combines_bounds_mixed() {
+        let left = interval_computable(-2, 3);
+        let right = interval_computable(4, 5);
+
+        let product = left.mul(right);
+        let bounds = product.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            OrderedPair::new(
+                bin(-10, 0),
+                bin(15, 0)
             )
         );
     }
