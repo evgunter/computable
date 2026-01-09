@@ -32,9 +32,9 @@ for example, given computable numbers $C_0 = (x_0, b_0, f_0)$ and $C_1 = (x_1, b
 
 sadly, the implementation cannot exactly realize the formalism.
 
-- many operations are fallible: bounds functions and composed operations return `Result` rather than only the types specified above. (refinement is currently infallible.)
+- many operations are fallible: bounds functions, refinement, and composed operations return `Result` rather than only the types specified above.
 - refinement is bounded: `Computable::refine_to` stops after a maximum number of iterations and returns an error instead of looping forever. note that default iteration limits differ by build: debug builds use a smaller max to catch issues quickly, while release builds allow more refinements for accuracy.
-- we do not (and cannot) enforce that the provided `b` and `f` actually satisfy the convergence and tightening requirements from the formalism; this is the caller's responsibility and violations may lead to runtime errors.
+- we do not (and cannot) enforce that the provided `b` and `f` actually satisfy the convergence and tightening requirements from the formalism; this is the caller's responsibility. the implementation checks for non-worsening bounds and requires that the state changes on refinement, but it does not require strict improvement. violations may lead to runtime errors.
 <!-- TODO: reconsider `Exponent = i64` vs `BigInt` for a more faithful D = Z × Z representation. -->
 
 # norms
