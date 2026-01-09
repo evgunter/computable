@@ -356,7 +356,8 @@ pub fn bounds_upper(bounds: &Bounds) -> &ExtendedBinary {
 pub enum ComputableError {
     NonpositiveEpsilon,
     InvalidBoundsOrder,
-    NonImprovingBounds,
+    BoundsWorsened,
+    StateUnchanged,
     ExcludedValueUnreachable,
     MaxRefinementIterations { max: usize },
     Binary(BinaryError),
@@ -367,7 +368,8 @@ impl fmt::Display for ComputableError {
         match self {
             Self::NonpositiveEpsilon => write!(f, "epsilon must be positive"),
             Self::InvalidBoundsOrder => write!(f, "computed bounds are not ordered"),
-            Self::NonImprovingBounds => write!(f, "refinement did not tighten bounds"),
+            Self::BoundsWorsened => write!(f, "refinement produced worse bounds"),
+            Self::StateUnchanged => write!(f, "refinement did not change state"),
             Self::ExcludedValueUnreachable => write!(f, "cannot refine bounds to exclude value"),
             Self::MaxRefinementIterations { max } => {
                 write!(f, "maximum refinement iterations ({max}) reached")
@@ -391,7 +393,7 @@ pub struct Computable<X, B, F> {
     refine: F,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct State<X, S> {
     inner_state: X,
     extra_state: S,
@@ -417,7 +419,10 @@ where
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         mut self,
         epsilon: Binary,
-    ) -> Result<(Bounds, Self), ComputableError> {
+    ) -> Result<(Bounds, Self), ComputableError>
+    where
+        X: Eq + Clone,
+    {
         if !epsilon.mantissa().is_positive() {
             return Err(ComputableError::NonpositiveEpsilon);
         }
@@ -431,31 +436,27 @@ where
                 });
             }
             iterations += 1;
-            if bounds_lower(&bounds) != bounds_upper(&bounds) {
-                let previous = bounds.clone();
-                self.state = (self.refine)(self.state);
-                bounds = (self.bounds)(&self.state)?;
-                if bounds_are_finite(&previous) {
-                    if bounds_are_finite(&bounds) {
-                        let lower_improved = bounds_lower(&bounds) > bounds_lower(&previous);
-                        let upper_improved = bounds_upper(&bounds) < bounds_upper(&previous);
-                        if !(lower_improved || upper_improved) {
-                            return Err(ComputableError::NonImprovingBounds);
-                        }
-                    } else {
-                        return Err(ComputableError::NonImprovingBounds);
-                    }
-                }
-            } else {
-                self.state = (self.refine)(self.state);
-                bounds = (self.bounds)(&self.state)?;
+            let previous_bounds = bounds.clone();
+            let previous_state = self.state.clone();
+            self.state = (self.refine)(self.state);
+            if self.state == previous_state {
+                return Err(ComputableError::StateUnchanged);
+            }
+            bounds = (self.bounds)(&self.state)?;
+            let lower_worsened = bounds_lower(&bounds) < bounds_lower(&previous_bounds);
+            let upper_worsened = bounds_upper(&bounds) > bounds_upper(&previous_bounds);
+            if lower_worsened || upper_worsened {
+                return Err(ComputableError::BoundsWorsened);
             }
         }
 
         Ok((bounds, self))
     }
 
-    pub fn refine_to_default(self, epsilon: Binary) -> Result<(Bounds, Self), ComputableError> {
+    pub fn refine_to_default(self, epsilon: Binary) -> Result<(Bounds, Self), ComputableError>
+    where
+        X: Eq + Clone,
+    {
         self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(epsilon)
     }
 
@@ -815,13 +816,6 @@ fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryErr
     Ok(&width <= epsilon)
 }
 
-fn bounds_are_finite(bounds: &Bounds) -> bool {
-    matches!(
-        (bounds_lower(bounds), bounds_upper(bounds)),
-        (ExtendedBinary::Finite(_), ExtendedBinary::Finite(_))
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1045,23 +1039,23 @@ mod tests {
     }
 
     #[test]
-    fn computable_refine_to_rejects_non_improving_refine() {
+    fn computable_refine_to_rejects_unchanged_state() {
         let state = OrderedPair::new(ext(0, 0), ext(2, 0));
         let computable = Computable::new(state, |state| Ok(interval_bounds(state)), |state| state);
         let epsilon = bin(1, -2);
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(
             result,
-            Err(ComputableError::NonImprovingBounds)
+            Err(ComputableError::StateUnchanged)
         ));
     }
 
     #[test]
     fn computable_refine_to_enforces_max_iterations() {
         let computable = Computable::new(
-            (),
+            0usize,
             |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
-            |state| state,
+            |state| state + 1,
         );
         let epsilon = bin(1, -1);
         let result = computable.refine_to::<5>(epsilon);
@@ -1085,6 +1079,24 @@ mod tests {
             .expect("refine_to should succeed");
         assert!(bounds_lower(&bounds) < bounds_upper(&bounds));
         assert_eq!(refined.bounds().expect("bounds should succeed"), bounds);
+    }
+
+    #[test]
+    fn computable_refine_to_rejects_worsened_bounds() {
+        let state = OrderedPair::new(ext(0, 0), ext(1, 0));
+        let computable = Computable::new(
+            state,
+            |state| Ok(interval_bounds(state)),
+            |state: IntervalState| {
+                let worse_upper = unwrap_finite(&state.large)
+                    .add(&bin(1, 0))
+                    .expect("binary should add");
+                OrderedPair::new(state.small, ExtendedBinary::Finite(worse_upper))
+            },
+        );
+        let epsilon = bin(1, -2);
+        let result = computable.refine_to_default(epsilon);
+        assert!(matches!(result, Err(ComputableError::BoundsWorsened)));
     }
 
     #[test]
