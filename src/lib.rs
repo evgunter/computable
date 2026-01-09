@@ -178,6 +178,8 @@ pub fn bounds_upper(bounds: &Bounds) -> &Binary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ComputableError {
     NonpositiveEpsilon,
+    InvalidBoundsOrder,
+    NonImprovingBounds,
     Binary(BinaryError),
 }
 
@@ -185,6 +187,8 @@ impl fmt::Display for ComputableError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NonpositiveEpsilon => write!(f, "epsilon must be positive"),
+            Self::InvalidBoundsOrder => write!(f, "computed bounds are not ordered"),
+            Self::NonImprovingBounds => write!(f, "refinement did not tighten bounds"),
             Self::Binary(err) => write!(f, "{err}"),
         }
     }
@@ -206,7 +210,7 @@ pub struct Computable<X, B, F> {
 
 impl<X, B, F> Computable<X, B, F>
 where
-    B: Fn(&X) -> Bounds,
+    B: Fn(&X) -> Result<Bounds, ComputableError>,
     F: Fn(X) -> X,
 {
     pub fn new(state: X, bounds: B, refine: F) -> Self {
@@ -217,7 +221,7 @@ where
         }
     }
 
-    pub fn bounds(&self) -> Bounds {
+    pub fn bounds(&self) -> Result<Bounds, ComputableError> {
         (self.bounds)(&self.state)
     }
 
@@ -226,13 +230,96 @@ where
             return Err(ComputableError::NonpositiveEpsilon);
         }
 
-        let mut bounds = (self.bounds)(&self.state);
+        let mut bounds = (self.bounds)(&self.state)?;
         while !bounds_width_leq(&bounds, &epsilon)? {
-            self.state = (self.refine)(self.state);
-            bounds = (self.bounds)(&self.state);
+            if bounds_lower(&bounds) != bounds_upper(&bounds) {
+                let previous = bounds.clone();
+                self.state = (self.refine)(self.state);
+                bounds = (self.bounds)(&self.state)?;
+                let lower_improved = bounds_lower(&bounds) > bounds_lower(&previous);
+                let upper_improved = bounds_upper(&bounds) < bounds_upper(&previous);
+                if !(lower_improved || upper_improved) {
+                    return Err(ComputableError::NonImprovingBounds);
+                }
+            } else {
+                self.state = (self.refine)(self.state);
+                bounds = (self.bounds)(&self.state)?;
+            }
         }
 
         Ok((bounds, self))
+    }
+
+    pub fn add<Y, B2, F2>(
+        self,
+        other: Computable<Y, B2, F2>,
+    ) -> Computable<(X, Y), impl Fn(&(X, Y)) -> Result<Bounds, ComputableError>, impl Fn((X, Y)) -> (X, Y)>
+    where
+        B2: Fn(&Y) -> Result<Bounds, ComputableError>,
+        F2: Fn(Y) -> Y,
+    {
+        // Note: we don't implement std::ops::Add here because the composed type uses `impl Fn`
+        // in its return signature, which cannot be named for an associated Output type.
+        let Computable {
+            state: left_state,
+            bounds: left_bounds,
+            refine: left_refine,
+        } = self;
+        let Computable {
+            state: right_state,
+            bounds: right_bounds,
+            refine: right_refine,
+        } = other;
+
+        let bounds = move |state: &(X, Y)| -> Result<Bounds, ComputableError> {
+            let left = (left_bounds)(&state.0)?;
+            let right = (right_bounds)(&state.1)?;
+            let lower = bounds_lower(&left).add(bounds_lower(&right))?;
+            let upper = bounds_upper(&left).add(bounds_upper(&right))?;
+            ordered_pair_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
+        };
+
+        let refine = move |state: (X, Y)| -> (X, Y) {
+            let (left, right) = state;
+            ((left_refine)(left), (right_refine)(right))
+        };
+
+        Computable::new((left_state, right_state), bounds, refine)
+    }
+
+    pub fn sub<Y, B2, F2>(
+        self,
+        other: Computable<Y, B2, F2>,
+    ) -> Computable<(X, Y), impl Fn(&(X, Y)) -> Result<Bounds, ComputableError>, impl Fn((X, Y)) -> (X, Y)>
+    where
+        B2: Fn(&Y) -> Result<Bounds, ComputableError>,
+        F2: Fn(Y) -> Y,
+    {
+        let Computable {
+            state: left_state,
+            bounds: left_bounds,
+            refine: left_refine,
+        } = self;
+        let Computable {
+            state: right_state,
+            bounds: right_bounds,
+            refine: right_refine,
+        } = other;
+
+        let bounds = move |state: &(X, Y)| -> Result<Bounds, ComputableError> {
+            let left = (left_bounds)(&state.0)?;
+            let right = (right_bounds)(&state.1)?;
+            let lower = bounds_lower(&left).sub(bounds_upper(&right))?;
+            let upper = bounds_upper(&left).sub(bounds_lower(&right))?;
+            ordered_pair_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
+        };
+
+        let refine = move |state: (X, Y)| -> (X, Y) {
+            let (left, right) = state;
+            ((left_refine)(left), (right_refine)(right))
+        };
+
+        Computable::new((left_state, right_state), bounds, refine)
     }
 }
 
@@ -247,9 +334,59 @@ fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryErr
 mod tests {
     use super::*;
 
+    type IntervalState = Bounds;
+
+    fn bin(mantissa: i64, exponent: i64) -> Binary {
+        Binary::new(BigInt::from(mantissa), exponent).expect("binary should normalize")
+    }
+
+    fn interval_bounds(state: &IntervalState) -> Bounds {
+        state.clone()
+    }
+
+    fn interval_refine(state: IntervalState) -> IntervalState {
+        let mid = state
+            .small
+            .add(&state.large)
+            .expect("binary should add");
+        let exponent = mid
+            .exponent()
+            .checked_sub(1)
+            .expect("midpoint exponent should not underflow");
+        let mid = Binary::new(mid.mantissa().clone(), exponent)
+            .expect("binary should normalize");
+        OrderedPair::new(mid.clone(), mid)
+    }
+
+    fn interval_refine_strict(state: IntervalState) -> IntervalState {
+        let mid = state
+            .small
+            .add(&state.large)
+            .expect("binary should add");
+        let exponent = mid
+            .exponent()
+            .checked_sub(1)
+            .expect("midpoint exponent should not underflow");
+        let mid = Binary::new(mid.mantissa().clone(), exponent)
+            .expect("binary should normalize");
+        OrderedPair::new(state.small.clone(), mid)
+    }
+
+    fn interval_computable(
+        lower: i64,
+        upper: i64,
+    ) -> Computable<
+        IntervalState,
+        impl Fn(&IntervalState) -> Result<Bounds, ComputableError>,
+        impl Fn(IntervalState) -> IntervalState,
+    > {
+        let state = OrderedPair::new(bin(lower, 0), bin(upper, 0));
+        Computable::new(state, |state| Ok(interval_bounds(state)), interval_refine)
+    }
+
     #[test]
     fn binary_normalizes_even_mantissa() {
-        let value = Binary::new(BigInt::from(8), 0).expect("binary should normalize");
+        let value = bin(8, 0);
         assert_eq!(value.mantissa(), &BigInt::from(1));
         assert_eq!(value.exponent(), 3);
     }
@@ -263,15 +400,15 @@ mod tests {
 
     #[test]
     fn binary_ordering_with_exponents() {
-        let one = Binary::new(BigInt::from(1), 0).expect("binary should normalize");
-        let half = Binary::new(BigInt::from(1), -1).expect("binary should normalize");
+        let one = bin(1, 0);
+        let half = bin(1, -1);
         assert!(one > half);
     }
 
     #[test]
     fn bounds_reject_invalid_order() {
-        let lower = Binary::new(BigInt::from(1), 0).expect("binary should normalize");
-        let upper = Binary::new(BigInt::from(-1), 0).expect("binary should normalize");
+        let lower = bin(1, 0);
+        let upper = bin(-1, 0);
         let result = ordered_pair_checked(lower, upper);
         assert!(result.is_err());
     }
@@ -299,48 +436,26 @@ mod tests {
 
     #[test]
     fn binary_add_aligns_exponents() {
-        let one = Binary::new(BigInt::from(1), 0).expect("binary should normalize");
-        let half = Binary::new(BigInt::from(1), -1).expect("binary should normalize");
+        let one = bin(1, 0);
+        let half = bin(1, -1);
         let sum = one.add(&half).expect("binary should add");
-        let expected = Binary::new(BigInt::from(3), -1).expect("binary should normalize");
+        let expected = bin(3, -1);
         assert_eq!(sum, expected);
     }
 
     #[test]
     fn binary_sub_handles_negative() {
-        let one = Binary::new(BigInt::from(1), 0).expect("binary should normalize");
-        let two = Binary::new(BigInt::from(1), 1).expect("binary should normalize");
+        let one = bin(1, 0);
+        let two = bin(1, 1);
         let diff = one.sub(&two).expect("binary should subtract");
-        let expected = Binary::new(BigInt::from(-1), 0).expect("binary should normalize");
+        let expected = bin(-1, 0);
         assert_eq!(diff, expected);
     }
 
     #[test]
     fn computable_refine_to_rejects_negative_epsilon() {
-        #[derive(Clone)]
-        struct IntervalState {
-            lower: Binary,
-            upper: Binary,
-        }
-
-        fn bounds(state: &IntervalState) -> Bounds {
-            OrderedPair::new(state.lower.clone(), state.upper.clone())
-        }
-
-        fn refine(state: IntervalState) -> IntervalState {
-            let lower = state.lower;
-            IntervalState {
-                upper: lower.clone(),
-                lower,
-            }
-        }
-
-        let state = IntervalState {
-            lower: Binary::new(BigInt::from(0), 0).expect("binary should normalize"),
-            upper: Binary::new(BigInt::from(2), 0).expect("binary should normalize"),
-        };
-        let computable = Computable::new(state, bounds, refine);
-        let epsilon = Binary::new(BigInt::from(-1), 0).expect("binary should normalize");
+        let computable = interval_computable(0, 2);
+        let epsilon = bin(-1, 0);
         let result = computable.refine_to(epsilon);
         assert!(matches!(
             result,
@@ -350,73 +465,89 @@ mod tests {
 
     #[test]
     fn computable_refine_to_returns_refined_state() {
-        #[derive(Clone)]
-        struct IntervalState {
-            lower: Binary,
-            upper: Binary,
-        }
-
-        fn bounds(state: &IntervalState) -> Bounds {
-            OrderedPair::new(state.lower.clone(), state.upper.clone())
-        }
-
-        fn refine(state: IntervalState) -> IntervalState {
-            let lower = state.lower;
-            IntervalState {
-                upper: lower.clone(),
-                lower,
-            }
-        }
-
-        let state = IntervalState {
-            lower: Binary::new(BigInt::from(0), 0).expect("binary should normalize"),
-            upper: Binary::new(BigInt::from(2), 0).expect("binary should normalize"),
-        };
-        let computable = Computable::new(state, bounds, refine);
-        let epsilon = Binary::new(BigInt::from(1), -1).expect("binary should normalize");
+        let computable = interval_computable(0, 2);
+        let epsilon = bin(1, -1);
         let (bounds, refined) = computable
             .refine_to(epsilon)
             .expect("refine_to should succeed");
         assert_eq!(bounds_lower(&bounds), bounds_upper(&bounds));
         assert_eq!(
-            refined.bounds(),
+            refined.bounds().expect("bounds should succeed"),
             OrderedPair::new(
-                Binary::new(BigInt::from(0), 0).expect("binary should normalize"),
-                Binary::new(BigInt::from(0), 0).expect("binary should normalize")
+                bin(1, 0),
+                bin(1, 0)
             )
         );
     }
 
     #[test]
     fn computable_refine_to_rejects_zero_epsilon() {
-        #[derive(Clone)]
-        struct IntervalState {
-            lower: Binary,
-            upper: Binary,
-        }
-
-        fn bounds(state: &IntervalState) -> Bounds {
-            OrderedPair::new(state.lower.clone(), state.upper.clone())
-        }
-
-        fn refine(state: IntervalState) -> IntervalState {
-            let lower = state.lower;
-            IntervalState {
-                upper: lower.clone(),
-                lower,
-            }
-        }
-
-        let state = IntervalState {
-            lower: Binary::new(BigInt::from(0), 0).expect("binary should normalize"),
-            upper: Binary::new(BigInt::from(2), 0).expect("binary should normalize"),
-        };
-        let computable = Computable::new(state, bounds, refine);
-        let epsilon = Binary::new(BigInt::from(0), 0).expect("binary should normalize");
+        let computable = interval_computable(0, 2);
+        let epsilon = bin(0, 0);
         let result = computable.refine_to(epsilon);
         assert!(matches!(
             result,
             Err(ComputableError::NonpositiveEpsilon)
         ));
+    }
+
+    #[test]
+    fn computable_refine_to_rejects_non_improving_refine() {
+        let state = OrderedPair::new(bin(0, 0), bin(2, 0));
+        let computable = Computable::new(state, |state| Ok(interval_bounds(state)), |state| state);
+        let epsilon = bin(1, -2);
+        let result = computable.refine_to(epsilon);
+        assert!(matches!(
+            result,
+            Err(ComputableError::NonImprovingBounds)
+        ));
+    }
+
+    #[test]
+    fn computable_refine_to_handles_non_meeting_bounds() {
+        let state = OrderedPair::new(bin(0, 0), bin(4, 0));
+        let computable = Computable::new(
+            state,
+            |state| Ok(interval_bounds(state)),
+            interval_refine_strict,
+        );
+        let epsilon = bin(1, -1);
+        let (bounds, refined) = computable
+            .refine_to(epsilon)
+            .expect("refine_to should succeed");
+        assert!(bounds_lower(&bounds) < bounds_upper(&bounds));
+        assert_eq!(refined.bounds().expect("bounds should succeed"), bounds);
+    }
+
+    #[test]
+    fn computable_add_combines_bounds() {
+        let left = interval_computable(0, 2);
+        let right = interval_computable(1, 3);
+
+        let sum = left.add(right);
+        let sum_bounds = sum.bounds().expect("bounds should succeed");
+        assert_eq!(
+            sum_bounds,
+            OrderedPair::new(
+                bin(1, 0),
+                bin(5, 0)
+            )
+        );
+    }
+
+    #[test]
+    fn computable_sub_combines_bounds() {
+        let left = interval_computable(4, 6);
+        let right = interval_computable(1, 2);
+
+        let diff = left.sub(right);
+        let diff_bounds = diff.bounds().expect("bounds should succeed");
+        assert_eq!(
+            diff_bounds,
+            OrderedPair::new(
+                bin(2, 0),
+                bin(5, 0)
+            )
+        );
     }
 }
