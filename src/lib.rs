@@ -21,15 +21,15 @@ use num_traits::{Float, One, Signed, Zero};
 
 mod ordered_pair;
 
-pub use ordered_pair::{ordered_pair_checked, OrderedPair, OrderedPairError};
+pub use ordered_pair::{OrderedPair, OrderedPairError};
 
 /// exponent type for `Binary`; alias to keep the representation flexible.
 pub type Exponent = i64;
 
 impl OrderedPair<Exponent> {
     pub fn delta_usize(&self) -> Option<usize> {
-        self.large
-            .checked_sub(self.small)
+        self.large()
+            .checked_sub(*self.small())
             .and_then(|delta| usize::try_from(delta).ok())
     }
 }
@@ -345,11 +345,11 @@ impl PartialOrd for ExtendedBinary {
 pub type Bounds = OrderedPair<ExtendedBinary>;
 
 pub fn bounds_lower(bounds: &Bounds) -> &ExtendedBinary {
-    &bounds.small
+    bounds.small()
 }
 
 pub fn bounds_upper(bounds: &Bounds) -> &ExtendedBinary {
-    &bounds.large
+    bounds.large()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -491,7 +491,7 @@ where
             let existing = (base_bounds)(value_state)?;
             let lower = bounds_lower(&existing).neg();
             let upper = bounds_upper(&existing).neg();
-            ordered_pair_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
+            OrderedPair::new_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
         };
 
         Computable::new(state, neg_bounds, refine)
@@ -604,7 +604,7 @@ where
             let right = (right_bounds)(&state.1)?;
             let lower = bounds_lower(&left).add_lower(bounds_lower(&right))?;
             let upper = bounds_upper(&left).add_upper(bounds_upper(&right))?;
-            ordered_pair_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
+            OrderedPair::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
         };
 
         let refine = move |state: (X, Y)| -> (X, Y) {
@@ -675,7 +675,7 @@ where
                 }
             }
 
-            ordered_pair_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
+            OrderedPair::new_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
         };
 
         let refine = move |state: (X, Y)| -> (X, Y) {
@@ -748,7 +748,7 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
         (lower_bound, upper_bound)
     };
 
-    ordered_pair_checked(lower_bound, upper_bound)
+    OrderedPair::new_checked(lower_bound, upper_bound)
         .map_err(|_| ComputableError::InvalidBoundsOrder)
 }
 
@@ -854,8 +854,8 @@ mod tests {
     }
 
     fn interval_refine(state: IntervalState) -> IntervalState {
-        let mid = unwrap_finite(&state.small)
-            .add(&unwrap_finite(&state.large))
+        let mid = unwrap_finite(state.small())
+            .add(&unwrap_finite(state.large()))
             .expect("binary should add");
         let exponent = mid
             .exponent()
@@ -867,8 +867,8 @@ mod tests {
     }
 
     fn interval_refine_strict(state: IntervalState) -> IntervalState {
-        let mid = unwrap_finite(&state.small)
-            .add(&unwrap_finite(&state.large))
+        let mid = unwrap_finite(state.small())
+            .add(&unwrap_finite(state.large()))
             .expect("binary should add");
         let exponent = mid
             .exponent()
@@ -876,7 +876,7 @@ mod tests {
             .expect("midpoint exponent should not underflow");
         let mid = Binary::new(mid.mantissa().clone(), exponent)
             .expect("binary should normalize");
-        OrderedPair::new(state.small.clone(), ExtendedBinary::Finite(mid))
+        OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(mid))
     }
 
     fn interval_midpoint_computable(
@@ -899,8 +899,8 @@ mod tests {
         let state = OrderedPair::new(ext(1, 0), ext(2, 0));
         let bounds = |state: &IntervalState| Ok(state.clone());
         let refine = |state: IntervalState| {
-            let bounds_sum = unwrap_finite(&state.small)
-                .add(&unwrap_finite(&state.large))
+            let bounds_sum = unwrap_finite(state.small())
+                .add(&unwrap_finite(state.large()))
                 .expect("binary should add");
             let exponent = bounds_sum
                 .exponent()
@@ -912,9 +912,9 @@ mod tests {
             let two = bin(1, 1);
 
             if mid_sq <= two {
-                OrderedPair::new(ExtendedBinary::Finite(mid), state.large)
+                OrderedPair::new(ExtendedBinary::Finite(mid), state.large().clone())
             } else {
-                OrderedPair::new(state.small, ExtendedBinary::Finite(mid))
+                OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(mid))
             }
         };
 
@@ -946,7 +946,7 @@ mod tests {
     fn bounds_reject_invalid_order() {
         let lower = bin(1, 0);
         let upper = bin(-1, 0);
-        let result = ordered_pair_checked(lower, upper);
+        let result = OrderedPair::new_checked(lower, upper);
         assert!(result.is_err());
     }
 
@@ -1088,10 +1088,10 @@ mod tests {
             state,
             |state| Ok(interval_bounds(state)),
             |state: IntervalState| {
-                let worse_upper = unwrap_finite(&state.large)
+                let worse_upper = unwrap_finite(state.large())
                     .add(&bin(1, 0))
                     .expect("binary should add");
-                OrderedPair::new(state.small, ExtendedBinary::Finite(worse_upper))
+                OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(worse_upper))
             },
         );
         let epsilon = bin(1, -2);

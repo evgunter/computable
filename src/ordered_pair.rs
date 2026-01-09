@@ -4,8 +4,8 @@ use std::fmt;
 /// Stores two values ordered so that `large >= small`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OrderedPair<T> {
-    pub large: T,
-    pub small: T,
+    large: T,
+    small: T,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,15 +30,22 @@ impl<T: Ord> OrderedPair<T> {
             Ordering::Equal | Ordering::Greater => Self { large: a, small: b },
         }
     }
+
+    pub fn new_checked(small: T, large: T) -> Result<Self, OrderedPairError> {
+        if small > large {
+            return Err(OrderedPairError::InvalidOrder);
+        }
+
+        Ok(Self { large, small })
+    }
 }
 
-pub fn ordered_pair_checked<T: Ord>(
-    small: T,
-    large: T,
-) -> Result<OrderedPair<T>, OrderedPairError> {
-    if small > large {
-        return Err(OrderedPairError::InvalidOrder);
+impl<T> OrderedPair<T> {
+    pub fn small(&self) -> &T {
+        &self.small
     }
 
-    Ok(OrderedPair { large, small })
+    pub fn large(&self) -> &T {
+        &self.large
+    }
 }
