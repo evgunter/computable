@@ -271,6 +271,23 @@ where
         Ok((bounds, self))
     }
 
+    pub fn neg(self) -> Computable<X, impl Fn(&X) -> Result<Bounds, ComputableError>, impl Fn(X) -> X> {
+        let Computable {
+            state,
+            bounds,
+            refine,
+        } = self;
+
+        let bounds = move |state: &X| -> Result<Bounds, ComputableError> {
+            let existing = (bounds)(state)?;
+            let lower = bounds_lower(&existing).neg();
+            let upper = bounds_upper(&existing).neg();
+            ordered_pair_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
+        };
+
+        Computable::new(state, bounds, refine)
+    }
+
     pub fn add<Y, B2, F2>(
         self,
         other: Computable<Y, B2, F2>,
@@ -316,48 +333,7 @@ where
         B2: Fn(&Y) -> Result<Bounds, ComputableError>,
         F2: Fn(Y) -> Y,
     {
-        let Computable {
-            state: left_state,
-            bounds: left_bounds,
-            refine: left_refine,
-        } = self;
-        let Computable {
-            state: right_state,
-            bounds: right_bounds,
-            refine: right_refine,
-        } = other;
-
-        let bounds = move |state: &(X, Y)| -> Result<Bounds, ComputableError> {
-            let left = (left_bounds)(&state.0)?;
-            let right = (right_bounds)(&state.1)?;
-            let lower = bounds_lower(&left).sub(bounds_upper(&right))?;
-            let upper = bounds_upper(&left).sub(bounds_lower(&right))?;
-            ordered_pair_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
-        };
-
-        let refine = move |state: (X, Y)| -> (X, Y) {
-            let (left, right) = state;
-            ((left_refine)(left), (right_refine)(right))
-        };
-
-        Computable::new((left_state, right_state), bounds, refine)
-    }
-
-    pub fn neg(self) -> Computable<X, impl Fn(&X) -> Result<Bounds, ComputableError>, impl Fn(X) -> X> {
-        let Computable {
-            state,
-            bounds,
-            refine,
-        } = self;
-
-        let bounds = move |state: &X| -> Result<Bounds, ComputableError> {
-            let existing = (bounds)(state)?;
-            let lower = bounds_lower(&existing).neg();
-            let upper = bounds_upper(&existing).neg();
-            ordered_pair_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
-        };
-
-        Computable::new(state, bounds, refine)
+        self.add(other.neg())
     }
 
     pub fn mul<Y, B2, F2>(
