@@ -7,8 +7,7 @@ this project will define computable numbers in a way that is suitable for perfor
 we represent a computable number in the following way.
 
 first, definitions:
-- let $S$ be the set of finite binary strings
-- let $D = S \times \mathbb{Z}$ be the set of binary numbers: for binary number $(s, n)$, the number represented is $1.s \times 2^n$
+- let $D = \mathbb{Z} \times \mathbb{Z}$ be the set of binary numbers: for binary number $(m, e)$, the number represented is $m \times 2^e$
 - let $B = \{(x, y) \in D \times D \, | \, x \leq y\}$ be the set of valid bounds
 
 then, a computable number is represented as an element of $(X, X \to B, X \to X)$, where:
@@ -32,3 +31,7 @@ note that this definition does not represent *only* computable numbers--there's 
 - a computable number should only have its bounds refined when necessary, e.g. immediately before the final output or when required to satisfy conditions on the input of another function. for example:
     - a program which graphs a computable number to the screen should refine the computable number to some $\epsilon$ smaller than the pixel size right before graphing
     - a program which finds the (real) square root of a computable number and then does something with the result may refine that number until the lower bound is nonnegative (or the upper bound becomes negative and triggers an error). (it would also be permissible to defer the detection of this error until later, when the result is actually used.)
+
+# norms
+
+everything is designed not to panic, and to instead return Result types.
