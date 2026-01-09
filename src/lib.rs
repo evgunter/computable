@@ -172,8 +172,8 @@ impl Binary {
         if shift < 0 {
             return Err(BinaryError::ShiftOverflow);
         }
-        let shift = usize::try_from(shift).map_err(|_| BinaryError::ShiftOverflow)?;
-        Ok(mantissa << shift)
+        let shift_amount = usize::try_from(shift).map_err(|_| BinaryError::ShiftOverflow)?;
+        Ok(mantissa << shift_amount)
     }
 
     fn cmp_shifted(
@@ -187,10 +187,10 @@ impl Binary {
             small_mantissa: &BigInt,
             pair: OrderedPair<Exponent>,
         ) -> Ordering {
-            let shift = pair.delta_usize();
+            let shift_amount_opt = pair.delta_usize();
 
-            if let Some(shift) = shift {
-                let shifted = large_mantissa << shift;
+            if let Some(shift_amount) = shift_amount_opt {
+                let shifted = large_mantissa << shift_amount;
                 shifted.cmp(small_mantissa)
             } else if large_mantissa.is_zero() {
                 BigInt::zero().cmp(small_mantissa)
@@ -270,8 +270,11 @@ impl ExtendedBinary {
             return Ok(Self::NegInf);
         }
         let (mantissa, exponent, sign) = value.integer_decode();
-        let mantissa = BigInt::from(sign) * BigInt::from(mantissa);
-        Ok(Self::Finite(Binary::new(mantissa, Exponent::from(exponent))?))
+        let signed_mantissa = BigInt::from(sign) * BigInt::from(mantissa);
+        Ok(Self::Finite(Binary::new(
+            signed_mantissa,
+            Exponent::from(exponent),
+        )?))
     }
 
     fn add_lower(&self, other: &Self) -> Result<Self, ComputableError> {
@@ -456,6 +459,7 @@ where
         self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(epsilon)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn constant(
         value: Binary,
     ) -> Computable<Binary, fn(&Binary) -> Result<Bounds, ComputableError>, fn(Binary) -> Binary>
@@ -474,27 +478,29 @@ where
         Computable::new(value, bounds, refine)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn neg(self) -> Computable<X, impl Fn(&X) -> Result<Bounds, ComputableError>, impl Fn(X) -> X> {
         let Computable {
             state,
-            bounds,
+            bounds: base_bounds,
             refine,
         } = self;
 
-        let bounds = move |state: &X| -> Result<Bounds, ComputableError> {
-            let existing = (bounds)(state)?;
+        let neg_bounds = move |value_state: &X| -> Result<Bounds, ComputableError> {
+            let existing = (base_bounds)(value_state)?;
             let lower = bounds_lower(&existing).neg();
             let upper = bounds_upper(&existing).neg();
             ordered_pair_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
         };
 
-        Computable::new(state, bounds, refine)
+        Computable::new(state, neg_bounds, refine)
     }
 
     /// represents application of a function to a computable number.
     /// to apply a function, we sadly require more information than the function itself (at least practically):
     /// we need to know how it transforms bounds.
     /// the function being applied may also introduce new state, which needs to be tracked through refinements.
+    #[allow(clippy::type_complexity)]
     pub fn apply_with<S, B2, F2>(
         self,
         extra_state: S,
@@ -515,16 +521,24 @@ where
             refine: base_refine,
         } = self;
 
-        let derived_bounds = move |state: &State<X, S>| -> Result<Bounds, ComputableError> {
-            bounds(&state.inner_state, &state.extra_state, &base_bounds)
-        };
+        let derived_bounds =
+            move |composed_state: &State<X, S>| -> Result<Bounds, ComputableError> {
+                bounds(
+                    &composed_state.inner_state,
+                    &composed_state.extra_state,
+                    &base_bounds,
+                )
+            };
 
-        let derived_refine = move |state: State<X, S>| -> State<X, S> {
-            let (inner_state, extra_state) =
-                refine(state.inner_state, state.extra_state, &base_refine);
+        let derived_refine = move |composed_state: State<X, S>| -> State<X, S> {
+            let (next_inner, next_extra) = refine(
+                composed_state.inner_state,
+                composed_state.extra_state,
+                &base_refine,
+            );
             State {
-                inner_state,
-                extra_state,
+                inner_state: next_inner,
+                extra_state: next_extra,
             }
         };
 
@@ -538,6 +552,7 @@ where
         )
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn inv(
         self,
     ) -> Computable<
@@ -553,13 +568,15 @@ where
             },
             // TODO: make this jump to a greater precision bits based on the width of the bounds
             |inner_state, precision_bits, base_refine| {
-                let inner_state = base_refine(inner_state);
-                let precision_bits = precision_bits + BigInt::one();
-                (inner_state, precision_bits)
+                let next_state = base_refine(inner_state);
+                let next_precision = precision_bits + BigInt::one();
+                (next_state, next_precision)
             },
         )
     }
 
+    #[allow(clippy::should_implement_trait)]
+    #[allow(clippy::type_complexity)]
     pub fn add<Y, B2, F2>(
         self,
         other: Computable<Y, B2, F2>,
@@ -597,6 +614,8 @@ where
         Computable::new((left_state, right_state), bounds, refine)
     }
 
+    #[allow(clippy::should_implement_trait)]
+    #[allow(clippy::type_complexity)]
     pub fn sub<Y, B2, F2>(
         self,
         other: Computable<Y, B2, F2>,
@@ -608,6 +627,8 @@ where
         self.add(other.neg())
     }
 
+    #[allow(clippy::should_implement_trait)]
+    #[allow(clippy::type_complexity)]
     pub fn mul<Y, B2, F2>(
         self,
         other: Computable<Y, B2, F2>,
@@ -664,6 +685,8 @@ where
         Computable::new((left_state, right_state), bounds, refine)
     }
 
+    #[allow(clippy::should_implement_trait)]
+    #[allow(clippy::type_complexity)]
     pub fn div<Y, B2, F2>(
         self,
         other: Computable<Y, B2, F2>,
@@ -734,9 +757,9 @@ fn reciprocal_rounded_abs_extended(
     rounding: ReciprocalRounding,
 ) -> Result<ExtendedBinary, BinaryError> {
     match value {
-        ExtendedBinary::Finite(value) => {
-            let abs_mantissa = value.mantissa().abs();
-            let shift_bits = precision_bits - BigInt::from(value.exponent());
+        ExtendedBinary::Finite(finite_value) => {
+            let abs_mantissa = finite_value.mantissa().abs();
+            let shift_bits = precision_bits - BigInt::from(finite_value.exponent());
             let quotient = if shift_bits.is_negative() {
                 match rounding {
                     ReciprocalRounding::Floor => BigInt::zero(),
@@ -783,10 +806,12 @@ fn precision_bits_to_exponent(precision_bits: &BigInt) -> Result<Exponent, Binar
 fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryError> {
     let upper = bounds_upper(bounds);
     let lower = bounds_lower(bounds);
-    let (ExtendedBinary::Finite(upper), ExtendedBinary::Finite(lower)) = (upper, lower) else {
+    let (ExtendedBinary::Finite(upper_bound), ExtendedBinary::Finite(lower_bound)) =
+        (upper, lower)
+    else {
         return Ok(false);
     };
-    let width = upper.sub(lower)?;
+    let width = upper_bound.sub(lower_bound)?;
     Ok(&width <= epsilon)
 }
 
