@@ -35,3 +35,4 @@ note that this definition does not represent *only* computable numbers--there's 
 # norms
 
 everything is designed not to panic, and to instead return Result types.
+we avoid interior mutability whenever possible.
