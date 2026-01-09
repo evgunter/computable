@@ -41,6 +41,29 @@ impl fmt::Display for BinaryError {
 
 impl std::error::Error for BinaryError {}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtendedBinaryError {
+    Nan,
+    Binary(BinaryError),
+}
+
+impl fmt::Display for ExtendedBinaryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Nan => write!(f, "cannot convert NaN to ExtendedBinary"),
+            Self::Binary(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for ExtendedBinaryError {}
+
+impl From<BinaryError> for ExtendedBinaryError {
+    fn from(error: BinaryError) -> Self {
+        Self::Binary(error)
+    }
+}
+
 /// Exact binary number represented as `mantissa * 2^exponent`.
 /// `mantissa` is normalized to be odd unless the value is zero.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,9 +242,9 @@ impl ExtendedBinary {
         matches!(self, Self::Finite(value) if value.mantissa().is_zero())
     }
 
-    pub fn from_f64(value: f64) -> Result<Self, &'static str> {
+    pub fn from_f64(value: f64) -> Result<Self, ExtendedBinaryError> {
         if value.is_nan() {
-            return Err("cannot convert NaN to ExtendedBinary");
+            return Err(ExtendedBinaryError::Nan);
         }
         if value == 0.0 {
             return Ok(Self::Finite(Binary::zero()));
@@ -234,9 +257,7 @@ impl ExtendedBinary {
         }
         let (mantissa, exponent, sign) = value.integer_decode();
         let mantissa = BigInt::from(sign) * BigInt::from(mantissa);
-        Ok(Self::Finite(
-            Binary::new(mantissa, Exponent::from(exponent)).expect("binary should normalize"),
-        ))
+        Ok(Self::Finite(Binary::new(mantissa, Exponent::from(exponent))?))
     }
 
     fn add_lower(&self, other: &Self) -> Result<Self, ComputableError> {
