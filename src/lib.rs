@@ -68,6 +68,16 @@ impl Binary {
         Self::normalize(lhs - rhs, exponent)
     }
 
+    pub fn neg(&self) -> Self {
+        if self.mantissa.is_zero() {
+            return self.clone();
+        }
+        Self {
+            mantissa: -self.mantissa.clone(),
+            exponent: self.exponent,
+        }
+    }
+
     fn normalize(mut mantissa: BigInt, mut exponent: Exponent) -> Result<Self, BinaryError> {
         if mantissa.is_zero() {
             return Ok(Self {
@@ -321,6 +331,23 @@ where
 
         Computable::new((left_state, right_state), bounds, refine)
     }
+
+    pub fn neg(self) -> Computable<X, impl Fn(&X) -> Result<Bounds, ComputableError>, impl Fn(X) -> X> {
+        let Computable {
+            state,
+            bounds,
+            refine,
+        } = self;
+
+        let bounds = move |state: &X| -> Result<Bounds, ComputableError> {
+            let existing = (bounds)(state)?;
+            let lower = bounds_lower(&existing).neg();
+            let upper = bounds_upper(&existing).neg();
+            ordered_pair_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
+        };
+
+        Computable::new(state, bounds, refine)
+    }
 }
 
 fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryError> {
@@ -547,6 +574,20 @@ mod tests {
             OrderedPair::new(
                 bin(2, 0),
                 bin(5, 0)
+            )
+        );
+    }
+
+    #[test]
+    fn computable_neg_flips_bounds() {
+        let value = interval_computable(1, 3);
+        let negated = value.neg();
+        let bounds = negated.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            OrderedPair::new(
+                bin(-3, 0),
+                bin(-1, 0)
             )
         );
     }
