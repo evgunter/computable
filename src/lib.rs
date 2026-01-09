@@ -376,13 +376,23 @@ where
         (self.bounds)(&self.state)
     }
 
-    pub fn refine_to(mut self, epsilon: Binary) -> Result<(Bounds, Self), ComputableError> {
+    pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
+        mut self,
+        epsilon: Binary,
+    ) -> Result<(Bounds, Self), ComputableError> {
         if !epsilon.mantissa().is_positive() {
             return Err(ComputableError::NonpositiveEpsilon);
         }
 
         let mut bounds = (self.bounds)(&self.state)?;
+        let mut iterations = 0usize;
         while !bounds_width_leq(&bounds, &epsilon)? {
+            if iterations >= MAX_REFINEMENT_ITERATIONS {
+                return Err(ComputableError::MaxRefinementIterations {
+                    max: MAX_REFINEMENT_ITERATIONS,
+                });
+            }
+            iterations += 1;
             if bounds_lower(&bounds) != bounds_upper(&bounds) {
                 let previous = bounds.clone();
                 self.state = (self.refine)(self.state);
@@ -405,6 +415,10 @@ where
         }
 
         Ok((bounds, self))
+    }
+
+    pub fn refine_to_default(self, epsilon: Binary) -> Result<(Bounds, Self), ComputableError> {
+        self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(epsilon)
     }
 
     pub fn constant(
@@ -631,6 +645,11 @@ where
 pub const DEFAULT_INV_MAX_REFINES: usize = 64;
 #[cfg(not(debug_assertions))]
 pub const DEFAULT_INV_MAX_REFINES: usize = 4096;
+
+#[cfg(debug_assertions)]
+pub const DEFAULT_MAX_REFINEMENT_ITERATIONS: usize = 64;
+#[cfg(not(debug_assertions))]
+pub const DEFAULT_MAX_REFINEMENT_ITERATIONS: usize = 4096;
 
 #[derive(Clone, Copy, Debug)]
 enum ReciprocalRounding {
@@ -924,7 +943,7 @@ mod tests {
     fn computable_refine_to_rejects_negative_epsilon() {
         let computable = interval_midpoint_computable(0, 2);
         let epsilon = bin(-1, 0);
-        let result = computable.refine_to(epsilon);
+        let result = computable.refine_to_default(epsilon);
         assert!(matches!(
             result,
             Err(ComputableError::NonpositiveEpsilon)
@@ -936,7 +955,7 @@ mod tests {
         let computable = interval_midpoint_computable(0, 2);
         let epsilon = bin(1, -1);
         let (bounds, refined) = computable
-            .refine_to(epsilon.clone())
+            .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
         let expected = ext(1, 0);
         let width = unwrap_finite(bounds_upper(&bounds))
@@ -953,7 +972,7 @@ mod tests {
     fn computable_refine_to_rejects_zero_epsilon() {
         let computable = interval_midpoint_computable(0, 2);
         let epsilon = bin(0, 0);
-        let result = computable.refine_to(epsilon);
+        let result = computable.refine_to_default(epsilon);
         assert!(matches!(
             result,
             Err(ComputableError::NonpositiveEpsilon)
@@ -965,10 +984,25 @@ mod tests {
         let state = OrderedPair::new(ext(0, 0), ext(2, 0));
         let computable = Computable::new(state, |state| Ok(interval_bounds(state)), |state| state);
         let epsilon = bin(1, -2);
-        let result = computable.refine_to(epsilon);
+        let result = computable.refine_to_default(epsilon);
         assert!(matches!(
             result,
             Err(ComputableError::NonImprovingBounds)
+        ));
+    }
+
+    #[test]
+    fn computable_refine_to_enforces_max_iterations() {
+        let computable = Computable::new(
+            (),
+            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |state| state,
+        );
+        let epsilon = bin(1, -1);
+        let result = computable.refine_to::<5>(epsilon);
+        assert!(matches!(
+            result,
+            Err(ComputableError::MaxRefinementIterations { max: 5 })
         ));
     }
 
@@ -982,7 +1016,7 @@ mod tests {
         );
         let epsilon = bin(1, -1);
         let (bounds, refined) = computable
-            .refine_to(epsilon)
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
         assert!(bounds_lower(&bounds) < bounds_upper(&bounds));
         assert_eq!(refined.bounds().expect("bounds should succeed"), bounds);
@@ -1051,7 +1085,7 @@ mod tests {
         let inv = value.inv();
         let epsilon = bin(1, -8);
         let (bounds, _) = inv
-            .refine_to(epsilon.clone())
+            .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
         let lower = unwrap_finite(bounds_lower(&bounds));
         let upper = unwrap_finite(bounds_upper(&bounds));
@@ -1138,7 +1172,7 @@ mod tests {
 
         let epsilon = bin(1, -12);
         let (bounds, _) = expr
-            .refine_to(epsilon.clone())
+            .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds_lower(&bounds));
