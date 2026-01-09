@@ -6,4 +6,4 @@
 - Reuse code and use external dependencies heavily. Before implementing something, make sure that it doesn't already exist in the codebase, and consider if there's a library that can be imported instead of implementing it yourself. We want to be able to maintain the minimum amount of code that gets the job done, even if that means introducing dependencies. If you don't know of a library but think one might be plausible, search the web. (I'm even open to using random GitHub projects, but run anything that's not a well-established library by me first so I can check if it's likely to be reliable.)
 - Use the power of the type system to constrain your code and provide some assurance of correctness. If some required property can't be guaranteed by the type system, it should be runtime checked (i.e. explode if it fails) and should have a corresponding unit test.
 - To reiterate: code correctness and quality is the most important concern here.
-- Include a `Co-authored-by: <model name>` trailer on commits you create.
+- Include a `Co-authored-by: <agent name>` trailer on commits you create (e.g., `Co-authored-by: Codex`).
