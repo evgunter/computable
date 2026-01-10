@@ -33,10 +33,46 @@ for example, given computable numbers $C_0 = (x_0, b_0, f_0)$ and $C_1 = (x_1, b
 
 sadly, the implementation cannot exactly realize the formalism.
 
-- many operations are fallible: bounds functions and composed operations return `Result` rather than only the types specified above. the refinement function `f` itself is infallible in the implementation, but `Computable::refine_to` can fail when validating the refinement progress
+- many operations are fallible: bounds functions and composed operations return `Result` rather than only the types specified above. the refinement function $f$ itself is infallible in the implementation, but `Computable::refine_to` can fail when validating the refinement progress
 - refinement is bounded: `Computable::refine_to` stops after a maximum number of iterations and returns an error instead of looping forever. note that default iteration limits differ by build: debug builds use a smaller max to catch issues quickly, while release builds allow more refinements for accuracy.
-- we do not (and cannot) enforce that the provided `f` actually satisfies the convergence requirement from the formalism; this is the caller's responsibility. violations may lead to runtime errors. the implementation only checks that, on refinement, the state does change and the bounds don't get worse (since these are necessary conditions which are easy to check).
+- we do not (and cannot) enforce that the provided $f$ actually satisfies the convergence requirement from the formalism; this is the caller's responsibility. violations may lead to runtime errors. the implementation only checks that, on refinement, the state does change and the bounds don't get worse (since these are necessary conditions which are easy to check).
 <!-- TODO: reconsider `Exponent = i64` vs `BigInt` for a more faithful D = Z × Z representation. -->
+
+# internal design of computable numbers
+
+## key features
+- no recomputation: if the same computable number is used multiple times in an expression, when that expression is refined, the refinement of the computable number is shared between all instances
+- hiding internal state: although the computable number will mutate its state $x$ on refinement, the users of the computable number can't see the state directly. they may only perceive it indirectly via time required to return (if long, the state must not have been refined much yet) and returned precision (if in excess of requested, the computable number was probably already refined to a greater precision than requested).
+- parallelism: if an expression being refined has multiple components that need to be refined separately, those sub-refinements run in parallel.
+
+## design
+- i use the term 'composition' to refer to a computable number which contains multiple base computable numbers. for example, $\sqrt{a + ab}$ is a composition. $a + a$ is also considered a composition even though the constituent computable numbers are identical. (however, $2a$ is not a composition; it has only a single constituent to refine.)
+- compositions are structured as binary trees. <!-- it's possible that this binary tree requirement will need to be relaxed, but i'm going to start out assuming that it does not -->
+- when a composition is refined, all its branches are refined in parallel.
+- refinements of the branches are propagated upwards live, and refinement is halted as soon as the overall expression reaches the required precision.
+
+### example
+let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon$.
+- the current value of the expression is computed
+    - step inside the $\sqrt{}$
+        - consider both sides of the addition in parallel
+            - left branch: get the current bounds on $a$. suppose these are $(-1, 0.5)$
+            - right branch
+                - consider both sides of the multiplication in parallel
+                    - get the current bounds on $a$: $(-1, 0.5)$
+                    - get the current bounds on $b$: $(4, 6)$
+                - combine both sides of the multiplication to get bounds on $ab$: $(-6, 3)$
+        - combine both sides of the addition to get bounds on $a + ab$: $(-7, 3.5)$
+    - apply $\sqrt{}$ to these bounds: error, bounds not fully contained in domain. refinement is required
+- refine $\sqrt{a + ab}$
+    - step inside the $\sqrt{}$
+        - consider both sides of the addition in parallel
+            - left branch: acquire the refinement lock on $a$ and refine $a$ repeatedly. on each refinement, publish the new bounds for reading elsewhere. let's suppose the successive refinements are $(-0.5, 0.5)$, $(-0.25, 0.25)$, $(0.125, 0.25)$, ...
+            - right branch: consider both sides of the multiplication in parallel
+                - left branch: try to acquire the refinement lock on $a$. since the refinement lock is already acquired, instead subscribe to updates on $a$'s bounds.
+                - right branch: acquire the refinement lock on $b$. let's suppose refining $b$ is quite slow, and no refinements come in for now.
+            - the multiplication receives refinements of its left branch $a$ (and is listening for refinements of $b$, but we're supposing refining $b$ is slow). when a new refinement comes in, it recalculates the multiplication bounds. for the successive refinements of $a$ that we supposed, this would yield $(-3, 3)$, $(-1.5, 1.5)$, $(0.75, 1.5)$
+            
 
 # norms
 
