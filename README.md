@@ -21,6 +21,7 @@ for example, $\sqrt{2}$ could be represented as a computable number by setting $
 note that this definition does not represent *only* computable numbers--there's no guarantee that the upper and lower bounds actually converge. it's the responsibility of whatever constructs the computable number to ensure that repeated applications of $f$ actually make the bounds converge! (maybe if we had an actual proof system we could require a proof that it does converge...)
 
 there are a few ways the implementation diverges from this abstraction; see [deviations from the formalism](#deviations-from-the-formalism) below.
+<!-- TODO: consider requiring refine_to rather than refine, so that it's possible to make smart decisions about how to prioritize increasing the precision of different parts of the answer in order to obtain a desired precision>
 
 # features
 
