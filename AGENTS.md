@@ -7,3 +7,4 @@
 - Use the power of the type system to constrain your code and provide some assurance of correctness. If some required property can't be guaranteed by the type system, it should be runtime checked (i.e. explode if it fails) and should have a corresponding unit test.
 - To reiterate: code correctness and quality is the most important concern here.
 - Include a `Co-authored-by: <agent name>` trailer on commits you create (e.g., `Co-authored-by: Codex`).
+- Always run `cargo test` before completing a task. Run `cargo clippy` before creating a pull request.
