@@ -52,7 +52,7 @@ sadly, the implementation cannot exactly realize the formalism.
 - refinements of the branches are propagated upwards live, and refinement is halted as soon as the overall expression reaches the required precision.
 
 ### example
-let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon$.
+let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$.
 - the current value of the expression is computed
     - step inside the $\sqrt{}$
         - consider both sides of the addition in parallel
@@ -63,7 +63,7 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon$.
                     - get the current bounds on $b$: $(4, 6)$
                 - combine both sides of the multiplication to get bounds on $ab$: $(-6, 3)$
         - combine both sides of the addition to get bounds on $a + ab$: $(-7, 3.5)$
-    - apply $\sqrt{}$ to these bounds: error, bounds not fully contained in domain. refinement is required
+    - apply $\sqrt{}$ to these bounds: error, bounds not fully contained in domain. refinement is required. (if the bounds did not contain any of its domain, we would finish with an error.)
 - refine $\sqrt{a + ab}$
     - step inside the $\sqrt{}$
         - consider both sides of the addition in parallel
@@ -71,8 +71,15 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon$.
             - right branch: consider both sides of the multiplication in parallel
                 - left branch: try to acquire the refinement lock on $a$. since the refinement lock is already acquired, instead subscribe to updates on $a$'s bounds.
                 - right branch: acquire the refinement lock on $b$. let's suppose refining $b$ is quite slow, and no refinements come in for now.
-            - the multiplication receives refinements of its left branch $a$ (and is listening for refinements of $b$, but we're supposing refining $b$ is slow). when a new refinement comes in, it recalculates the multiplication bounds. for the successive refinements of $a$ that we supposed, this would yield $(-3, 3)$, $(-1.5, 1.5)$, $(0.75, 1.5)$
-            
+            - the multiplication receives refinements of its left branch $a$ (and is listening for refinements of $b$, but we're supposing refining $b$ is slow). when a new refinement comes in, it recalculates the multiplication bounds. for the successive refinements of $a$ that we supposed, this would yield $(-3, 3)$, $(-1.5, 1.5)$, $(0.75, 1.5)$, ...
+        - similarly, the addition receives refinements of its left branch $a$ and right branch $ab$ and recalculates the addition bounds. the refinements from left and right may come in in any order; let's suppose this yields $(-6.5, 3.5)$, $(-3.5, 3.5)$, $(-2, 2)$, $(0.25, 2)$. (note that it is possible for the right expression $ab$ to be using a more refined $a$ than the left expression $a$, if the addition recieves the left update slowly.)
+    - the $\sqrt{}$ receives refinements of its argument and recomputes itself. for $(-6.5, 3.5)$, $(-3.5, 3.5)$, and $(-2, 2)$ the bounds are still not fully contained in the domain of $\sqrt{}$, so it does not halt the refinement. for $(0.25, 2)$, since $\sqrt{}$ is increasing, the bounds are $(\sqrt{0.25}, \sqrt{2})$. these are both represented as computable numbers themselves, so to figure out if the desired precision has been attained, they too must be refined. both of these refinements proceed in parallel with each other and with $a$ and $b$ and the expressions built from them (including $\sqrt{}$ itself--it does not wait until the refinement of $\sqrt{0.25}$ and $\sqrt{2}$ is done to recompute).
+        - refining $\sqrt{0.25}$: let's suppose that our initial bounds are $(0.25, 1)$ and our refinement algorithm is binary search (though in practice, hopefully we'd be using an algorithm that quickly detects that there is an exact answer). this yields $(0.25, 0.625)$, $(0.4375, 0.625)$, $(0.4375, 0.53125)$, ...
+        - refining $\sqrt{2}$: let's suppose that our initial bounds are $(1, 2)$ and our refinement algorithm is binary search. this yields $(1, 1.5)$, $(1.25, 1.5)$, $(1.375, 1.5)$, $(1.375, 1.4375)$ ...
+    - the $\sqrt{}$ receives the refinements of $\sqrt{0.25}$ and $\sqrt{2}$, also in some arbitrary order. it will compute the outer bounds to see if they become narrower than $\epsilon$ (meaning the precision has been attained), and the inner bounds to see if they become wider than our $\epsilon$ of 1 (meaning the desired precision cannot be obtained without further refining $a + ab$ itself). let's suppose that it recieves refinements of $\sqrt{2}$ and $\sqrt{0.25}$ in alternation. then it will obtain outer bounds of $(0.25, 2)$ and inner bounds of $(1, 1)$; $(0.25, 1.5)$ and $(1, 1)$; $(0.25, 1.5)$ and $(0.625, 1)$; $(0.25, 1.5)$ and $(0.625, 1.25)$; $(0.4375, 1.5)$ and $(0.625, 1.25)$; $(0.4375, 1.5)$ and $(0.625, 1.375)$; $(0.4375, 1.5)$ and $(0.53125, 1.375)$; $(0.4375, 1.4375)$ and $(0.53125, 1.375)$. the outer bounds now have a width of 1, which is exactly $\epsilon$, so refinement stops. the refinement of $\sqrt{a + ab}$ to $\epsilon=1$ returns $(0.4375, 1.4375)$, and all the other parallel processes are halted. (however, any refinements made to $a$ and $b$ which were already performed but didn't percolate up to $\sqrt{}$ in time to affect the output will be maintained, and if $\sqrt{a + ab}$ is refined again with a smaller $\epsilon$, they will be available at the start of that computation.)
+
+(note that, in general, the constraints on a composition may be narrower than the combination of the constraints on each side considered independently; for example, $a - ab$ with bounds on $a$ of $(-1, 0.5)$ and bounds on $b$ of $(4, 6)$ is bounded by $(-2.5, 5)$, but considering $a$ and $ab$ independently (i.e. ignoring the fact that $a$ is in both) would yield $(-4, 6.5)$. we ignore this for now, always considering the sides independently, but this might be a place for further improvements.)
+
 
 # norms
 
