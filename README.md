@@ -18,8 +18,6 @@ then, a computable number is represented as an element of $(X, X \to B, X \to X)
 
 for example, $\sqrt{2}$ could be represented as a computable number by setting $x$ to just be the current lower and upper bound (e.g. $x$ could be initialized as $(0, 2)$), with an $f$ which takes the midpoint between the lower and upper bounds, squares it, compares it to 2, and depending on the result replaces the upper or lower bound with the former midpoint.
 
-note that this definition does not represent *only* computable numbers--there's no guarantee that the upper and lower bounds actually converge. it's the responsibility of whatever constructs the computable number to ensure that repeated applications of $f$ actually make the bounds converge! (maybe if we had an actual proof system we could require a proof that it does converge...)
-
 there are a few ways the implementation diverges from this abstraction; see [deviations from the formalism](#deviations-from-the-formalism) below.
 <!-- TODO: consider requiring refine_to rather than refine, so that it's possible to make smart decisions about how to prioritize increasing the precision of different parts of the answer in order to obtain a desired precision-->
 
@@ -35,7 +33,8 @@ sadly, the implementation cannot exactly realize the formalism.
 
 - many operations are fallible: bounds functions and composed operations return `Result` rather than only the types specified above. the refinement function $f$ itself is infallible in the implementation, but `Computable::refine_to` can fail when validating the refinement progress
 - refinement is bounded: `Computable::refine_to` stops after a maximum number of iterations and returns an error instead of looping forever. note that default iteration limits differ by build: debug builds use a smaller max to catch issues quickly, while release builds allow more refinements for accuracy.
-- we do not (and cannot) enforce that the provided $f$ actually satisfies the convergence requirement from the formalism; this is the caller's responsibility. violations may lead to runtime errors. the implementation only checks that, on refinement, the state does change and the bounds don't get worse (since these are necessary conditions which are easy to check).
+- we do not (and cannot. but maybe if we had an actual proof system...) enforce that the provided $f$ actually satisfies the convergence requirement from the formalism; this is the caller's responsibility. violations may lead to runtime errors. the implementation only checks that, on refinement, the state does change and the bounds don't get worse (since these are necessary conditions which are easy to check).
+
 <!-- TODO: reconsider `Exponent = i64` vs `BigInt` for a more faithful D = Z × Z representation. -->
 
 # internal design of computable numbers
@@ -63,7 +62,7 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$
                     - get the current bounds on $b$: $(4, 6)$
                 - combine both sides of the multiplication to get bounds on $ab$: $(-6, 3)$
         - combine both sides of the addition to get bounds on $a + ab$: $(-7, 3.5)$
-    - apply $\sqrt{}$ to these bounds: error, bounds not fully contained in domain. refinement is required. (if the bounds did not contain any of its domain, we would finish with an error.)
+    - apply $\sqrt{}$ to these bounds: recoverable error, since the bounds are not fully contained in the domain of $\sqrt{}$. refinement is required. (if the bounds did not contain any of the domain of $\sqrt{}$, we would finish with an irrecoverable error.)
 - refine $\sqrt{a + ab}$
     - step inside the $\sqrt{}$
         - consider both sides of the addition in parallel
