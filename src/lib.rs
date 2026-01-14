@@ -21,7 +21,7 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
-use parking_lot::RwLock;
+use parking_lot::{Condvar, Mutex, RwLock};
 
 mod binary;
 mod concurrency;
@@ -216,8 +216,34 @@ impl Computable {
             return Err(ComputableError::NonpositiveEpsilon);
         }
 
-        let graph = RefinementGraph::new(Arc::clone(&self.node))?;
-        graph.refine_to::<MAX_REFINEMENT_ITERATIONS>(&epsilon)
+        loop {
+            let bounds = self.node.get_bounds()?;
+            if bounds_width_leq(&bounds, &epsilon)? {
+                return Ok(bounds);
+            }
+
+            let mut state_guard = self.node.refinement.state.lock();
+            if !state_guard.active {
+                state_guard.active = true;
+                drop(state_guard);
+
+                let graph = RefinementGraph::new(Arc::clone(&self.node))?;
+                let result = graph.refine_to::<MAX_REFINEMENT_ITERATIONS>(&epsilon);
+
+                let mut completion_guard = self.node.refinement.state.lock();
+                completion_guard.active = false;
+                self.node.refinement.condvar.notify_all();
+                return result;
+            }
+
+            let observed_epoch = state_guard.epoch;
+            self.node
+                .refinement
+                .condvar
+                .wait_while(&mut state_guard, |guard| {
+                    guard.active && guard.epoch == observed_epoch
+                });
+        }
     }
 
     pub fn refine_to_default(&self, epsilon: Binary) -> Result<Bounds, ComputableError> {
@@ -465,6 +491,7 @@ struct Node {
     id: usize,
     op: Arc<dyn NodeOp>,
     bounds_cache: RwLock<Option<Bounds>>,
+    refinement: RefinementSync,
 }
 
 impl Node {
@@ -474,6 +501,7 @@ impl Node {
             id: NODE_IDS.fetch_add(1, Ordering::Relaxed),
             op,
             bounds_cache: RwLock::new(None),
+            refinement: RefinementSync::new(),
         })
     }
 
@@ -496,6 +524,7 @@ impl Node {
     fn set_bounds(&self, bounds: Bounds) {
         let mut cache = self.bounds_cache.write();
         *cache = Some(bounds);
+        self.refinement.notify_bounds_updated();
     }
 
     /// Computes bounds for this node from current children/base state.
@@ -514,6 +543,34 @@ impl Node {
 
     fn is_refiner(&self) -> bool {
         self.op.is_refiner()
+    }
+}
+
+struct RefinementSync {
+    state: Mutex<RefinementState>,
+    condvar: Condvar,
+}
+
+struct RefinementState {
+    active: bool,
+    epoch: u64,
+}
+
+impl RefinementSync {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(RefinementState {
+                active: false,
+                epoch: 0,
+            }),
+            condvar: Condvar::new(),
+        }
+    }
+
+    fn notify_bounds_updated(&self) {
+        let mut state = self.state.lock();
+        state.epoch = state.epoch.wrapping_add(1);
+        self.condvar.notify_all();
     }
 }
 
@@ -1326,6 +1383,62 @@ mod tests {
             assert!(bounds_lower(&bounds) <= bounds_upper(&main_bounds));
             assert!(bounds_lower(&main_bounds) <= bounds_upper(&bounds));
         }
+    }
+
+    #[test]
+    fn concurrent_refine_to_uses_single_refiner() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let active_refines = Arc::new(AtomicUsize::new(0));
+        let saw_overlap = Arc::new(AtomicBool::new(false));
+
+        let shared_active = Arc::clone(&active_refines);
+        let shared_overlap = Arc::clone(&saw_overlap);
+        let computable = Computable::new(
+            OrderedPair::new(ext(0, 0), ext(4, 0)),
+            |state| Ok(state.clone()),
+            move |state: IntervalState| {
+                let prior = shared_active.fetch_add(1, Ordering::SeqCst);
+                if prior > 0 {
+                    shared_overlap.store(true, Ordering::SeqCst);
+                }
+                thread::sleep(Duration::from_millis(10));
+                let next = interval_refine(state);
+                shared_active.fetch_sub(1, Ordering::SeqCst);
+                next
+            },
+        );
+
+        let shared = Arc::new(computable);
+        let epsilon = bin(1, -6);
+        let barrier = Arc::new(Barrier::new(3));
+
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let shared_value = Arc::clone(&shared);
+            let shared_barrier = Arc::clone(&barrier);
+            let thread_epsilon = epsilon.clone();
+            handles.push(thread::spawn(move || {
+                shared_barrier.wait();
+                shared_value
+                    .refine_to_default(thread_epsilon)
+                    .expect("refine_to should succeed")
+            }));
+        }
+
+        barrier.wait();
+        let main_bounds = shared
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed");
+
+        for handle in handles {
+            let bounds = handle.join().expect("thread should join");
+            assert!(bounds_lower(&bounds) <= bounds_upper(&bounds));
+        }
+
+        assert!(!saw_overlap.load(Ordering::SeqCst));
+        assert!(bounds_width_leq(&main_bounds, &epsilon).expect("width should compute"));
     }
 
     #[test]
