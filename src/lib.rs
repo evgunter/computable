@@ -275,6 +275,12 @@ impl Computable {
     }
 }
 
+impl From<Binary> for Computable {
+    fn from(value: Binary) -> Self {
+        Computable::constant(value)
+    }
+}
+
 impl std::ops::Neg for Computable {
     type Output = Self;
 
@@ -1175,6 +1181,21 @@ mod tests {
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
         assert_eq!(bounds, OrderedPair::new(ext(-8, 0), ext(12, 0)));
+    }
+
+    #[test]
+    fn computable_from_binary_matches_constant_bounds() {
+        let value = bin(3, 0);
+        let computable: Computable = value.clone().into();
+
+        let bounds = computable.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            OrderedPair::new(
+                ExtendedBinary::Finite(value.clone()),
+                ExtendedBinary::Finite(value)
+            )
+        );
     }
 
     // --- test more complex expressions ---
