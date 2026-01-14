@@ -12,15 +12,23 @@
     clippy::unwrap_used
 )]
 
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
+use parking_lot::RwLock;
 
 mod binary;
+mod concurrency;
 mod ordered_pair;
 
 pub use binary::{Binary, BinaryError, Exponent, ExtendedBinary, ExtendedBinaryError};
+use concurrency::StopFlag;
 pub use ordered_pair::{OrderedPair, OrderedPairError};
 
 pub type Bounds = OrderedPair<ExtendedBinary>;
@@ -33,6 +41,11 @@ pub fn bounds_upper(bounds: &Bounds) -> &ExtendedBinary {
     bounds.large()
 }
 
+/// Shared API for retrieving bounds with lazy computation.
+trait BoundsAccess {
+    fn get_bounds(&self) -> Result<Bounds, ComputableError>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ComputableError {
     NonpositiveEpsilon,
@@ -40,6 +53,7 @@ pub enum ComputableError {
     BoundsWorsened,
     StateUnchanged,
     ExcludedValueUnreachable,
+    RefinementChannelClosed,
     MaxRefinementIterations { max: usize },
     Binary(BinaryError),
 }
@@ -52,6 +66,9 @@ impl fmt::Display for ComputableError {
             Self::BoundsWorsened => write!(f, "refinement produced worse bounds"),
             Self::StateUnchanged => write!(f, "refinement did not change state"),
             Self::ExcludedValueUnreachable => write!(f, "cannot refine bounds to exclude value"),
+            Self::RefinementChannelClosed => {
+                write!(f, "refinement coordination channel closed")
+            }
             Self::MaxRefinementIterations { max } => {
                 write!(f, "maximum refinement iterations ({max}) reached")
             }
@@ -68,84 +85,155 @@ impl From<BinaryError> for ComputableError {
     }
 }
 
-pub struct Computable<X, B, F> {
-    state: X,
+/// Type-erased base node so we can store heterogeneous leaf states in a single graph.
+/// This is also the hook for future user-defined base nodes.
+trait BaseNode: Send + Sync {
+    fn get_bounds(&self) -> Result<Bounds, ComputableError>;
+    fn refine(&self) -> Result<(), ComputableError>;
+}
+
+/// Concrete base node that owns the user-provided state and refinement logic.
+struct TypedBaseNode<X, B, F>
+where
+    X: Eq + Clone + Send + Sync + 'static,
+    B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+    F: Fn(X) -> X + Send + Sync + 'static,
+{
+    /// Snapshot ties a particular state with its computed bounds to avoid recomputation.
+    snapshot: RwLock<BaseSnapshot<X>>,
     bounds: B,
     refine: F,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct State<X, S> {
-    inner_state: X,
-    extra_state: S,
+/// Cached base state plus bounds derived from that state.
+#[derive(Clone)]
+struct BaseSnapshot<X> {
+    state: X,
+    bounds: Option<Bounds>,
 }
 
-impl<X, B, F> Computable<X, B, F>
+impl<X, B, F> TypedBaseNode<X, B, F>
 where
-    B: Fn(&X) -> Result<Bounds, ComputableError>,
-    F: Fn(X) -> X,
+    X: Eq + Clone + Send + Sync + 'static,
+    B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+    F: Fn(X) -> X + Send + Sync + 'static,
 {
-    pub fn new(state: X, bounds: B, refine: F) -> Self {
+    fn new(state: X, bounds: B, refine: F) -> Self {
         Self {
-            state,
+            snapshot: RwLock::new(BaseSnapshot {
+                state,
+                bounds: None,
+            }),
             bounds,
             refine,
         }
     }
 
+    fn snapshot_bounds(&self, snapshot: &mut BaseSnapshot<X>) -> Result<Bounds, ComputableError> {
+        if let Some(bounds) = &snapshot.bounds {
+            return Ok(bounds.clone());
+        }
+        let bounds = (self.bounds)(&snapshot.state)?;
+        snapshot.bounds = Some(bounds.clone());
+        Ok(bounds)
+    }
+}
+
+impl<X, B, F> BaseNode for TypedBaseNode<X, B, F>
+where
+    X: Eq + Clone + Send + Sync + 'static,
+    B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+    F: Fn(X) -> X + Send + Sync + 'static,
+{
+    /// Returns cached bounds for the current base state, computing and caching if needed.
+    fn get_bounds(&self) -> Result<Bounds, ComputableError> {
+        let mut snapshot = self.snapshot.write();
+        let bounds = self.snapshot_bounds(&mut snapshot)?;
+        Ok(bounds)
+    }
+
+    /// Refines the base state and computes the new bounds for that refined state.
+    fn refine(&self) -> Result<(), ComputableError> {
+        let mut snapshot = self.snapshot.write();
+        let previous_bounds = self.snapshot_bounds(&mut snapshot)?;
+        let previous_state = snapshot.state.clone();
+        let next_state = (self.refine)(previous_state.clone());
+        if next_state == previous_state {
+            if bounds_lower(&previous_bounds) == bounds_upper(&previous_bounds) {
+                return Ok(());
+            }
+            return Err(ComputableError::StateUnchanged);
+        }
+
+        let next_bounds = (self.bounds)(&next_state)?;
+        let lower_worsened = bounds_lower(&next_bounds) < bounds_lower(&previous_bounds);
+        let upper_worsened = bounds_upper(&next_bounds) > bounds_upper(&previous_bounds);
+        if lower_worsened || upper_worsened {
+            return Err(ComputableError::BoundsWorsened);
+        }
+
+        snapshot.state = next_state;
+        snapshot.bounds = Some(next_bounds);
+
+        Ok(())
+    }
+}
+
+impl<T: BaseNode + ?Sized> BoundsAccess for T {
+    fn get_bounds(&self) -> Result<Bounds, ComputableError> {
+        BaseNode::get_bounds(self)
+    }
+}
+
+/// A computable number backed by a shared node graph.
+#[derive(Clone)]
+pub struct Computable {
+    node: Arc<Node>,
+}
+
+impl Computable {
+    pub fn new<X, B, F>(state: X, bounds: B, refine: F) -> Self
+    where
+        X: Eq + Clone + Send + Sync + 'static,
+        B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+        F: Fn(X) -> X + Send + Sync + 'static,
+    {
+        let base_node_struct = TypedBaseNode::new(state, bounds, refine);
+        let base_node = Arc::new(base_node_struct);
+        let node = Node::new(Arc::new(BaseOp { base: base_node }));
+        Self { node }
+    }
+
     pub fn bounds(&self) -> Result<Bounds, ComputableError> {
-        (self.bounds)(&self.state)
+        self.node.get_bounds()
     }
 
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
-        mut self,
+        &self,
         epsilon: Binary,
-    ) -> Result<(Bounds, Self), ComputableError>
-    where
-        X: Eq + Clone,
-    {
+    ) -> Result<Bounds, ComputableError> {
         if !epsilon.mantissa().is_positive() {
             return Err(ComputableError::NonpositiveEpsilon);
         }
 
-        let mut bounds = (self.bounds)(&self.state)?;
-        let mut iterations = 0usize;
-        while !bounds_width_leq(&bounds, &epsilon)? {
-            if iterations >= MAX_REFINEMENT_ITERATIONS {
-                return Err(ComputableError::MaxRefinementIterations {
-                    max: MAX_REFINEMENT_ITERATIONS,
-                });
-            }
-            iterations += 1;
-            let previous_bounds = bounds.clone();
-            let previous_state = self.state.clone();
-            self.state = (self.refine)(self.state);
-            if self.state == previous_state {
-                return Err(ComputableError::StateUnchanged);
-            }
-            bounds = (self.bounds)(&self.state)?;
-            let lower_worsened = bounds_lower(&bounds) < bounds_lower(&previous_bounds);
-            let upper_worsened = bounds_upper(&bounds) > bounds_upper(&previous_bounds);
-            if lower_worsened || upper_worsened {
-                return Err(ComputableError::BoundsWorsened);
-            }
-        }
-
-        Ok((bounds, self))
+        let graph = RefinementGraph::new(Arc::clone(&self.node))?;
+        graph.refine_to::<MAX_REFINEMENT_ITERATIONS>(&epsilon)
     }
 
-    pub fn refine_to_default(self, epsilon: Binary) -> Result<(Bounds, Self), ComputableError>
-    where
-        X: Eq + Clone,
-    {
+    pub fn refine_to_default(&self, epsilon: Binary) -> Result<Bounds, ComputableError> {
         self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(epsilon)
     }
 
+    pub fn inv(self) -> Self {
+        let node = Node::new(Arc::new(InvOp {
+            inner: Arc::clone(&self.node),
+            precision_bits: RwLock::new(BigInt::zero()),
+        }));
+        Self { node }
+    }
+
     #[allow(clippy::type_complexity)]
-    pub fn constant(
-        value: Binary,
-    ) -> Computable<Binary, fn(&Binary) -> Result<Bounds, ComputableError>, fn(Binary) -> Binary>
-    {
+    pub fn constant(value: Binary) -> Self {
         fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
             Ok(OrderedPair::new(
                 ExtendedBinary::Finite(value.clone()),
@@ -159,244 +247,505 @@ where
 
         Computable::new(value, bounds, refine)
     }
+}
 
-    #[allow(clippy::should_implement_trait)]
-    pub fn neg(
-        self,
-    ) -> Computable<X, impl Fn(&X) -> Result<Bounds, ComputableError>, impl Fn(X) -> X> {
-        let Computable {
-            state,
-            bounds: base_bounds,
-            refine,
-        } = self;
+impl std::ops::Neg for Computable {
+    type Output = Self;
 
-        let neg_bounds = move |value_state: &X| -> Result<Bounds, ComputableError> {
-            let existing = (base_bounds)(value_state)?;
-            let lower = bounds_lower(&existing).neg();
-            let upper = bounds_upper(&existing).neg();
-            OrderedPair::new_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
-        };
+    fn neg(self) -> Self::Output {
+        let node = Node::new(Arc::new(NegOp {
+            inner: Arc::clone(&self.node),
+        }));
+        Self { node }
+    }
+}
 
-        Computable::new(state, neg_bounds, refine)
+impl std::ops::Add for Computable {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let node = Node::new(Arc::new(AddOp {
+            left: Arc::clone(&self.node),
+            right: Arc::clone(&rhs.node),
+        }));
+        Self { node }
+    }
+}
+
+impl std::ops::Sub for Computable {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self + (-rhs)
+    }
+}
+
+impl std::ops::Mul for Computable {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        let node = Node::new(Arc::new(MulOp {
+            left: Arc::clone(&self.node),
+            right: Arc::clone(&rhs.node),
+        }));
+        Self { node }
+    }
+}
+
+#[allow(clippy::suspicious_arithmetic_impl)]
+impl std::ops::Div for Computable {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        self * rhs.inv()
+    }
+}
+
+/// Node operator for composed computables.
+/// TODO: enable user-defined composed nodes (e.g. sine) via this trait.
+trait NodeOp: Send + Sync {
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError>;
+    fn refine_step(&self) -> Result<bool, ComputableError>;
+    fn children(&self) -> Vec<Arc<Node>>;
+    fn is_refiner(&self) -> bool;
+}
+
+struct BaseOp {
+    base: Arc<dyn BaseNode>,
+}
+
+impl NodeOp for BaseOp {
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+        BoundsAccess::get_bounds(self.base.as_ref())
     }
 
-    /// represents application of a function to a computable number.
-    /// to apply a function, we sadly require more information than the function itself (at least practically):
-    /// we need to know how it transforms bounds.
-    /// the function being applied may also introduce new state, which needs to be tracked through refinements.
-    #[allow(clippy::type_complexity)]
-    pub fn apply_with<S, B2, F2>(
-        self,
-        extra_state: S,
-        bounds: B2,
-        refine: F2,
-    ) -> Computable<
-        State<X, S>,
-        impl Fn(&State<X, S>) -> Result<Bounds, ComputableError>,
-        impl Fn(State<X, S>) -> State<X, S>,
-    >
-    where
-        B2: Fn(&X, &S, &B) -> Result<Bounds, ComputableError>,
-        F2: Fn(X, S, &F) -> (X, S),
-    {
-        let Computable {
-            state,
-            bounds: base_bounds,
-            refine: base_refine,
-        } = self;
+    fn refine_step(&self) -> Result<bool, ComputableError> {
+        self.base.refine()?;
+        Ok(true)
+    }
 
-        let derived_bounds =
-            move |composed_state: &State<X, S>| -> Result<Bounds, ComputableError> {
-                bounds(
-                    &composed_state.inner_state,
-                    &composed_state.extra_state,
-                    &base_bounds,
-                )
+    fn children(&self) -> Vec<Arc<Node>> {
+        Vec::new()
+    }
+
+    fn is_refiner(&self) -> bool {
+        true
+    }
+}
+
+struct NegOp {
+    inner: Arc<Node>,
+}
+
+impl NodeOp for NegOp {
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+        let existing = self.inner.get_bounds()?;
+        let lower = bounds_lower(&existing).neg();
+        let upper = bounds_upper(&existing).neg();
+        OrderedPair::new_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
+    }
+
+    fn refine_step(&self) -> Result<bool, ComputableError> {
+        Ok(false)
+    }
+
+    fn children(&self) -> Vec<Arc<Node>> {
+        vec![Arc::clone(&self.inner)]
+    }
+
+    fn is_refiner(&self) -> bool {
+        false
+    }
+}
+
+struct AddOp {
+    left: Arc<Node>,
+    right: Arc<Node>,
+}
+
+impl NodeOp for AddOp {
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+        let left_bounds = self.left.get_bounds()?;
+        let right_bounds = self.right.get_bounds()?;
+        let lower = bounds_lower(&left_bounds).add_lower(bounds_lower(&right_bounds))?;
+        let upper = bounds_upper(&left_bounds).add_upper(bounds_upper(&right_bounds))?;
+        OrderedPair::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
+    }
+
+    fn refine_step(&self) -> Result<bool, ComputableError> {
+        Ok(false)
+    }
+
+    fn children(&self) -> Vec<Arc<Node>> {
+        vec![Arc::clone(&self.left), Arc::clone(&self.right)]
+    }
+
+    fn is_refiner(&self) -> bool {
+        false
+    }
+}
+
+struct MulOp {
+    left: Arc<Node>,
+    right: Arc<Node>,
+}
+
+impl NodeOp for MulOp {
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+        let left_bounds = self.left.get_bounds()?;
+        let right_bounds = self.right.get_bounds()?;
+        let left_lower = bounds_lower(&left_bounds);
+        let left_upper = bounds_upper(&left_bounds);
+        let right_lower = bounds_lower(&right_bounds);
+        let right_upper = bounds_upper(&right_bounds);
+
+        let candidates = [
+            left_lower.mul(right_lower)?,
+            left_lower.mul(right_upper)?,
+            left_upper.mul(right_lower)?,
+            left_upper.mul(right_upper)?,
+        ];
+
+        let mut min = candidates[0].clone();
+        let mut max = candidates[0].clone();
+        for candidate in candidates.iter().skip(1) {
+            if candidate < &min {
+                min = candidate.clone();
+            }
+            if candidate > &max {
+                max = candidate.clone();
+            }
+        }
+
+        OrderedPair::new_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
+    }
+
+    fn refine_step(&self) -> Result<bool, ComputableError> {
+        Ok(false)
+    }
+
+    fn children(&self) -> Vec<Arc<Node>> {
+        vec![Arc::clone(&self.left), Arc::clone(&self.right)]
+    }
+
+    fn is_refiner(&self) -> bool {
+        false
+    }
+}
+
+struct InvOp {
+    inner: Arc<Node>,
+    precision_bits: RwLock<BigInt>,
+}
+
+impl NodeOp for InvOp {
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+        let existing = self.inner.get_bounds()?;
+        reciprocal_bounds(&existing, &self.precision_bits.read())
+    }
+
+    fn refine_step(&self) -> Result<bool, ComputableError> {
+        let mut precision = self.precision_bits.write();
+        *precision += BigInt::one();
+        Ok(true)
+    }
+
+    fn children(&self) -> Vec<Arc<Node>> {
+        vec![Arc::clone(&self.inner)]
+    }
+
+    fn is_refiner(&self) -> bool {
+        true
+    }
+}
+
+/// Node in the computation graph. The op stores structure/state; the cache stores
+/// the last bounds computed for this node.
+struct Node {
+    id: usize,
+    op: Arc<dyn NodeOp>,
+    bounds_cache: RwLock<Option<Bounds>>,
+}
+
+impl Node {
+    fn new(op: Arc<dyn NodeOp>) -> Arc<Self> {
+        static NODE_IDS: AtomicUsize = AtomicUsize::new(0);
+        Arc::new(Self {
+            id: NODE_IDS.fetch_add(1, Ordering::Relaxed),
+            op,
+            bounds_cache: RwLock::new(None),
+        })
+    }
+
+    /// Returns cached bounds if already computed.
+    fn cached_bounds(&self) -> Option<Bounds> {
+        self.bounds_cache.read().clone()
+    }
+
+    /// Returns cached bounds, computing and caching if needed.
+    /// Combinators are infallible, so bounds are lazily computed on demand.
+    fn get_bounds(&self) -> Result<Bounds, ComputableError> {
+        if let Some(bounds) = self.cached_bounds() {
+            return Ok(bounds);
+        }
+        let bounds = self.compute_bounds()?;
+        self.set_bounds(bounds.clone());
+        Ok(bounds)
+    }
+
+    fn set_bounds(&self, bounds: Bounds) {
+        let mut cache = self.bounds_cache.write();
+        *cache = Some(bounds);
+    }
+
+    /// Computes bounds for this node from current children/base state.
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+        self.op.compute_bounds()
+    }
+
+    /// Performs one refinement step. Returns whether refinement was applied.
+    fn refine_step(&self) -> Result<bool, ComputableError> {
+        self.op.refine_step()
+    }
+
+    fn children(&self) -> Vec<Arc<Node>> {
+        self.op.children()
+    }
+
+    fn is_refiner(&self) -> bool {
+        self.op.is_refiner()
+    }
+}
+
+impl BoundsAccess for Node {
+    fn get_bounds(&self) -> Result<Bounds, ComputableError> {
+        Node::get_bounds(self)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RefineCommand {
+    Step,
+    Stop,
+}
+
+/// Handle for a background refiner thread.
+struct RefinerHandle {
+    sender: Sender<RefineCommand>,
+    join: thread::JoinHandle<Result<(), ComputableError>>,
+}
+
+/// Snapshot of the node graph used to coordinate parallel refinement.
+struct RefinementGraph {
+    root: Arc<Node>,
+    nodes: HashMap<usize, Arc<Node>>,    // node id -> node
+    parents: HashMap<usize, Vec<usize>>, // child id -> parent ids
+    refiners: Vec<Arc<Node>>,
+}
+
+impl RefinementGraph {
+    fn new(root: Arc<Node>) -> Result<Self, ComputableError> {
+        let mut nodes = HashMap::new();
+        let mut parents: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut refiners = Vec::new();
+
+        let mut stack = vec![Arc::clone(&root)];
+        while let Some(node) = stack.pop() {
+            if nodes.contains_key(&node.id) {
+                continue;
+            }
+            let node_id = node.id;
+            nodes.insert(node_id, Arc::clone(&node));
+
+            if node.is_refiner() {
+                refiners.push(Arc::clone(&node));
+            }
+            for child in node.children() {
+                parents.entry(child.id).or_default().push(node_id);
+                stack.push(child);
+            }
+        }
+
+        let graph = Self {
+            root,
+            nodes,
+            parents,
+            refiners,
+        };
+
+        Ok(graph)
+    }
+
+    fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
+        &self,
+        epsilon: &Binary,
+    ) -> Result<Bounds, ComputableError> {
+        let stop_flag = Arc::new(StopFlag::new());
+        let mut refiners = Vec::new();
+        let mut iterations = 0usize;
+        let (update_tx, update_rx) = unbounded();
+
+        for node in &self.refiners {
+            refiners.push(spawn_refiner(
+                Arc::clone(node),
+                Arc::clone(&stop_flag),
+                update_tx.clone(),
+            ));
+        }
+        drop(update_tx);
+
+        let shutdown_refiners = |handles: Vec<RefinerHandle>| {
+            stop_flag.stop();
+            for refiner in &handles {
+                let _ = refiner.sender.send(RefineCommand::Stop);
+            }
+            for refiner in handles {
+                let _ = refiner.join.join();
+            }
+        };
+
+        let mut root_bounds;
+        loop {
+            root_bounds = self.root.get_bounds()?;
+            if bounds_width_leq(&root_bounds, epsilon)? {
+                break;
+            }
+            if iterations >= MAX_REFINEMENT_ITERATIONS {
+                // TODO: allow individual refiners to stop at the max without
+                // failing the whole refinement, only erroring if all refiners
+                // are exhausted before meeting the target precision.
+                shutdown_refiners(refiners);
+                return Err(ComputableError::MaxRefinementIterations {
+                    max: MAX_REFINEMENT_ITERATIONS,
+                });
+            }
+            iterations += 1;
+
+            for refiner in &refiners {
+                refiner
+                    .sender
+                    .send(RefineCommand::Step)
+                    .map_err(|_| ComputableError::RefinementChannelClosed)?;
+            }
+
+            let mut expected_updates = refiners.len();
+            while expected_updates > 0 {
+                let update_result = match update_rx.recv() {
+                    Ok(update_result) => update_result,
+                    Err(_) => {
+                        shutdown_refiners(refiners);
+                        return Err(ComputableError::RefinementChannelClosed);
+                    }
+                };
+                expected_updates -= 1;
+                match update_result {
+                    Ok(update) => self.apply_update(update)?,
+                    Err(error) => {
+                        shutdown_refiners(refiners);
+                        return Err(error);
+                    }
+                }
+            }
+        }
+
+        shutdown_refiners(refiners);
+
+        self.root.get_bounds()
+    }
+
+    fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
+        let mut queue = VecDeque::new();
+        if let Some(node) = self.nodes.get(&update.node_id) {
+            node.set_bounds(update.bounds);
+            queue.push_back(node.id);
+        }
+
+        while let Some(changed_id) = queue.pop_front() {
+            let Some(parents) = self.parents.get(&changed_id) else {
+                continue;
             };
-
-        let derived_refine = move |composed_state: State<X, S>| -> State<X, S> {
-            let (next_inner, next_extra) = refine(
-                composed_state.inner_state,
-                composed_state.extra_state,
-                &base_refine,
-            );
-            State {
-                inner_state: next_inner,
-                extra_state: next_extra,
-            }
-        };
-
-        Computable::new(
-            State {
-                inner_state: state,
-                extra_state,
-            },
-            derived_bounds,
-            derived_refine,
-        )
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub fn inv(
-        self,
-    ) -> Computable<
-        State<X, BigInt>,
-        impl Fn(&State<X, BigInt>) -> Result<Bounds, ComputableError>,
-        impl Fn(State<X, BigInt>) -> State<X, BigInt>,
-    > {
-        self.apply_with(
-            BigInt::zero(), // initial reciprocal precision in bits
-            |inner_state, precision_bits, base_bounds| {
-                let existing = base_bounds(inner_state)?;
-                reciprocal_bounds(&existing, precision_bits)
-            },
-            // TODO: make this jump to a greater precision bits based on the width of the bounds
-            |inner_state, precision_bits, base_refine| {
-                let next_state = base_refine(inner_state);
-                let next_precision = precision_bits + BigInt::one();
-                (next_state, next_precision)
-            },
-        )
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    #[allow(clippy::type_complexity)]
-    pub fn add<Y, B2, F2>(
-        self,
-        other: Computable<Y, B2, F2>,
-    ) -> Computable<
-        (X, Y),
-        impl Fn(&(X, Y)) -> Result<Bounds, ComputableError>,
-        impl Fn((X, Y)) -> (X, Y),
-    >
-    where
-        B2: Fn(&Y) -> Result<Bounds, ComputableError>,
-        F2: Fn(Y) -> Y,
-    {
-        // note: we don't implement std::ops::Add here because the composed type uses `impl Fn`
-        // in its return signature, which cannot be named for an associated Output type.
-        let Computable {
-            state: left_state,
-            bounds: left_bounds,
-            refine: left_refine,
-        } = self;
-        let Computable {
-            state: right_state,
-            bounds: right_bounds,
-            refine: right_refine,
-        } = other;
-
-        let bounds = move |state: &(X, Y)| -> Result<Bounds, ComputableError> {
-            let left = (left_bounds)(&state.0)?;
-            let right = (right_bounds)(&state.1)?;
-            let lower = bounds_lower(&left).add_lower(bounds_lower(&right))?;
-            let upper = bounds_upper(&left).add_upper(bounds_upper(&right))?;
-            OrderedPair::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
-        };
-
-        let refine = move |state: (X, Y)| -> (X, Y) {
-            let (left, right) = state;
-            ((left_refine)(left), (right_refine)(right))
-        };
-
-        Computable::new((left_state, right_state), bounds, refine)
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    #[allow(clippy::type_complexity)]
-    pub fn sub<Y, B2, F2>(
-        self,
-        other: Computable<Y, B2, F2>,
-    ) -> Computable<
-        (X, Y),
-        impl Fn(&(X, Y)) -> Result<Bounds, ComputableError>,
-        impl Fn((X, Y)) -> (X, Y),
-    >
-    where
-        B2: Fn(&Y) -> Result<Bounds, ComputableError>,
-        F2: Fn(Y) -> Y,
-    {
-        self.add(other.neg())
-    }
-
-    #[allow(clippy::should_implement_trait)]
-    #[allow(clippy::type_complexity)]
-    pub fn mul<Y, B2, F2>(
-        self,
-        other: Computable<Y, B2, F2>,
-    ) -> Computable<
-        (X, Y),
-        impl Fn(&(X, Y)) -> Result<Bounds, ComputableError>,
-        impl Fn((X, Y)) -> (X, Y),
-    >
-    where
-        B2: Fn(&Y) -> Result<Bounds, ComputableError>,
-        F2: Fn(Y) -> Y,
-    {
-        let Computable {
-            state: left_state,
-            bounds: left_bounds,
-            refine: left_refine,
-        } = self;
-        let Computable {
-            state: right_state,
-            bounds: right_bounds,
-            refine: right_refine,
-        } = other;
-
-        let bounds = move |state: &(X, Y)| -> Result<Bounds, ComputableError> {
-            let left = (left_bounds)(&state.0)?;
-            let right = (right_bounds)(&state.1)?;
-            let left_lower = bounds_lower(&left);
-            let left_upper = bounds_upper(&left);
-            let right_lower = bounds_lower(&right);
-            let right_upper = bounds_upper(&right);
-
-            let candidates = [
-                left_lower.mul(right_lower)?,
-                left_lower.mul(right_upper)?,
-                left_upper.mul(right_lower)?,
-                left_upper.mul(right_upper)?,
-            ];
-
-            let mut min = candidates[0].clone();
-            let mut max = candidates[0].clone();
-            for candidate in candidates.iter().skip(1) {
-                if candidate < &min {
-                    min = candidate.clone();
-                }
-                if candidate > &max {
-                    max = candidate.clone();
+            for parent_id in parents {
+                let parent = self
+                    .nodes
+                    .get(parent_id)
+                    .ok_or(ComputableError::RefinementChannelClosed)?;
+                let next_bounds = parent.compute_bounds()?;
+                if parent.cached_bounds().as_ref() != Some(&next_bounds) {
+                    parent.set_bounds(next_bounds);
+                    queue.push_back(*parent_id);
                 }
             }
+        }
 
-            OrderedPair::new_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
-        };
-
-        let refine = move |state: (X, Y)| -> (X, Y) {
-            let (left, right) = state;
-            ((left_refine)(left), (right_refine)(right))
-        };
-
-        Computable::new((left_state, right_state), bounds, refine)
+        Ok(())
     }
+}
 
-    #[allow(clippy::should_implement_trait)]
-    #[allow(clippy::type_complexity)]
-    pub fn div<Y, B2, F2>(
-        self,
-        other: Computable<Y, B2, F2>,
-    ) -> Computable<
-        (X, State<Y, BigInt>),
-        impl Fn(&(X, State<Y, BigInt>)) -> Result<Bounds, ComputableError>,
-        impl Fn((X, State<Y, BigInt>)) -> (X, State<Y, BigInt>),
-    >
-    where
-        B2: Fn(&Y) -> Result<Bounds, ComputableError>,
-        F2: Fn(Y) -> Y,
-    {
-        self.mul(other.inv())
+#[derive(Clone)]
+struct NodeUpdate {
+    node_id: usize,
+    bounds: Bounds,
+}
+
+fn spawn_refiner(
+    node: Arc<Node>,
+    stop: Arc<StopFlag>,
+    updates: Sender<Result<NodeUpdate, ComputableError>>,
+) -> RefinerHandle {
+    let (command_tx, command_rx) = unbounded();
+    let join = thread::spawn(move || refiner_loop(node, stop, command_rx, updates));
+
+    RefinerHandle {
+        sender: command_tx,
+        join,
     }
+}
+
+fn refiner_loop(
+    node: Arc<Node>,
+    stop: Arc<StopFlag>,
+    commands: Receiver<RefineCommand>,
+    updates: Sender<Result<NodeUpdate, ComputableError>>,
+) -> Result<(), ComputableError> {
+    while !stop.is_stopped() {
+        match commands.recv() {
+            Ok(RefineCommand::Step) => match node.refine_step() {
+                Ok(true) => {
+                    let bounds = node.compute_bounds()?;
+                    node.set_bounds(bounds.clone());
+                    if updates
+                        .send(Ok(NodeUpdate {
+                            node_id: node.id,
+                            bounds,
+                        }))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(false) => {
+                    let bounds = node
+                        .cached_bounds()
+                        .ok_or(ComputableError::RefinementChannelClosed)?;
+                    if updates
+                        .send(Ok(NodeUpdate {
+                            node_id: node.id,
+                            bounds,
+                        }))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = updates.send(Err(error));
+                    break;
+                }
+            },
+            Ok(RefineCommand::Stop) | Err(_) => break,
+        }
+    }
+    Ok(())
 }
 
 #[cfg(debug_assertions)]
@@ -465,7 +814,11 @@ fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryErr
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
     use super::*;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     type IntervalState = Bounds;
 
@@ -477,8 +830,8 @@ mod tests {
         ExtendedBinary::Finite(bin(mantissa, exponent))
     }
 
-    fn unwrap_finite(value: &ExtendedBinary) -> Binary {
-        match value {
+    fn unwrap_finite(input: &ExtendedBinary) -> Binary {
+        match input {
             ExtendedBinary::Finite(value) => value.clone(),
             ExtendedBinary::NegInf | ExtendedBinary::PosInf => {
                 panic!("expected finite extended binary")
@@ -486,11 +839,8 @@ mod tests {
         }
     }
 
-    type ConstComputable =
-        Computable<Binary, fn(&Binary) -> Result<Bounds, ComputableError>, fn(Binary) -> Binary>;
-
-    fn const_computable(value: Binary) -> ConstComputable {
-        Computable::<Binary, fn(&Binary) -> Result<Bounds, ComputableError>, fn(Binary) -> Binary>::constant(value)
+    fn const_computable(value: Binary) -> Computable {
+        Computable::constant(value)
     }
 
     fn interval_bounds(state: &IntervalState) -> Bounds {
@@ -498,54 +848,49 @@ mod tests {
     }
 
     fn interval_refine(state: IntervalState) -> IntervalState {
-        let mid = unwrap_finite(state.small())
+        let mid_sum = unwrap_finite(state.small())
             .add(&unwrap_finite(state.large()))
             .expect("binary should add");
-        let exponent = mid
+        let exponent = mid_sum
             .exponent()
             .checked_sub(1)
             .expect("midpoint exponent should not underflow");
-        let mid = Binary::new(mid.mantissa().clone(), exponent).expect("binary should normalize");
+        let midpoint =
+            Binary::new(mid_sum.mantissa().clone(), exponent).expect("binary should normalize");
         OrderedPair::new(
-            ExtendedBinary::Finite(mid.clone()),
-            ExtendedBinary::Finite(mid),
+            ExtendedBinary::Finite(midpoint.clone()),
+            ExtendedBinary::Finite(midpoint),
         )
     }
 
     fn interval_refine_strict(state: IntervalState) -> IntervalState {
-        let mid = unwrap_finite(state.small())
+        let mid_sum = unwrap_finite(state.small())
             .add(&unwrap_finite(state.large()))
             .expect("binary should add");
-        let exponent = mid
+        let exponent = mid_sum
             .exponent()
             .checked_sub(1)
             .expect("midpoint exponent should not underflow");
-        let mid = Binary::new(mid.mantissa().clone(), exponent).expect("binary should normalize");
-        OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(mid))
+        let midpoint =
+            Binary::new(mid_sum.mantissa().clone(), exponent).expect("binary should normalize");
+        OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(midpoint))
     }
 
-    fn interval_midpoint_computable(
-        lower: i64,
-        upper: i64,
-    ) -> Computable<
-        IntervalState,
-        impl Fn(&IntervalState) -> Result<Bounds, ComputableError>,
-        impl Fn(IntervalState) -> IntervalState,
-    > {
-        let state = OrderedPair::new(ext(lower, 0), ext(upper, 0));
-        Computable::new(state, |state| Ok(interval_bounds(state)), interval_refine)
+    fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
+        let interval_state = OrderedPair::new(ext(lower, 0), ext(upper, 0));
+        Computable::new(
+            interval_state,
+            |inner_state| Ok(interval_bounds(inner_state)),
+            interval_refine,
+        )
     }
 
-    fn sqrt2_computable() -> Computable<
-        IntervalState,
-        impl Fn(&IntervalState) -> Result<Bounds, ComputableError>,
-        impl Fn(IntervalState) -> IntervalState,
-    > {
-        let state = OrderedPair::new(ext(1, 0), ext(2, 0));
-        let bounds = |state: &IntervalState| Ok(state.clone());
-        let refine = |state: IntervalState| {
-            let bounds_sum = unwrap_finite(state.small())
-                .add(&unwrap_finite(state.large()))
+    fn sqrt2_computable() -> Computable {
+        let interval_state = OrderedPair::new(ext(1, 0), ext(2, 0));
+        let bounds = |inner_state: &IntervalState| Ok(inner_state.clone());
+        let refine = |inner_state: IntervalState| {
+            let bounds_sum = unwrap_finite(inner_state.small())
+                .add(&unwrap_finite(inner_state.large()))
                 .expect("binary should add");
             let exponent = bounds_sum
                 .exponent()
@@ -557,13 +902,13 @@ mod tests {
             let two = bin(1, 1);
 
             if mid_sq <= two {
-                OrderedPair::new(ExtendedBinary::Finite(mid), state.large().clone())
+                OrderedPair::new(ExtendedBinary::Finite(mid), inner_state.large().clone())
             } else {
-                OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(mid))
+                OrderedPair::new(inner_state.small().clone(), ExtendedBinary::Finite(mid))
             }
         };
 
-        Computable::new(state, bounds, refine)
+        Computable::new(interval_state, bounds, refine)
     }
 
     #[test]
@@ -578,7 +923,7 @@ mod tests {
     fn computable_refine_to_returns_refined_state() {
         let computable = interval_midpoint_computable(0, 2);
         let epsilon = bin(1, -1);
-        let (bounds, refined) = computable
+        let bounds = computable
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
         let expected = ext(1, 0);
@@ -588,7 +933,7 @@ mod tests {
 
         assert!(bounds_lower(&bounds) <= &expected && &expected <= bounds_upper(&bounds));
         assert!(width < epsilon);
-        let refined_bounds = refined.bounds().expect("bounds should succeed");
+        let refined_bounds = computable.bounds().expect("bounds should succeed");
         assert!(
             bounds_lower(&refined_bounds) <= &expected
                 && &expected <= bounds_upper(&refined_bounds)
@@ -605,8 +950,12 @@ mod tests {
 
     #[test]
     fn computable_refine_to_rejects_unchanged_state() {
-        let state = OrderedPair::new(ext(0, 0), ext(2, 0));
-        let computable = Computable::new(state, |state| Ok(interval_bounds(state)), |state| state);
+        let interval_state = OrderedPair::new(ext(0, 0), ext(2, 0));
+        let computable = Computable::new(
+            interval_state,
+            |inner_state| Ok(interval_bounds(inner_state)),
+            |inner_state| inner_state,
+        );
         let epsilon = bin(1, -2);
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(result, Err(ComputableError::StateUnchanged)));
@@ -634,31 +983,34 @@ mod tests {
 
     #[test]
     fn computable_refine_to_handles_non_meeting_bounds() {
-        let state = OrderedPair::new(ext(0, 0), ext(4, 0));
+        let interval_state = OrderedPair::new(ext(0, 0), ext(4, 0));
         let computable = Computable::new(
-            state,
-            |state| Ok(interval_bounds(state)),
+            interval_state,
+            |inner_state| Ok(interval_bounds(inner_state)),
             interval_refine_strict,
         );
         let epsilon = bin(1, -1);
-        let (bounds, refined) = computable
+        let bounds = computable
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
         assert!(bounds_lower(&bounds) < bounds_upper(&bounds));
-        assert_eq!(refined.bounds().expect("bounds should succeed"), bounds);
+        assert_eq!(computable.bounds().expect("bounds should succeed"), bounds);
     }
 
     #[test]
     fn computable_refine_to_rejects_worsened_bounds() {
-        let state = OrderedPair::new(ext(0, 0), ext(1, 0));
+        let interval_state = OrderedPair::new(ext(0, 0), ext(1, 0));
         let computable = Computable::new(
-            state,
-            |state| Ok(interval_bounds(state)),
-            |state: IntervalState| {
-                let worse_upper = unwrap_finite(state.large())
+            interval_state,
+            |inner_state| Ok(interval_bounds(inner_state)),
+            |inner_state: IntervalState| {
+                let worse_upper = unwrap_finite(inner_state.large())
                     .add(&bin(1, 0))
                     .expect("binary should add");
-                OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(worse_upper))
+                OrderedPair::new(
+                    inner_state.small().clone(),
+                    ExtendedBinary::Finite(worse_upper),
+                )
             },
         );
         let epsilon = bin(1, -2);
@@ -671,7 +1023,7 @@ mod tests {
         let left = interval_midpoint_computable(0, 2);
         let right = interval_midpoint_computable(1, 3);
 
-        let sum = left.add(right);
+        let sum = left + right;
         let sum_bounds = sum.bounds().expect("bounds should succeed");
         assert_eq!(sum_bounds, OrderedPair::new(ext(1, 0), ext(5, 0)));
     }
@@ -681,7 +1033,7 @@ mod tests {
         let left = interval_midpoint_computable(4, 6);
         let right = interval_midpoint_computable(1, 2);
 
-        let diff = left.sub(right);
+        let diff = left - right;
         let diff_bounds = diff.bounds().expect("bounds should succeed");
         assert_eq!(diff_bounds, OrderedPair::new(ext(2, 0), ext(5, 0)));
     }
@@ -689,7 +1041,7 @@ mod tests {
     #[test]
     fn computable_neg_flips_bounds() {
         let value = interval_midpoint_computable(1, 3);
-        let negated = value.neg();
+        let negated = -value;
         let bounds = negated.bounds().expect("bounds should succeed");
         assert_eq!(bounds, OrderedPair::new(ext(-3, 0), ext(-1, 0)));
     }
@@ -710,17 +1062,17 @@ mod tests {
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
         let epsilon = bin(1, -8);
-        let (bounds, _) = inv
+        let bounds = inv
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
         let lower = unwrap_finite(bounds_lower(&bounds));
         let upper = unwrap_finite(bounds_upper(&bounds));
         let width = upper.sub(&lower).expect("binary should subtract");
-        let expected = ExtendedBinary::from_f64(1.0 / 3.0)
+        let expected_binary = ExtendedBinary::from_f64(1.0 / 3.0)
             .expect("expected value should convert to extended binary");
-        let expected = unwrap_finite(&expected);
+        let expected_value = unwrap_finite(&expected_binary);
 
-        assert!(lower <= expected && expected <= upper);
+        assert!(lower <= expected_value && expected_value <= upper);
         assert!(width <= epsilon);
     }
 
@@ -729,7 +1081,7 @@ mod tests {
         let left = interval_midpoint_computable(1, 3);
         let right = interval_midpoint_computable(2, 4);
 
-        let product = left.mul(right);
+        let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
         assert_eq!(bounds, OrderedPair::new(ext(2, 0), ext(12, 0)));
     }
@@ -739,7 +1091,7 @@ mod tests {
         let left = interval_midpoint_computable(-3, -1);
         let right = interval_midpoint_computable(2, 4);
 
-        let product = left.mul(right);
+        let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
         assert_eq!(bounds, OrderedPair::new(ext(-12, 0), ext(-2, 0)));
     }
@@ -749,7 +1101,7 @@ mod tests {
         let left = interval_midpoint_computable(-2, 3);
         let right = interval_midpoint_computable(4, 5);
 
-        let product = left.mul(right);
+        let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
         assert_eq!(bounds, OrderedPair::new(ext(-10, 0), ext(15, 0)));
     }
@@ -759,7 +1111,7 @@ mod tests {
         let left = interval_midpoint_computable(-2, 3);
         let right = interval_midpoint_computable(-1, 4);
 
-        let product = left.mul(right);
+        let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
         assert_eq!(bounds, OrderedPair::new(ext(-8, 0), ext(12, 0)));
     }
@@ -767,13 +1119,11 @@ mod tests {
     #[test]
     fn computable_integration_sqrt2_expression() {
         let one = const_computable(bin(1, 0));
-        let expr = sqrt2_computable()
-            .add(one)
-            .mul(sqrt2_computable().sub(const_computable(bin(1, 0))))
-            .add(sqrt2_computable().inv());
+        let expr = (sqrt2_computable() + one) * (sqrt2_computable() - const_computable(bin(1, 0)))
+            + sqrt2_computable().inv();
 
         let epsilon = bin(1, -12);
-        let (bounds, _) = expr
+        let bounds = expr
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
 
@@ -782,13 +1132,223 @@ mod tests {
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
         let expected_binary = ExtendedBinary::from_f64(expected)
             .expect("expected value should convert to extended binary");
-        let expected_binary = unwrap_finite(&expected_binary);
+        let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon;
 
         let lower_plus = lower.add(&eps_binary).expect("binary should add");
         let upper_minus = upper.sub(&eps_binary).expect("binary should subtract");
 
-        assert!(lower <= expected_binary && expected_binary <= upper);
-        assert!(upper_minus <= expected_binary && expected_binary <= lower_plus);
+        assert!(lower <= expected_value && expected_value <= upper);
+        assert!(upper_minus <= expected_value && expected_value <= lower_plus);
+    }
+
+    #[test]
+    fn computable_shared_operand_in_expression() {
+        let shared = sqrt2_computable();
+        let expr = shared.clone() + shared * const_computable(bin(1, 0));
+
+        let epsilon = bin(1, -12);
+        let bounds = expr
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed");
+
+        let lower = unwrap_finite(bounds_lower(&bounds));
+        let upper = unwrap_finite(bounds_upper(&bounds));
+        let expected = 2.0_f64 * 2.0_f64.sqrt();
+        let expected_binary = ExtendedBinary::from_f64(expected)
+            .expect("expected value should convert to extended binary");
+        let expected_value = unwrap_finite(&expected_binary);
+        let eps_binary = epsilon;
+
+        let lower_plus = lower.add(&eps_binary).expect("binary should add");
+        let upper_minus = upper.sub(&eps_binary).expect("binary should subtract");
+
+        assert!(lower <= expected_value && expected_value <= upper);
+        assert!(upper_minus <= expected_value && expected_value <= lower_plus);
+    }
+
+    #[test]
+    fn computable_refine_shared_clone_updates_original() {
+        let original = sqrt2_computable();
+        let cloned = original.clone();
+        let epsilon = bin(1, -12);
+
+        let _ = cloned
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed");
+
+        let bounds = original.bounds().expect("bounds should succeed");
+        assert!(bounds_width_leq(&bounds, &epsilon).expect("width should compute"));
+    }
+
+    #[test]
+    fn computable_refine_to_channel_closure() {
+        let computable = Computable::new(
+            0usize,
+            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| panic!("refiner panic"),
+        );
+
+        let epsilon = bin(1, -4);
+        let result = computable.refine_to::<2>(epsilon);
+        assert!(matches!(result, Err(ComputableError::RefinementChannelClosed)));
+    }
+
+    #[test]
+    fn computable_refine_to_max_iterations_multiple_refiners() {
+        let left = Computable::new(
+            0usize,
+            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |state| state + 1,
+        );
+        let right = Computable::new(
+            0usize,
+            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |state| state + 1,
+        );
+        let expr = left + right;
+        let epsilon = bin(1, -4);
+        let result = expr.refine_to::<2>(epsilon);
+        assert!(matches!(
+            result,
+            Err(ComputableError::MaxRefinementIterations { max: 2 })
+        ));
+    }
+
+    #[test]
+    fn computable_refine_to_error_path_stops_refiners() {
+        let stable = interval_midpoint_computable(0, 2);
+        let faulty = Computable::new(
+            OrderedPair::new(ext(0, 0), ext(1, 0)),
+            |state| Ok(state.clone()),
+            |state| OrderedPair::new(state.small().clone(), ext(2, 0)),
+        );
+        let expr = stable + faulty;
+        let epsilon = bin(1, -4);
+        let result = expr.refine_to::<3>(epsilon);
+        assert!(matches!(result, Err(ComputableError::BoundsWorsened)));
+    }
+
+    #[test]
+    fn concurrent_bounds_reads_during_failed_refinement() {
+        let computable = Arc::new(Computable::new(
+            0usize,
+            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |state| state + 1,
+        ));
+        let epsilon = bin(1, -6);
+        let reader = Arc::clone(&computable);
+        let handle = thread::spawn(move || {
+            for _ in 0..8 {
+                let bounds = reader.bounds().expect("bounds should succeed");
+                assert!(bounds_lower(&bounds) <= bounds_upper(&bounds));
+            }
+        });
+
+        let result = computable.refine_to::<3>(epsilon);
+        assert!(matches!(
+            result,
+            Err(ComputableError::MaxRefinementIterations { max: 3 })
+        ));
+        handle.join().expect("reader thread should join");
+    }
+
+    #[test]
+    fn refinement_parallelizes_multiple_refiners() {
+        use std::time::{Duration, Instant};
+
+        let slow_refiner = || {
+            Computable::new(
+                0usize,
+                |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+                |state| {
+                    thread::sleep(Duration::from_millis(250));
+                    state + 1
+                },
+            )
+        };
+
+        let expr = slow_refiner() + slow_refiner() + slow_refiner() + slow_refiner();
+        let epsilon = bin(1, -6);
+
+        let start = Instant::now();
+        let result = expr.refine_to::<1>(epsilon);
+        let elapsed = start.elapsed();
+
+        assert!(matches!(
+            result,
+            Err(ComputableError::MaxRefinementIterations { max: 1 })
+        ));
+        assert!(
+            elapsed < Duration::from_millis(700),
+            "expected parallel refinement under 700ms, elapsed {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn concurrent_refine_to_shared_expression() {
+        let base_expression = (sqrt2_computable() + sqrt2_computable())
+            * (const_computable(bin(1, 0)) + sqrt2_computable());
+        let expression = Arc::new(base_expression);
+        let epsilon = bin(1, -10);
+        // Coordinate multiple threads calling refine_to on the same computable.
+        let barrier = Arc::new(Barrier::new(4));
+
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let shared_expression = Arc::clone(&expression);
+            let shared_barrier = Arc::clone(&barrier);
+            let thread_epsilon = epsilon.clone();
+            handles.push(thread::spawn(move || {
+                shared_barrier.wait();
+                shared_expression.refine_to_default(thread_epsilon)
+            }));
+        }
+
+        barrier.wait();
+        let main_bounds = expression
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed");
+        assert!(bounds_width_leq(&main_bounds, &epsilon).expect("width should compute"));
+
+        for handle in handles {
+            let bounds = handle
+                .join()
+                .expect("thread should join")
+                .expect("refine_to should succeed");
+            assert!(bounds_lower(&bounds) <= bounds_upper(&bounds));
+            assert!(bounds_width_leq(&bounds, &epsilon).expect("width should compute"));
+            assert!(bounds_lower(&bounds) <= bounds_upper(&main_bounds));
+            assert!(bounds_lower(&main_bounds) <= bounds_upper(&bounds));
+        }
+    }
+
+    #[test]
+    fn concurrent_bounds_reads_during_refinement() {
+        let base_value = interval_midpoint_computable(0, 4);
+        let shared_value = Arc::new(base_value);
+        let epsilon = bin(1, -8);
+        // Reader thread repeatedly calls bounds while refinement is running.
+        let barrier = Arc::new(Barrier::new(2));
+
+        let reader = {
+            let reader_value = Arc::clone(&shared_value);
+            let reader_barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                reader_barrier.wait();
+                for _ in 0..32 {
+                    let bounds = reader_value.bounds().expect("bounds should succeed");
+                    assert!(bounds_lower(&bounds) <= bounds_upper(&bounds));
+                }
+            })
+        };
+
+        barrier.wait();
+        let refined = shared_value
+            .refine_to_default(epsilon)
+            .expect("refine_to should succeed");
+
+        reader.join().expect("reader should join");
+        assert!(bounds_lower(&refined) <= bounds_upper(&refined));
     }
 }
