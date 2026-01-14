@@ -20,7 +20,7 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Zero};
 use parking_lot::{Condvar, Mutex, RwLock};
 
 mod binary;
@@ -212,7 +212,7 @@ impl Computable {
         &self,
         epsilon: Binary,
     ) -> Result<Bounds, ComputableError> {
-        if !epsilon.mantissa().is_positive() {
+        if !matches!(epsilon, Binary::PositiveBinary { .. }) {
             return Err(ComputableError::NonpositiveEpsilon);
         }
 
@@ -910,7 +910,9 @@ mod tests {
             .exponent()
             .checked_sub(1)
             .expect("midpoint exponent should not underflow");
-        Binary::new(mid_sum.mantissa().clone(), exponent).expect("binary should normalize")
+        mid_sum
+            .with_exponent(exponent)
+            .expect("binary should normalize")
     }
 
     fn interval_refine(state: IntervalState) -> IntervalState {
@@ -1250,25 +1252,43 @@ mod tests {
     fn computable_refine_to_channel_closure() {
         let computable = Computable::new(
             0usize,
-            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| {
+                Ok(OrderedPair::new(
+                    ExtendedBinary::NegInf,
+                    ExtendedBinary::PosInf,
+                ))
+            },
             |_| panic!("refiner panic"),
         );
 
         let epsilon = bin(1, -4);
         let result = computable.refine_to::<2>(epsilon);
-        assert!(matches!(result, Err(ComputableError::RefinementChannelClosed)));
+        assert!(matches!(
+            result,
+            Err(ComputableError::RefinementChannelClosed)
+        ));
     }
 
     #[test]
     fn computable_refine_to_max_iterations_multiple_refiners() {
         let left = Computable::new(
             0usize,
-            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| {
+                Ok(OrderedPair::new(
+                    ExtendedBinary::NegInf,
+                    ExtendedBinary::PosInf,
+                ))
+            },
             |state| state + 1,
         );
         let right = Computable::new(
             0usize,
-            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| {
+                Ok(OrderedPair::new(
+                    ExtendedBinary::NegInf,
+                    ExtendedBinary::PosInf,
+                ))
+            },
             |state| state + 1,
         );
         let expr = left + right;
@@ -1298,7 +1318,12 @@ mod tests {
     fn concurrent_bounds_reads_during_failed_refinement() {
         let computable = Arc::new(Computable::new(
             0usize,
-            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| {
+                Ok(OrderedPair::new(
+                    ExtendedBinary::NegInf,
+                    ExtendedBinary::PosInf,
+                ))
+            },
             |state| state + 1,
         ));
         let epsilon = bin(1, -6);
@@ -1328,7 +1353,12 @@ mod tests {
         let slow_refiner = || {
             Computable::new(
                 0usize,
-                |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+                |_| {
+                    Ok(OrderedPair::new(
+                        ExtendedBinary::NegInf,
+                        ExtendedBinary::PosInf,
+                    ))
+                },
                 |state| {
                     thread::sleep(Duration::from_millis(SLEEP_MS));
                     state + 1
@@ -1347,19 +1377,22 @@ mod tests {
             result,
             Err(ComputableError::MaxRefinementIterations { max: 1 })
         ));
-        assert!(elapsed.as_millis() as u64 > SLEEP_MS,
+        assert!(
+            elapsed.as_millis() as u64 > SLEEP_MS,
             "refinement must not have actually run"
         );
-        assert!((elapsed.as_millis() as u64) < 2 * SLEEP_MS,
-            "expected parallel refinement under {}ms, elapsed {elapsed:?}", 2 * SLEEP_MS
+        assert!(
+            (elapsed.as_millis() as u64) < 2 * SLEEP_MS,
+            "expected parallel refinement under {}ms, elapsed {elapsed:?}",
+            2 * SLEEP_MS
         );
     }
 
     #[test]
     fn concurrent_refine_to_shared_expression() {
         let sqrt2 = sqrt_computable(2);
-        let base_expression = (sqrt2.clone() + sqrt2.clone())
-            * (Computable::constant(bin(1, 0)) + sqrt2.clone());
+        let base_expression =
+            (sqrt2.clone() + sqrt2.clone()) * (Computable::constant(bin(1, 0)) + sqrt2.clone());
         let expression = Arc::new(base_expression);
         let epsilon = bin(1, -10);
         // Coordinate multiple threads calling refine_to on the same computable.

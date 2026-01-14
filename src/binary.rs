@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{Float, One, Signed, Zero};
 
@@ -65,94 +65,259 @@ impl From<BinaryError> for ExtendedBinaryError {
 /// exact binary number represented as `mantissa * 2^exponent`.
 /// `mantissa` is normalized to be odd unless the value is zero.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Binary {
-    mantissa: BigInt,
-    exponent: Exponent,
+pub enum Binary {
+    PositiveBinary {
+        mantissa: BigUint,
+        exponent: Exponent,
+    },
+    ZeroBinary {
+        mantissa: BigUint,
+    },
+    NegativeBinary {
+        mantissa: BigUint,
+        exponent: Exponent,
+    },
 }
 
 impl Binary {
     pub fn new(mantissa: BigInt, exponent: Exponent) -> Result<Self, BinaryError> {
-        Self::normalize(mantissa, exponent)
+        Self::normalize(mantissa.sign(), mantissa.magnitude().clone(), exponent)
     }
 
     pub fn zero() -> Self {
-        Self {
-            mantissa: BigInt::zero(),
-            exponent: 0,
+        Self::ZeroBinary {
+            mantissa: BigUint::zero(),
         }
     }
 
-    pub fn mantissa(&self) -> &BigInt {
-        &self.mantissa
+    pub fn mantissa(&self) -> &BigUint {
+        match self {
+            Self::PositiveBinary { mantissa, .. }
+            | Self::ZeroBinary { mantissa }
+            | Self::NegativeBinary { mantissa, .. } => mantissa,
+        }
     }
 
     pub fn exponent(&self) -> Exponent {
-        self.exponent
+        match self {
+            Self::PositiveBinary { exponent, .. } | Self::NegativeBinary { exponent, .. } => {
+                *exponent
+            }
+            Self::ZeroBinary { .. } => 0,
+        }
     }
 
     pub fn add(&self, other: &Self) -> Result<Self, BinaryError> {
-        let (lhs, rhs, exponent) = Self::align_mantissas(self, other)?;
-        Self::normalize(lhs + rhs, exponent)
+        use Binary::{NegativeBinary, PositiveBinary, ZeroBinary};
+
+        match (self, other) {
+            (ZeroBinary { .. }, _) => Ok(other.clone()),
+            (_, ZeroBinary { .. }) => Ok(self.clone()),
+            (
+                PositiveBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                PositiveBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => {
+                let (lhs, rhs, exponent) =
+                    Self::align_mantissas(lhs_mantissa, *lhs_exp, rhs_mantissa, *rhs_exp)?;
+                Self::normalize(Sign::Plus, lhs + rhs, exponent)
+            }
+            (
+                NegativeBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                NegativeBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => {
+                let (lhs, rhs, exponent) =
+                    Self::align_mantissas(lhs_mantissa, *lhs_exp, rhs_mantissa, *rhs_exp)?;
+                Self::normalize(Sign::Minus, lhs + rhs, exponent)
+            }
+            (
+                PositiveBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                NegativeBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => Self::add_mixed(lhs_mantissa, *lhs_exp, rhs_mantissa, *rhs_exp),
+            (
+                NegativeBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                PositiveBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => Self::add_mixed(rhs_mantissa, *rhs_exp, lhs_mantissa, *lhs_exp),
+        }
     }
 
     pub fn sub(&self, other: &Self) -> Result<Self, BinaryError> {
-        let (lhs, rhs, exponent) = Self::align_mantissas(self, other)?;
-        Self::normalize(lhs - rhs, exponent)
+        self.add(&other.neg())
     }
 
     pub fn neg(&self) -> Self {
-        if self.mantissa.is_zero() {
-            return self.clone();
+        match self {
+            Self::PositiveBinary { mantissa, exponent } => Self::NegativeBinary {
+                mantissa: mantissa.clone(),
+                exponent: *exponent,
+            },
+            Self::NegativeBinary { mantissa, exponent } => Self::PositiveBinary {
+                mantissa: mantissa.clone(),
+                exponent: *exponent,
+            },
+            Self::ZeroBinary { .. } => self.clone(),
         }
-        Self {
-            mantissa: -self.mantissa.clone(),
-            exponent: self.exponent,
+    }
+
+    pub fn with_exponent(&self, exponent: Exponent) -> Result<Self, BinaryError> {
+        match self {
+            Self::PositiveBinary { mantissa, .. } => {
+                Self::normalize(Sign::Plus, mantissa.clone(), exponent)
+            }
+            Self::NegativeBinary { mantissa, .. } => {
+                Self::normalize(Sign::Minus, mantissa.clone(), exponent)
+            }
+            Self::ZeroBinary { .. } => Ok(Self::zero()),
+        }
+    }
+
+    pub fn abs_mantissa(&self) -> BigUint {
+        match self {
+            Self::PositiveBinary { mantissa, .. }
+            | Self::NegativeBinary { mantissa, .. }
+            | Self::ZeroBinary { mantissa } => mantissa.clone(),
         }
     }
 
     pub fn mul(&self, other: &Self) -> Result<Self, BinaryError> {
-        let exponent = self
-            .exponent
-            .checked_add(other.exponent)
-            .ok_or(BinaryError::MultiplicationOverflow)?;
-        let mantissa = &self.mantissa * &other.mantissa;
-        Self::normalize(mantissa, exponent)
+        use Binary::{NegativeBinary, PositiveBinary, ZeroBinary};
+
+        let (lhs_mantissa, rhs_mantissa, exponent, sign) = match (self, other) {
+            (ZeroBinary { .. }, _) | (_, ZeroBinary { .. }) => {
+                return Ok(Self::zero());
+            }
+            (
+                PositiveBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                PositiveBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => (
+                lhs_mantissa,
+                rhs_mantissa,
+                lhs_exp
+                    .checked_add(*rhs_exp)
+                    .ok_or(BinaryError::MultiplicationOverflow)?,
+                Sign::Plus,
+            ),
+            (
+                NegativeBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                NegativeBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => (
+                lhs_mantissa,
+                rhs_mantissa,
+                lhs_exp
+                    .checked_add(*rhs_exp)
+                    .ok_or(BinaryError::MultiplicationOverflow)?,
+                Sign::Plus,
+            ),
+            (
+                PositiveBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                NegativeBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            )
+            | (
+                NegativeBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                PositiveBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => (
+                lhs_mantissa,
+                rhs_mantissa,
+                lhs_exp
+                    .checked_add(*rhs_exp)
+                    .ok_or(BinaryError::MultiplicationOverflow)?,
+                Sign::Minus,
+            ),
+        };
+
+        let mantissa = lhs_mantissa * rhs_mantissa;
+        Self::normalize(sign, mantissa, exponent)
     }
 
-    fn normalize(mut mantissa: BigInt, mut exponent: Exponent) -> Result<Self, BinaryError> {
+    fn normalize(
+        sign: Sign,
+        mut mantissa: BigUint,
+        mut exponent: Exponent,
+    ) -> Result<Self, BinaryError> {
         if mantissa.is_zero() {
-            return Ok(Self {
-                mantissa,
-                exponent: 0,
-            });
+            return Ok(Self::zero());
         }
 
         while mantissa.is_even() {
-            mantissa /= 2;
+            mantissa >>= 1;
             exponent = exponent
                 .checked_add(1)
                 .ok_or(BinaryError::ExponentOverflow)?;
         }
 
-        Ok(Self { mantissa, exponent })
+        match sign {
+            Sign::Plus => Ok(Self::PositiveBinary { mantissa, exponent }),
+            Sign::Minus => Ok(Self::NegativeBinary { mantissa, exponent }),
+            Sign::NoSign => Ok(Self::zero()),
+        }
     }
 
-    fn align_mantissas(lhs: &Self, rhs: &Self) -> Result<(BigInt, BigInt, Exponent), BinaryError> {
-        let exponent = lhs.exponent.min(rhs.exponent);
-        let lhs_shift = lhs
-            .exponent
+    fn align_mantissas(
+        lhs_mantissa: &BigUint,
+        lhs_exp: Exponent,
+        rhs_mantissa: &BigUint,
+        rhs_exp: Exponent,
+    ) -> Result<(BigUint, BigUint, Exponent), BinaryError> {
+        let exponent = lhs_exp.min(rhs_exp);
+        let lhs_shift = lhs_exp
             .checked_sub(exponent)
             .ok_or(BinaryError::ShiftOverflow)?;
-        let rhs_shift = rhs
-            .exponent
+        let rhs_shift = rhs_exp
             .checked_sub(exponent)
             .ok_or(BinaryError::ShiftOverflow)?;
-        let lhs_mantissa = Self::shift_mantissa(&lhs.mantissa, lhs_shift)?;
-        let rhs_mantissa = Self::shift_mantissa(&rhs.mantissa, rhs_shift)?;
-        Ok((lhs_mantissa, rhs_mantissa, exponent))
+        let lhs_shifted = Self::shift_mantissa(lhs_mantissa, lhs_shift)?;
+        let rhs_shifted = Self::shift_mantissa(rhs_mantissa, rhs_shift)?;
+        Ok((lhs_shifted, rhs_shifted, exponent))
     }
 
-    fn shift_mantissa(mantissa: &BigInt, shift: Exponent) -> Result<BigInt, BinaryError> {
+    fn shift_mantissa(mantissa: &BigUint, shift: Exponent) -> Result<BigUint, BinaryError> {
         if shift < 0 {
             return Err(BinaryError::ShiftOverflow);
         }
@@ -160,15 +325,15 @@ impl Binary {
         Ok(mantissa << shift_amount)
     }
 
-    fn cmp_shifted(
-        mantissa: &BigInt,
+    fn cmp_abs(
+        mantissa: &BigUint,
         exponent: Exponent,
-        other: &BigInt,
+        other: &BigUint,
         other_exp: Exponent,
     ) -> Ordering {
         fn cmp_large_exp(
-            large_mantissa: &BigInt,
-            small_mantissa: &BigInt,
+            large_mantissa: &BigUint,
+            small_mantissa: &BigUint,
             pair: OrderedPair<Exponent>,
         ) -> Ordering {
             let shift_amount_opt = pair.delta_usize();
@@ -177,11 +342,9 @@ impl Binary {
                 let shifted = large_mantissa << shift_amount;
                 shifted.cmp(small_mantissa)
             } else if large_mantissa.is_zero() {
-                BigInt::zero().cmp(small_mantissa)
-            } else if large_mantissa.is_positive() {
-                Ordering::Greater
+                BigUint::zero().cmp(small_mantissa)
             } else {
-                Ordering::Less
+                Ordering::Greater
             }
         }
 
@@ -197,16 +360,60 @@ impl Binary {
             }
         }
     }
+
+    fn add_mixed(
+        positive_mantissa: &BigUint,
+        positive_exp: Exponent,
+        negative_mantissa: &BigUint,
+        negative_exp: Exponent,
+    ) -> Result<Self, BinaryError> {
+        let (positive, negative, exponent) = Self::align_mantissas(
+            positive_mantissa,
+            positive_exp,
+            negative_mantissa,
+            negative_exp,
+        )?;
+        match positive.cmp(&negative) {
+            Ordering::Equal => Ok(Self::zero()),
+            Ordering::Greater => Self::normalize(Sign::Plus, positive - negative, exponent),
+            Ordering::Less => Self::normalize(Sign::Minus, negative - positive, exponent),
+        }
+    }
 }
 
 impl Ord for Binary {
     fn cmp(&self, other: &Self) -> Ordering {
-        Self::cmp_shifted(
-            &self.mantissa,
-            self.exponent,
-            &other.mantissa,
-            other.exponent,
-        )
+        use Binary::{NegativeBinary, PositiveBinary, ZeroBinary};
+
+        match (self, other) {
+            (ZeroBinary { .. }, ZeroBinary { .. }) => Ordering::Equal,
+            (ZeroBinary { .. }, PositiveBinary { .. }) => Ordering::Less,
+            (ZeroBinary { .. }, NegativeBinary { .. }) => Ordering::Greater,
+            (PositiveBinary { .. }, ZeroBinary { .. }) => Ordering::Greater,
+            (NegativeBinary { .. }, ZeroBinary { .. }) => Ordering::Less,
+            (PositiveBinary { .. }, NegativeBinary { .. }) => Ordering::Greater,
+            (NegativeBinary { .. }, PositiveBinary { .. }) => Ordering::Less,
+            (
+                PositiveBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                PositiveBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => Self::cmp_abs(lhs_mantissa, *lhs_exp, rhs_mantissa, *rhs_exp),
+            (
+                NegativeBinary {
+                    mantissa: lhs_mantissa,
+                    exponent: lhs_exp,
+                },
+                NegativeBinary {
+                    mantissa: rhs_mantissa,
+                    exponent: rhs_exp,
+                },
+            ) => Self::cmp_abs(lhs_mantissa, *lhs_exp, rhs_mantissa, *rhs_exp).reverse(),
+        }
     }
 }
 
@@ -237,7 +444,7 @@ impl ExtendedBinary {
     }
 
     pub fn is_zero(&self) -> bool {
-        matches!(self, Self::Finite(value) if value.mantissa().is_zero())
+        matches!(self, Self::Finite(Binary::ZeroBinary { .. }))
     }
 
     pub fn from_f64(value: f64) -> Result<Self, ExtendedBinaryError> {
@@ -253,12 +460,15 @@ impl ExtendedBinary {
         if value == f64::NEG_INFINITY {
             return Ok(Self::NegInf);
         }
-        let (mantissa, exponent, sign) = value.integer_decode();
-        let signed_mantissa = BigInt::from(sign) * BigInt::from(mantissa);
-        Ok(Self::Finite(Binary::new(
-            signed_mantissa,
-            Exponent::from(exponent),
-        )?))
+        let (decoded_mantissa, decoded_exponent, decoded_sign) = value.integer_decode();
+        let exponent = Exponent::from(decoded_exponent);
+        let mantissa = BigUint::from(decoded_mantissa);
+        let sign = if decoded_sign < 0 {
+            Sign::Minus
+        } else {
+            Sign::Plus
+        };
+        Ok(Self::Finite(Binary::normalize(sign, mantissa, exponent)?))
     }
 
     pub fn add_lower(&self, other: &Self) -> Result<Self, crate::ComputableError> {
@@ -286,22 +496,20 @@ impl ExtendedBinary {
         }
         match (self, other) {
             (Finite(lhs), Finite(rhs)) => Ok(Finite(lhs.mul(rhs)?)),
-            (Finite(lhs), PosInf) | (PosInf, Finite(lhs)) => {
-                if lhs.mantissa().is_positive() {
-                    Ok(PosInf)
-                } else {
-                    Ok(NegInf)
-                }
-            }
-            (Finite(lhs), NegInf) | (NegInf, Finite(lhs)) => {
-                if lhs.mantissa().is_positive() {
-                    Ok(NegInf)
-                } else {
-                    Ok(PosInf)
-                }
-            }
+            (Finite(Binary::PositiveBinary { .. }), PosInf)
+            | (PosInf, Finite(Binary::PositiveBinary { .. })) => Ok(PosInf),
+            (Finite(Binary::NegativeBinary { .. }), PosInf)
+            | (PosInf, Finite(Binary::NegativeBinary { .. })) => Ok(NegInf),
+            (Finite(Binary::PositiveBinary { .. }), NegInf)
+            | (NegInf, Finite(Binary::PositiveBinary { .. })) => Ok(NegInf),
+            (Finite(Binary::NegativeBinary { .. }), NegInf)
+            | (NegInf, Finite(Binary::NegativeBinary { .. })) => Ok(PosInf),
             (PosInf, PosInf) | (NegInf, NegInf) => Ok(PosInf),
             (PosInf, NegInf) | (NegInf, PosInf) => Ok(NegInf),
+            (Finite(Binary::ZeroBinary { .. }), PosInf)
+            | (Finite(Binary::ZeroBinary { .. }), NegInf)
+            | (PosInf, Finite(Binary::ZeroBinary { .. }))
+            | (NegInf, Finite(Binary::ZeroBinary { .. })) => Ok(Finite(Binary::zero())),
         }
     }
 }
@@ -339,7 +547,8 @@ pub(crate) fn reciprocal_rounded_abs_extended(
 ) -> Result<ExtendedBinary, BinaryError> {
     match value {
         ExtendedBinary::Finite(finite_value) => {
-            let abs_mantissa = finite_value.mantissa().abs();
+            let abs_mantissa = finite_value.abs_mantissa();
+            let abs_mantissa_bigint = BigInt::from_biguint(Sign::Plus, abs_mantissa);
             let shift_bits = precision_bits - BigInt::from(finite_value.exponent());
             let quotient = if shift_bits.is_negative() {
                 match rounding {
@@ -350,8 +559,8 @@ pub(crate) fn reciprocal_rounded_abs_extended(
                 let shift = precision_bits_to_usize(&shift_bits)?;
                 let numerator = BigInt::one() << shift;
                 match rounding {
-                    ReciprocalRounding::Floor => numerator.div_floor(&abs_mantissa),
-                    ReciprocalRounding::Ceil => numerator.div_ceil(&abs_mantissa),
+                    ReciprocalRounding::Floor => numerator.div_floor(&abs_mantissa_bigint),
+                    ReciprocalRounding::Ceil => numerator.div_ceil(&abs_mantissa_bigint),
                 }
             };
             let exponent = reciprocal_exponent(precision_bits)?;
@@ -398,14 +607,14 @@ mod tests {
     #[test]
     fn binary_normalizes_even_mantissa() {
         let value = bin(8, 0);
-        assert_eq!(value.mantissa(), &BigInt::from(1));
+        assert_eq!(value.mantissa(), &BigUint::from(1_u8));
         assert_eq!(value.exponent(), 3);
     }
 
     #[test]
     fn binary_zero_uses_zero_exponent() {
         let value = Binary::new(BigInt::zero(), 42).expect("binary should normalize");
-        assert_eq!(value.mantissa(), &BigInt::zero());
+        assert!(matches!(value, Binary::ZeroBinary { .. }));
         assert_eq!(value.exponent(), 0);
     }
 
