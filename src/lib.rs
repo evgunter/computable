@@ -898,10 +898,6 @@ mod tests {
         }
     }
 
-    fn const_computable(value: Binary) -> Computable {
-        Computable::constant(value)
-    }
-
     fn interval_bounds(state: &IntervalState) -> Bounds {
         state.clone()
     }
@@ -939,15 +935,15 @@ mod tests {
         )
     }
 
-    fn sqrt2_computable() -> Computable {
-        let interval_state = OrderedPair::new(ext(1, 0), ext(2, 0));
+    fn sqrt_computable(value_int: u64) -> Computable {
+        let interval_state = OrderedPair::new(ext(1, 0), ext(value_int as i64, 0));
         let bounds = |inner_state: &IntervalState| Ok(inner_state.clone());
-        let refine = |inner_state: IntervalState| {
+        let refine = move |inner_state: IntervalState| {
             let mid = midpoint_between(inner_state.small(), inner_state.large());
             let mid_sq = mid.mul(&mid).expect("binary should multiply");
-            let two = bin(1, 1);
+            let value = bin(value_int as i64, 0);
 
-            if mid_sq <= two {
+            if mid_sq <= value {
                 OrderedPair::new(ExtendedBinary::Finite(mid), inner_state.large().clone())
             } else {
                 OrderedPair::new(inner_state.small().clone(), ExtendedBinary::Finite(mid))
@@ -1185,9 +1181,9 @@ mod tests {
 
     #[test]
     fn computable_integration_sqrt2_expression() {
-        let one = const_computable(bin(1, 0));
-        let expr = (sqrt2_computable() + one) * (sqrt2_computable() - const_computable(bin(1, 0)))
-            + sqrt2_computable().inv();
+        let one = Computable::constant(bin(1, 0));
+        let sqrt2 = sqrt_computable(2);
+        let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
 
         let epsilon = bin(1, -12);
         let bounds = expr
@@ -1211,8 +1207,8 @@ mod tests {
 
     #[test]
     fn computable_shared_operand_in_expression() {
-        let shared = sqrt2_computable();
-        let expr = shared.clone() + shared * const_computable(bin(1, 0));
+        let shared = sqrt_computable(2);
+        let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
 
         let epsilon = bin(1, -12);
         let bounds = expr
@@ -1238,7 +1234,7 @@ mod tests {
 
     #[test]
     fn computable_refine_shared_clone_updates_original() {
-        let original = sqrt2_computable();
+        let original = sqrt_computable(2);
         let cloned = original.clone();
         let epsilon = bin(1, -12);
 
@@ -1361,8 +1357,9 @@ mod tests {
 
     #[test]
     fn concurrent_refine_to_shared_expression() {
-        let base_expression = (sqrt2_computable() + sqrt2_computable())
-            * (const_computable(bin(1, 0)) + sqrt2_computable());
+        let sqrt2 = sqrt_computable(2);
+        let base_expression = (sqrt2.clone() + sqrt2.clone())
+            * (Computable::constant(bin(1, 0)) + sqrt2.clone());
         let expression = Arc::new(base_expression);
         let epsilon = bin(1, -10);
         // Coordinate multiple threads calling refine_to on the same computable.
