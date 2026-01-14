@@ -904,16 +904,19 @@ mod tests {
         state.clone()
     }
 
-    fn interval_refine(state: IntervalState) -> IntervalState {
-        let mid_sum = unwrap_finite(state.small())
-            .add(&unwrap_finite(state.large()))
+    fn midpoint_between(lower: &ExtendedBinary, upper: &ExtendedBinary) -> Binary {
+        let mid_sum = unwrap_finite(lower)
+            .add(&unwrap_finite(upper))
             .expect("binary should add");
         let exponent = mid_sum
             .exponent()
             .checked_sub(1)
             .expect("midpoint exponent should not underflow");
-        let midpoint =
-            Binary::new(mid_sum.mantissa().clone(), exponent).expect("binary should normalize");
+        Binary::new(mid_sum.mantissa().clone(), exponent).expect("binary should normalize")
+    }
+
+    fn interval_refine(state: IntervalState) -> IntervalState {
+        let midpoint = midpoint_between(state.small(), state.large());
         OrderedPair::new(
             ExtendedBinary::Finite(midpoint.clone()),
             ExtendedBinary::Finite(midpoint),
@@ -921,15 +924,7 @@ mod tests {
     }
 
     fn interval_refine_strict(state: IntervalState) -> IntervalState {
-        let mid_sum = unwrap_finite(state.small())
-            .add(&unwrap_finite(state.large()))
-            .expect("binary should add");
-        let exponent = mid_sum
-            .exponent()
-            .checked_sub(1)
-            .expect("midpoint exponent should not underflow");
-        let midpoint =
-            Binary::new(mid_sum.mantissa().clone(), exponent).expect("binary should normalize");
+        let midpoint = midpoint_between(state.small(), state.large());
         OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(midpoint))
     }
 
@@ -946,15 +941,7 @@ mod tests {
         let interval_state = OrderedPair::new(ext(1, 0), ext(2, 0));
         let bounds = |inner_state: &IntervalState| Ok(inner_state.clone());
         let refine = |inner_state: IntervalState| {
-            let bounds_sum = unwrap_finite(inner_state.small())
-                .add(&unwrap_finite(inner_state.large()))
-                .expect("binary should add");
-            let exponent = bounds_sum
-                .exponent()
-                .checked_sub(1)
-                .expect("midpoint exponent should not underflow");
-            let mid = Binary::new(bounds_sum.mantissa().clone(), exponent)
-                .expect("binary should normalize");
+            let mid = midpoint_between(inner_state.small(), inner_state.large());
             let mid_sq = mid.mul(&mid).expect("binary should multiply");
             let two = bin(1, 1);
 
@@ -968,10 +955,35 @@ mod tests {
         Computable::new(interval_state, bounds, refine)
     }
 
+    fn assert_bounds_compatible_with_expected(
+        bounds: &Bounds,
+        expected: &Binary,
+        epsilon: &Binary,
+    ) {
+        let lower = unwrap_finite(bounds_lower(bounds));
+        let upper = unwrap_finite(bounds_upper(bounds));
+        let width = upper.sub(&lower).expect("binary should subtract");
+
+        assert!(lower <= *expected && *expected <= upper);
+        assert!(&width <= epsilon);
+    }
+
+    fn assert_bounds_ordered(bounds: &Bounds) {
+        assert!(bounds_lower(bounds) <= bounds_upper(bounds));
+    }
+
     #[test]
     fn computable_refine_to_rejects_negative_epsilon() {
         let computable = interval_midpoint_computable(0, 2);
         let epsilon = bin(-1, 0);
+        let result = computable.refine_to_default(epsilon);
+        assert!(matches!(result, Err(ComputableError::NonpositiveEpsilon)));
+    }
+
+    #[test]
+    fn computable_refine_to_rejects_zero_epsilon() {
+        let computable = interval_midpoint_computable(0, 2);
+        let epsilon = bin(0, 0);
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(result, Err(ComputableError::NonpositiveEpsilon)));
     }
@@ -995,14 +1007,6 @@ mod tests {
             bounds_lower(&refined_bounds) <= &expected
                 && &expected <= bounds_upper(&refined_bounds)
         );
-    }
-
-    #[test]
-    fn computable_refine_to_rejects_zero_epsilon() {
-        let computable = interval_midpoint_computable(0, 2);
-        let epsilon = bin(0, 0);
-        let result = computable.refine_to_default(epsilon);
-        assert!(matches!(result, Err(ComputableError::NonpositiveEpsilon)));
     }
 
     #[test]
@@ -1122,15 +1126,11 @@ mod tests {
         let bounds = inv
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
-        let lower = unwrap_finite(bounds_lower(&bounds));
-        let upper = unwrap_finite(bounds_upper(&bounds));
-        let width = upper.sub(&lower).expect("binary should subtract");
         let expected_binary = ExtendedBinary::from_f64(1.0 / 3.0)
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
 
-        assert!(lower <= expected_value && expected_value <= upper);
-        assert!(width <= epsilon);
+        assert_bounds_compatible_with_expected(&bounds, &expected_value, &epsilon);
     }
 
     #[test]
@@ -1298,7 +1298,7 @@ mod tests {
         let handle = thread::spawn(move || {
             for _ in 0..8 {
                 let bounds = reader.bounds().expect("bounds should succeed");
-                assert!(bounds_lower(&bounds) <= bounds_upper(&bounds));
+                assert_bounds_ordered(&bounds);
             }
         });
 
@@ -1378,7 +1378,7 @@ mod tests {
                 .join()
                 .expect("thread should join")
                 .expect("refine_to should succeed");
-            assert!(bounds_lower(&bounds) <= bounds_upper(&bounds));
+            assert_bounds_ordered(&bounds);
             assert!(bounds_width_leq(&bounds, &epsilon).expect("width should compute"));
             assert!(bounds_lower(&bounds) <= bounds_upper(&main_bounds));
             assert!(bounds_lower(&main_bounds) <= bounds_upper(&bounds));
@@ -1434,7 +1434,7 @@ mod tests {
 
         for handle in handles {
             let bounds = handle.join().expect("thread should join");
-            assert!(bounds_lower(&bounds) <= bounds_upper(&bounds));
+            assert_bounds_ordered(&bounds);
         }
 
         assert!(!saw_overlap.load(Ordering::SeqCst));
@@ -1456,7 +1456,7 @@ mod tests {
                 reader_barrier.wait();
                 for _ in 0..32 {
                     let bounds = reader_value.bounds().expect("bounds should succeed");
-                    assert!(bounds_lower(&bounds) <= bounds_upper(&bounds));
+                    assert_bounds_ordered(&bounds);
                 }
             })
         };
@@ -1467,6 +1467,6 @@ mod tests {
             .expect("refine_to should succeed");
 
         reader.join().expect("reader should join");
-        assert!(bounds_lower(&refined) <= bounds_upper(&refined));
+        assert_bounds_ordered(&refined);
     }
 }
