@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+crossbeam-channel = "0.5"
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
+parking_lot = "0.12"

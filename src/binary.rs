@@ -386,6 +386,8 @@ fn precision_bits_to_exponent(precision_bits: &BigInt) -> Result<Exponent, Binar
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use super::*;
     use crate::ordered_pair::OrderedPair;
 

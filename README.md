@@ -24,7 +24,7 @@ there are a few ways the implementation diverges from this abstraction; see [dev
 # features
 
 - there is a function (`Computable::refine_to`) which takes a computable number $(x, b, f)$ and a precision $\epsilon$ and applies $f$ to $x$ until $b_u(f^n(x)) - b_\ell(f^n(x)) \leq \epsilon$ (where $n$ is the number of applications required).
-- computable numbers may be composed using arithmetic operations via `Computable::add`, `Computable::sub`, `Computable::mul`, `Computable::div`, `Computable::neg`, and `Computable::inv`.
+- computable numbers may be composed using arithmetic operations via the standard operators (`+`, `-`, `*`, `/`, unary `-`) and `Computable::inv`.
 for example, given computable numbers $C_0 = (x_0, b_0, f_0)$ and $C_1 = (x_1, b_1, f_1)$, $$C_0 + C_1 = ((x_0, x_1), (x, y) \mapsto (b_{0\ell}(x) + b_{1\ell}(y), b_{0u}(x) + b_{1u}(y)), (x, y) \mapsto (f_0(x), f_1(y)))$$
 
 # deviations from the formalism
@@ -49,6 +49,7 @@ sadly, the implementation cannot exactly realize the formalism.
 - compositions are structured as binary trees. <!-- it's possible that this binary tree requirement will need to be relaxed, but i'm going to start out assuming that it does not -->
 - when a composition is refined, all its branches are refined in parallel.
 - refinements of the branches are propagated upwards live, and refinement is halted as soon as the overall expression reaches the required precision.
+<!-- TODO: add a propagated stopping condition so branches can be halted when they can no longer tighten the overall bounds. -->
 
 ### example
 let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$.
@@ -85,13 +86,15 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$
 ## usage norms
 
 - all calculations on computable numbers should produce computable numbers as output
+- bounds computation should be lightweight; expensive work should occur in refinement
 - a computable number should only have its bounds refined when necessary, e.g. immediately before the final output or when required to satisfy conditions on the input of another function. for example:
     - a program which graphs a computable number to the screen should refine the computable number to some $\epsilon$ smaller than the pixel size right before graphing
     - a program which finds the (real) square root of a computable number and then does something with the result may refine that number until the lower bound is nonnegative (or the upper bound becomes negative and triggers an error). (it would also be permissible to defer the detection of this error until later, when the result is actually used.)
 - to apply a function $g$ to computable numbers, you must define a function $G$ which computes a bound on $g$'s output based on bounds on its input such that the output bounds converge if the input bounds do.
 Then $g((x, b, f)) = (x, G(b), f)$.
 for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \mapsto (u^2, \ell^2)$ if $\ell,u \leq 0$, $(\ell, u) \mapsto (\ell^2, u^2)$ if $\ell,u \geq 0$, and $(\ell, u) \mapsto (0, \max(\ell^2, u^2))$ if $\ell \leq 0$ and $u \geq 0$. 
-`Computable::inv` demonstrates this pattern; `Computable::apply_with` is a useful related function.
+`Computable::inv` demonstrates this pattern.
+<!-- TODO: add a general helper for applying bounded functions. -->
 
 ## design norms
 
