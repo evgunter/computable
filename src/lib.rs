@@ -1253,16 +1253,19 @@ mod tests {
         handle.join().expect("reader thread should join");
     }
 
+    // NOTE: this test could be fallible, since it uses timing to measure success. perhaps it should be an integration test rather than a unit test
     #[test]
     fn refinement_parallelizes_multiple_refiners() {
         use std::time::{Duration, Instant};
+
+        const SLEEP_MS: u64 = 10;
 
         let slow_refiner = || {
             Computable::new(
                 0usize,
                 |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
                 |state| {
-                    thread::sleep(Duration::from_millis(250));
+                    thread::sleep(Duration::from_millis(SLEEP_MS));
                     state + 1
                 },
             )
@@ -1279,9 +1282,11 @@ mod tests {
             result,
             Err(ComputableError::MaxRefinementIterations { max: 1 })
         ));
-        assert!(
-            elapsed < Duration::from_millis(700),
-            "expected parallel refinement under 700ms, elapsed {elapsed:?}"
+        assert!(elapsed.as_millis() as u64 > SLEEP_MS,
+            "refinement must not have actually run"
+        );
+        assert!((elapsed.as_millis() as u64) < 2 * SLEEP_MS,
+            "expected parallel refinement under {}ms, elapsed {elapsed:?}", 2 * SLEEP_MS
         );
     }
 
