@@ -879,6 +879,8 @@ mod tests {
 
     type IntervalState = Bounds;
 
+    // --- test utilities ---
+
     fn bin(mantissa: i64, exponent: i64) -> Binary {
         Binary::new(BigInt::from(mantissa), exponent).expect("binary should normalize")
     }
@@ -972,6 +974,8 @@ mod tests {
         assert!(bounds_lower(bounds) <= bounds_upper(bounds));
     }
 
+    // --- tests for different results of refinement (mostly errors) ---
+
     #[test]
     fn computable_refine_to_rejects_negative_epsilon() {
         let computable = interval_midpoint_computable(0, 2);
@@ -1042,6 +1046,7 @@ mod tests {
         ));
     }
 
+    // test the "normal case" where the bounds shrink but never meet
     #[test]
     fn computable_refine_to_handles_non_meeting_bounds() {
         let interval_state = OrderedPair::new(ext(0, 0), ext(4, 0));
@@ -1052,9 +1057,10 @@ mod tests {
         );
         let epsilon = bin(1, -1);
         let bounds = computable
-            .refine_to_default(epsilon)
+            .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
         assert!(bounds_lower(&bounds) < bounds_upper(&bounds));
+        assert!(bounds_width_leq(&bounds, &epsilon).expect("width should compute"));
         assert_eq!(computable.bounds().expect("bounds should succeed"), bounds);
     }
 
@@ -1078,6 +1084,8 @@ mod tests {
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(result, Err(ComputableError::BoundsWorsened)));
     }
+
+    // --- tests for bounds of arithmetic operations ---
 
     #[test]
     fn computable_add_combines_bounds() {
@@ -1173,6 +1181,8 @@ mod tests {
         assert_eq!(bounds, OrderedPair::new(ext(-8, 0), ext(12, 0)));
     }
 
+    // --- test more complex expressions ---
+
     #[test]
     fn computable_integration_sqrt2_expression() {
         let one = const_computable(bin(1, 0));
@@ -1223,6 +1233,8 @@ mod tests {
         assert!(lower <= expected_value && expected_value <= upper);
         assert!(upper_minus <= expected_value && expected_value <= lower_plus);
     }
+
+    // --- concurrency tests ---
 
     #[test]
     fn computable_refine_shared_clone_updates_original() {
