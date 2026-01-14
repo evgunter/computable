@@ -46,7 +46,7 @@ sadly, the implementation cannot exactly realize the formalism.
 
 ## design
 - i use the term 'composition' to refer to a computable number which contains multiple base computable numbers. for example, $\sqrt{a + ab}$ is a composition. $a + a$ is also considered a composition even though the constituent computable numbers are identical. (however, $2a$ is not a composition; it has only a single constituent to refine.)
-- compositions are structured as binary trees. <!-- it's possible that this binary tree requirement will need to be relaxed, but i'm going to start out assuming that it does not -->
+- compositions are structured as binary trees; each composition may have at most two children. (note that the same computable number can occur multiple times in a single expression, so it's logically a DAG, but it's still structured as a binary tree) <!-- it's possible that this binary tree requirement will need to be relaxed, but i'm going to start out assuming that it does not -->
 - when a composition is refined, all its branches are refined in parallel.
 - refinements of the branches are propagated upwards live, and refinement is halted as soon as the overall expression reaches the required precision.
 <!-- TODO: add a propagated stopping condition so branches can be halted when they can no longer tighten the overall bounds. -->
