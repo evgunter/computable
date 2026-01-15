@@ -35,7 +35,6 @@ sadly, the implementation cannot exactly realize the formalism.
 - refinement is bounded: `Computable::refine_to` stops after a maximum number of iterations and returns an error instead of looping forever. note that default iteration limits differ by build: debug builds use a smaller max to catch issues quickly, while release builds allow more refinements for accuracy.
 - we do not (and cannot. but maybe if we had an actual proof system...) enforce that the provided $f$ actually satisfies the convergence requirement from the formalism; this is the caller's responsibility. violations may lead to runtime errors. the implementation only checks that, on refinement, the state does change and the bounds don't get worse (since these are necessary conditions which are easy to check).
 
-<!-- TODO: reconsider `Exponent = i64` vs `BigInt` for a more faithful D = Z × Z representation. -->
 
 # internal design of computable numbers
 
@@ -50,6 +49,7 @@ sadly, the implementation cannot exactly realize the formalism.
 - when a composition is refined, all its branches are refined in parallel.
 - refinements of the branches are propagated upwards live, and refinement is halted as soon as the overall expression reaches the required precision.
 <!-- TODO: add a propagated stopping condition so branches can be halted when they can no longer tighten the overall bounds. -->
+<!-- TODO: add support for distributive law/commutativity-type-things, where e.g. Mul(Add(a, b), c) can be converted to Add(Mul(a, c), Mul(b, c)) or Mod_n(Mul(a, b)) can be converted to Mod_n(Mul(Mod_n(a), Mod_n(b))) -->
 
 ### example
 let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$.
