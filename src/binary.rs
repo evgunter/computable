@@ -139,24 +139,9 @@ impl Binary {
         if shift.is_zero() {
             return mantissa.clone();
         }
-        let mut shifted = mantissa.clone();
-        let mut remaining = shift.clone();
         // BigInt only implements shifts for primitive integers, so chunk large shifts.
         let chunk_limit = BigUint::from(usize::MAX);
-        while remaining > BigUint::zero() {
-            let chunk_usize = if remaining > chunk_limit {
-                usize::MAX
-            } else {
-                let digits = remaining.to_u64_digits();
-                match digits.first() {
-                    Some(value) => *value as usize,
-                    None => 0,
-                }
-            };
-            shifted <<= chunk_usize;
-            remaining -= BigUint::from(chunk_usize);
-        }
-        shifted
+        shift_mantissa_chunked(mantissa, shift, &chunk_limit)
     }
 
     fn cmp_shifted(
@@ -196,6 +181,32 @@ impl Binary {
             }
         }
     }
+}
+
+fn shift_mantissa_chunked(mantissa: &BigInt, shift: &BigUint, chunk_limit: &BigUint) -> BigInt {
+    let mut shifted = mantissa.clone();
+    let mut remaining = shift.clone();
+    let chunk_limit_usize = {
+        let digits = chunk_limit.to_u64_digits();
+        match digits.first() {
+            Some(value) => *value as usize,
+            None => 0,
+        }
+    };
+    while remaining > BigUint::zero() {
+        let chunk_usize = if &remaining > chunk_limit {
+            chunk_limit_usize
+        } else {
+            let digits = remaining.to_u64_digits();
+            match digits.first() {
+                Some(value) => *value as usize,
+                None => 0,
+            }
+        };
+        shifted <<= chunk_usize;
+        remaining -= BigUint::from(chunk_usize);
+    }
+    shifted
 }
 
 impl Ord for Binary {
@@ -473,5 +484,15 @@ mod tests {
         let product = two.mul(&half);
         let expected = bin(1, 0);
         assert_eq!(product, expected);
+    }
+
+    #[test]
+    fn shift_mantissa_chunks_large_shift() {
+        let mantissa = BigInt::from(1);
+        let shift = BigUint::from(128u32);
+        let chunk_limit = BigUint::from(64u32);
+        let chunked = shift_mantissa_chunked(&mantissa, &shift, &chunk_limit);
+        let expected = &mantissa << 128usize;
+        assert_eq!(chunked, expected);
     }
 }
