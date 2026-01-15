@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, Sub};
 
+/// TODO: rename to `Interval` and require that `width` is positive.
 /// Stores two values ordered so that `large >= small` using a lower bound and width.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderedPair<T>
