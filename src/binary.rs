@@ -12,9 +12,10 @@ pub type Exponent = i64;
 
 impl OrderedPair<Exponent> {
     pub fn delta_usize(&self) -> Option<usize> {
-        self.large()
-            .checked_sub(*self.small())
-            .and_then(|delta| usize::try_from(delta).ok())
+        if self.width_overflowed() {
+            return None;
+        }
+        usize::try_from(*self.width()).ok()
     }
 }
 
@@ -199,6 +200,40 @@ impl Binary {
     }
 }
 
+impl std::ops::Add for Binary {
+    type Output = Self;
+
+    #[allow(clippy::expect_used, clippy::panic)]
+    fn add(self, rhs: Self) -> Self::Output {
+        Binary::add(&self, &rhs).expect("binary addition overflow")
+    }
+}
+
+impl std::ops::Sub for Binary {
+    type Output = Self;
+
+    #[allow(clippy::expect_used, clippy::panic)]
+    fn sub(self, rhs: Self) -> Self::Output {
+        Binary::sub(&self, &rhs).expect("binary subtraction overflow")
+    }
+}
+
+impl num_traits::Zero for Binary {
+    fn zero() -> Self {
+        Binary::zero()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.mantissa.is_zero()
+    }
+}
+
+impl num_traits::CheckedSub for Binary {
+    fn checked_sub(&self, v: &Self) -> Option<Self> {
+        Binary::sub(self, v).ok()
+    }
+}
+
 impl Ord for Binary {
     fn cmp(&self, other: &Self) -> Ordering {
         Self::cmp_shifted(
@@ -302,6 +337,61 @@ impl ExtendedBinary {
             }
             (PosInf, PosInf) | (NegInf, NegInf) => Ok(PosInf),
             (PosInf, NegInf) | (NegInf, PosInf) => Ok(NegInf),
+        }
+    }
+}
+
+impl std::ops::Add for ExtendedBinary {
+    type Output = Self;
+
+    #[allow(clippy::expect_used, clippy::panic)]
+    fn add(self, rhs: Self) -> Self::Output {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, rhs) {
+            (PosInf, _) | (_, PosInf) => PosInf,
+            (NegInf, _) | (_, NegInf) => NegInf,
+            (Finite(lhs), Finite(rhs_value)) => {
+                Finite(Binary::add(&lhs, &rhs_value).expect("extended binary addition overflow"))
+            }
+        }
+    }
+}
+
+impl std::ops::Sub for ExtendedBinary {
+    type Output = Self;
+
+    #[allow(clippy::expect_used, clippy::panic)]
+    fn sub(self, rhs: Self) -> Self::Output {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, rhs) {
+            (PosInf, PosInf) | (NegInf, NegInf) => Finite(Binary::zero()),
+            (PosInf, _) | (Finite(_), NegInf) => PosInf,
+            (NegInf, _) | (Finite(_), PosInf) => NegInf,
+            (Finite(lhs), Finite(rhs_value)) => {
+                Finite(Binary::sub(&lhs, &rhs_value).expect("extended binary subtraction overflow"))
+            }
+        }
+    }
+}
+
+impl num_traits::Zero for ExtendedBinary {
+    fn zero() -> Self {
+        ExtendedBinary::zero()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.is_zero()
+    }
+}
+
+impl num_traits::CheckedSub for ExtendedBinary {
+    fn checked_sub(&self, v: &Self) -> Option<Self> {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, v) {
+            (PosInf, PosInf) | (NegInf, NegInf) => Some(Finite(Binary::zero())),
+            (PosInf, _) | (Finite(_), NegInf) => Some(PosInf),
+            (NegInf, _) | (Finite(_), PosInf) => Some(NegInf),
+            (Finite(lhs), Finite(rhs)) => Binary::sub(lhs, rhs).ok().map(Finite),
         }
     }
 }
