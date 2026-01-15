@@ -7,13 +7,6 @@ use num_traits::{Float, One, Signed, ToPrimitive, Zero};
 
 use crate::ordered_pair::OrderedPair;
 
-impl OrderedPair<BigInt> {
-    pub fn delta_usize(&self) -> Option<usize> {
-        let delta = self.large() - self.small();
-        delta.to_usize()
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinaryError {
     ReciprocalOverflow,
@@ -158,7 +151,7 @@ impl Binary {
             small_mantissa: &BigInt,
             pair: OrderedPair<BigInt>,
         ) -> Ordering {
-            let shift_amount_opt = pair.delta_usize();
+            let shift_amount_opt = pair.width().to_usize();
 
             if let Some(shift_amount) = shift_amount_opt {
                 let shifted = large_mantissa << shift_amount;
@@ -185,6 +178,41 @@ impl Binary {
         }
     }
 }
+
+impl std::ops::Add for Binary {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Binary::add(&self, &rhs)
+    }
+}
+
+impl std::ops::Sub for Binary {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Binary::sub(&self, &rhs)
+    }
+}
+
+impl std::ops::Neg for Binary {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Binary::neg(&self)
+    }
+}
+
+impl num_traits::Zero for Binary {
+    fn zero() -> Self {
+        Binary::zero()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.mantissa.is_zero()
+    }
+}
+
 
 fn shift_mantissa_chunked(mantissa: &BigInt, shift: &BigUint, chunk_limit: &BigUint) -> BigInt {
     // chunk_limit is injected to make the chunking behavior testable with small shifts.
@@ -293,6 +321,25 @@ impl ExtendedBinary {
         }
     }
 
+    pub fn add(&self, other: &Self) -> Self {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, other) {
+            (PosInf, _) | (_, PosInf) => PosInf,
+            (NegInf, _) | (_, NegInf) => NegInf,
+            (Finite(lhs), Finite(rhs)) => Finite(lhs.add(rhs)),
+        }
+    }
+
+    pub fn sub(&self, other: &Self) -> Self {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, other) {
+            (PosInf, PosInf) | (NegInf, NegInf) => Finite(Binary::zero()),
+            (PosInf, _) | (Finite(_), NegInf) => PosInf,
+            (NegInf, _) | (Finite(_), PosInf) => NegInf,
+            (Finite(lhs), Finite(rhs)) => Finite(lhs.sub(rhs)),
+        }
+    }
+
     pub fn mul(&self, other: &Self) -> Self {
         use ExtendedBinary::{Finite, NegInf, PosInf};
         if self.is_zero() || other.is_zero() {
@@ -319,6 +366,41 @@ impl ExtendedBinary {
         }
     }
 }
+
+impl std::ops::Add for ExtendedBinary {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        ExtendedBinary::add(&self, &rhs)
+    }
+}
+
+impl std::ops::Sub for ExtendedBinary {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        ExtendedBinary::sub(&self, &rhs)
+    }
+}
+
+impl std::ops::Neg for ExtendedBinary {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        ExtendedBinary::neg(&self)
+    }
+}
+
+impl num_traits::Zero for ExtendedBinary {
+    fn zero() -> Self {
+        ExtendedBinary::zero()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.is_zero()
+    }
+}
+
 
 impl Ord for ExtendedBinary {
     fn cmp(&self, other: &Self) -> Ordering {

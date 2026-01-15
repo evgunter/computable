@@ -1,11 +1,16 @@
 use std::cmp::Ordering;
 use std::fmt;
+use std::ops::{Add, Sub};
 
-/// Stores two values ordered so that `large >= small`.
+/// TODO: rename to `Interval` and require that `width` is positive.
+/// Stores two values ordered so that `large >= small` using a lower bound and width.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OrderedPair<T> {
-    large: T,
-    small: T,
+pub struct OrderedPair<T>
+where
+    T: Add<Output = T> + Sub<Output = T>,
+{
+    lower: T,
+    width: T,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,11 +28,20 @@ impl fmt::Display for OrderedPairError {
 
 impl std::error::Error for OrderedPairError {}
 
-impl<T: Ord> OrderedPair<T> {
+impl<T> OrderedPair<T>
+where
+    T: Ord + Add<Output = T> + Sub<Output = T> + Clone,
+{
     pub fn new(a: T, b: T) -> Self {
         match a.cmp(&b) {
-            Ordering::Less => Self { large: b, small: a },
-            Ordering::Equal | Ordering::Greater => Self { large: a, small: b },
+            Ordering::Less => {
+                let width = b.clone() - a.clone();
+                Self { lower: a, width }
+            }
+            Ordering::Equal | Ordering::Greater => {
+                let width = a.clone() - b.clone();
+                Self { lower: b, width }
+            }
         }
     }
 
@@ -36,16 +50,30 @@ impl<T: Ord> OrderedPair<T> {
             return Err(OrderedPairError::InvalidOrder);
         }
 
-        Ok(Self { large, small })
+        let width = large.clone() - small.clone();
+        Ok(Self {
+            lower: small,
+            width,
+        })
     }
 }
 
-impl<T> OrderedPair<T> {
+impl<T> OrderedPair<T>
+where
+    T: Add<Output = T> + Sub<Output = T>,
+{
     pub fn small(&self) -> &T {
-        &self.small
+        &self.lower
     }
 
-    pub fn large(&self) -> &T {
-        &self.large
+    pub fn width(&self) -> &T {
+        &self.width
+    }
+
+    pub fn large(&self) -> T
+    where
+        T: Clone,
+    {
+        self.lower.clone() + self.width.clone()
     }
 }
