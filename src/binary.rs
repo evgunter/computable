@@ -142,6 +142,7 @@ impl Binary {
         // BigInt only implements shifts for primitive integers, so chunk large shifts.
         // Note: extremely large shifts will still attempt to allocate enormous values;
         // this just keeps each individual shift within primitive bounds.
+        // TODO: consider proactively erroring on huge shifts to avoid massive allocations.
         let chunk_limit = BigUint::from(usize::MAX);
         shift_mantissa_chunked(mantissa, shift, &chunk_limit)
     }
