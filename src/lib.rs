@@ -27,7 +27,7 @@ mod binary;
 mod concurrency;
 mod ordered_pair;
 
-pub use binary::{Binary, BinaryError, Exponent, ExtendedBinary, ExtendedBinaryError};
+pub use binary::{Binary, BinaryError, ExtendedBinary, ExtendedBinaryError};
 use concurrency::StopFlag;
 pub use ordered_pair::{OrderedPair, OrderedPairError};
 
@@ -218,7 +218,7 @@ impl Computable {
 
         loop {
             let bounds = self.node.get_bounds()?;
-            if bounds_width_leq(&bounds, &epsilon)? {
+            if bounds_width_leq(&bounds, &epsilon) {
                 return Ok(bounds);
             }
 
@@ -399,8 +399,8 @@ impl NodeOp for AddOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let left_bounds = self.left.get_bounds()?;
         let right_bounds = self.right.get_bounds()?;
-        let lower = bounds_lower(&left_bounds).add_lower(bounds_lower(&right_bounds))?;
-        let upper = bounds_upper(&left_bounds).add_upper(bounds_upper(&right_bounds))?;
+        let lower = bounds_lower(&left_bounds).add_lower(bounds_lower(&right_bounds));
+        let upper = bounds_upper(&left_bounds).add_upper(bounds_upper(&right_bounds));
         OrderedPair::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
     }
 
@@ -432,10 +432,10 @@ impl NodeOp for MulOp {
         let right_upper = bounds_upper(&right_bounds);
 
         let candidates = [
-            left_lower.mul(right_lower)?,
-            left_lower.mul(right_upper)?,
-            left_upper.mul(right_lower)?,
-            left_upper.mul(right_upper)?,
+            left_lower.mul(right_lower),
+            left_lower.mul(right_upper),
+            left_upper.mul(right_lower),
+            left_upper.mul(right_upper),
         ];
 
         let mut min = candidates[0].clone();
@@ -670,7 +670,7 @@ impl RefinementGraph {
         let mut root_bounds;
         loop {
             root_bounds = self.root.get_bounds()?;
-            if bounds_width_leq(&root_bounds, epsilon)? {
+            if bounds_width_leq(&root_bounds, epsilon) {
                 break;
             }
             if iterations >= MAX_REFINEMENT_ITERATIONS {
@@ -864,15 +864,15 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
         .map_err(|_| ComputableError::InvalidBoundsOrder)
 }
 
-fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> Result<bool, BinaryError> {
+fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> bool {
     let upper = bounds_upper(bounds);
     let lower = bounds_lower(bounds);
     let (ExtendedBinary::Finite(upper_bound), ExtendedBinary::Finite(lower_bound)) = (upper, lower)
     else {
-        return Ok(false);
+        return false;
     };
-    let width = upper_bound.sub(lower_bound)?;
-    Ok(&width <= epsilon)
+    let width = upper_bound.sub(lower_bound);
+    &width <= epsilon
 }
 
 #[cfg(test)]
@@ -888,7 +888,7 @@ mod tests {
     // --- test utilities ---
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), exponent).expect("binary should normalize")
+        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
     }
 
     fn ext(mantissa: i64, exponent: i64) -> ExtendedBinary {
@@ -909,14 +909,9 @@ mod tests {
     }
 
     fn midpoint_between(lower: &ExtendedBinary, upper: &ExtendedBinary) -> Binary {
-        let mid_sum = unwrap_finite(lower)
-            .add(&unwrap_finite(upper))
-            .expect("binary should add");
-        let exponent = mid_sum
-            .exponent()
-            .checked_sub(1)
-            .expect("midpoint exponent should not underflow");
-        Binary::new(mid_sum.mantissa().clone(), exponent).expect("binary should normalize")
+        let mid_sum = unwrap_finite(lower).add(&unwrap_finite(upper));
+        let exponent = mid_sum.exponent() - BigInt::one();
+        Binary::new(mid_sum.mantissa().clone(), exponent)
     }
 
     fn interval_refine(state: IntervalState) -> IntervalState {
@@ -946,7 +941,7 @@ mod tests {
         let bounds = |inner_state: &IntervalState| Ok(inner_state.clone());
         let refine = move |inner_state: IntervalState| {
             let mid = midpoint_between(inner_state.small(), inner_state.large());
-            let mid_sq = mid.mul(&mid).expect("binary should multiply");
+            let mid_sq = mid.mul(&mid);
             let value = bin(value_int as i64, 0);
 
             if mid_sq <= value {
@@ -966,7 +961,7 @@ mod tests {
     ) {
         let lower = unwrap_finite(bounds_lower(bounds));
         let upper = unwrap_finite(bounds_upper(bounds));
-        let width = upper.sub(&lower).expect("binary should subtract");
+        let width = upper.sub(&lower);
 
         assert!(lower <= *expected && *expected <= upper);
         assert!(&width <= epsilon);
@@ -1002,9 +997,7 @@ mod tests {
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
         let expected = ext(1, 0);
-        let width = unwrap_finite(bounds_upper(&bounds))
-            .sub(&unwrap_finite(bounds_lower(&bounds)))
-            .expect("binary should subtract");
+        let width = unwrap_finite(bounds_upper(&bounds)).sub(&unwrap_finite(bounds_lower(&bounds)));
 
         assert!(bounds_lower(&bounds) <= &expected && &expected <= bounds_upper(&bounds));
         assert!(width < epsilon);
@@ -1062,7 +1055,7 @@ mod tests {
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
         assert!(bounds_lower(&bounds) < bounds_upper(&bounds));
-        assert!(bounds_width_leq(&bounds, &epsilon).expect("width should compute"));
+        assert!(bounds_width_leq(&bounds, &epsilon));
         assert_eq!(computable.bounds().expect("bounds should succeed"), bounds);
     }
 
@@ -1073,9 +1066,7 @@ mod tests {
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
             |inner_state: IntervalState| {
-                let worse_upper = unwrap_finite(inner_state.large())
-                    .add(&bin(1, 0))
-                    .expect("binary should add");
+                let worse_upper = unwrap_finite(inner_state.large()).add(&bin(1, 0));
                 OrderedPair::new(
                     inner_state.small().clone(),
                     ExtendedBinary::Finite(worse_upper),
@@ -1219,8 +1210,8 @@ mod tests {
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon;
 
-        let lower_plus = lower.add(&eps_binary).expect("binary should add");
-        let upper_minus = upper.sub(&eps_binary).expect("binary should subtract");
+        let lower_plus = lower.add(&eps_binary);
+        let upper_minus = upper.sub(&eps_binary);
 
         assert!(lower <= expected_value && expected_value <= upper);
         assert!(upper_minus <= expected_value && expected_value <= lower_plus);
@@ -1244,8 +1235,8 @@ mod tests {
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon;
 
-        let lower_plus = lower.add(&eps_binary).expect("binary should add");
-        let upper_minus = upper.sub(&eps_binary).expect("binary should subtract");
+        let lower_plus = lower.add(&eps_binary);
+        let upper_minus = upper.sub(&eps_binary);
 
         assert!(lower <= expected_value && expected_value <= upper);
         assert!(upper_minus <= expected_value && expected_value <= lower_plus);
@@ -1264,32 +1255,50 @@ mod tests {
             .expect("refine_to should succeed");
 
         let bounds = original.bounds().expect("bounds should succeed");
-        assert!(bounds_width_leq(&bounds, &epsilon).expect("width should compute"));
+        assert!(bounds_width_leq(&bounds, &epsilon));
     }
 
     #[test]
     fn computable_refine_to_channel_closure() {
         let computable = Computable::new(
             0usize,
-            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| {
+                Ok(OrderedPair::new(
+                    ExtendedBinary::NegInf,
+                    ExtendedBinary::PosInf,
+                ))
+            },
             |_| panic!("refiner panic"),
         );
 
         let epsilon = bin(1, -4);
         let result = computable.refine_to::<2>(epsilon);
-        assert!(matches!(result, Err(ComputableError::RefinementChannelClosed)));
+        assert!(matches!(
+            result,
+            Err(ComputableError::RefinementChannelClosed)
+        ));
     }
 
     #[test]
     fn computable_refine_to_max_iterations_multiple_refiners() {
         let left = Computable::new(
             0usize,
-            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| {
+                Ok(OrderedPair::new(
+                    ExtendedBinary::NegInf,
+                    ExtendedBinary::PosInf,
+                ))
+            },
             |state| state + 1,
         );
         let right = Computable::new(
             0usize,
-            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| {
+                Ok(OrderedPair::new(
+                    ExtendedBinary::NegInf,
+                    ExtendedBinary::PosInf,
+                ))
+            },
             |state| state + 1,
         );
         let expr = left + right;
@@ -1319,7 +1328,12 @@ mod tests {
     fn concurrent_bounds_reads_during_failed_refinement() {
         let computable = Arc::new(Computable::new(
             0usize,
-            |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+            |_| {
+                Ok(OrderedPair::new(
+                    ExtendedBinary::NegInf,
+                    ExtendedBinary::PosInf,
+                ))
+            },
             |state| state + 1,
         ));
         let epsilon = bin(1, -6);
@@ -1349,7 +1363,12 @@ mod tests {
         let slow_refiner = || {
             Computable::new(
                 0usize,
-                |_| Ok(OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)),
+                |_| {
+                    Ok(OrderedPair::new(
+                        ExtendedBinary::NegInf,
+                        ExtendedBinary::PosInf,
+                    ))
+                },
                 |state| {
                     thread::sleep(Duration::from_millis(SLEEP_MS));
                     state + 1
@@ -1368,19 +1387,22 @@ mod tests {
             result,
             Err(ComputableError::MaxRefinementIterations { max: 1 })
         ));
-        assert!(elapsed.as_millis() as u64 > SLEEP_MS,
+        assert!(
+            elapsed.as_millis() as u64 > SLEEP_MS,
             "refinement must not have actually run"
         );
-        assert!((elapsed.as_millis() as u64) < 2 * SLEEP_MS,
-            "expected parallel refinement under {}ms, elapsed {elapsed:?}", 2 * SLEEP_MS
+        assert!(
+            (elapsed.as_millis() as u64) < 2 * SLEEP_MS,
+            "expected parallel refinement under {}ms, elapsed {elapsed:?}",
+            2 * SLEEP_MS
         );
     }
 
     #[test]
     fn concurrent_refine_to_shared_expression() {
         let sqrt2 = sqrt_computable(2);
-        let base_expression = (sqrt2.clone() + sqrt2.clone())
-            * (Computable::constant(bin(1, 0)) + sqrt2.clone());
+        let base_expression =
+            (sqrt2.clone() + sqrt2.clone()) * (Computable::constant(bin(1, 0)) + sqrt2.clone());
         let expression = Arc::new(base_expression);
         let epsilon = bin(1, -10);
         // Coordinate multiple threads calling refine_to on the same computable.
@@ -1401,7 +1423,7 @@ mod tests {
         let main_bounds = expression
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
-        assert!(bounds_width_leq(&main_bounds, &epsilon).expect("width should compute"));
+        assert!(bounds_width_leq(&main_bounds, &epsilon));
 
         for handle in handles {
             let bounds = handle
@@ -1409,7 +1431,7 @@ mod tests {
                 .expect("thread should join")
                 .expect("refine_to should succeed");
             assert_bounds_ordered(&bounds);
-            assert!(bounds_width_leq(&bounds, &epsilon).expect("width should compute"));
+            assert!(bounds_width_leq(&bounds, &epsilon));
             assert!(bounds_lower(&bounds) <= bounds_upper(&main_bounds));
             assert!(bounds_lower(&main_bounds) <= bounds_upper(&bounds));
         }
@@ -1468,7 +1490,7 @@ mod tests {
         }
 
         assert!(!saw_overlap.load(Ordering::SeqCst));
-        assert!(bounds_width_leq(&main_bounds, &epsilon).expect("width should compute"));
+        assert!(bounds_width_leq(&main_bounds, &epsilon));
     }
 
     #[test]

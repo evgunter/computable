@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::fmt;
 
 /// Stores two values ordered so that `large >= small`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderedPair<T> {
     large: T,
     small: T,
