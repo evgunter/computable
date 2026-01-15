@@ -80,6 +80,11 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$
 
 (note that, in general, the constraints on a composition may be narrower than the combination of the constraints on each side considered independently; for example, $a - ab$ with bounds on $a$ of $(-1, 0.5)$ and bounds on $b$ of $(4, 6)$ is bounded by $(-2.5, 5)$, but considering $a$ and $ab$ independently (i.e. ignoring the fact that $a$ is in both) would yield $(-4, 6.5)$. we ignore this for now, always considering the sides independently, but this might be a place for further improvements.)
 
+# design of binary numbers
+- computable numbers are backed by binary numbers, which are represented by $(m, e)$ where $m$ and $e$ are integers; the binary number represented is $m * 2^e$
+- the integers themselves are represented with `BigInt`
+- we also use "extended" binary numbers, i.e. the above but also including $-\infty$ and $+\infty$
+- it is also frequently useful to represent only nonnegative binary numbers; for this we have a separate type `UBinary` which is represented in the same way except that $m \geq 0$ (or internally, $m$ is a `BigUint`). similarly, there are `PosExtendedBinary` and `UExtendedBinary` types. (the width of bounds are `UExtendedBinary`)
 
 # norms
 
@@ -98,5 +103,6 @@ for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \ma
 
 ## design norms
 
-- everything is designed not to panic, and to instead return `Result`.
-- we avoid interior mutability whenever possible.
+- everything is designed not to panic, and to instead return `Result`
+- we avoid interior mutability whenever possible
+- whenever possible, we use the type system to constrain the inputs to belong to a correct type, rather than checking that the inputs are valid and returning a `Result` type
