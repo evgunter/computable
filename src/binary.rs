@@ -140,6 +140,8 @@ impl Binary {
             return mantissa.clone();
         }
         // BigInt only implements shifts for primitive integers, so chunk large shifts.
+        // Note: extremely large shifts will still attempt to allocate enormous values;
+        // this just keeps each individual shift within primitive bounds.
         let chunk_limit = BigUint::from(usize::MAX);
         shift_mantissa_chunked(mantissa, shift, &chunk_limit)
     }
@@ -184,6 +186,7 @@ impl Binary {
 }
 
 fn shift_mantissa_chunked(mantissa: &BigInt, shift: &BigUint, chunk_limit: &BigUint) -> BigInt {
+    // chunk_limit is injected to make the chunking behavior testable with small shifts.
     let mut shifted = mantissa.clone();
     let mut remaining = shift.clone();
     let chunk_limit_usize = {
