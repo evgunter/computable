@@ -23,23 +23,23 @@ impl fmt::Display for BinaryError {
 impl std::error::Error for BinaryError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ExtendedBinaryError {
+pub enum XBinaryError {
     Nan,
     Binary(BinaryError),
 }
 
-impl fmt::Display for ExtendedBinaryError {
+impl fmt::Display for XBinaryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Nan => write!(f, "cannot convert NaN to ExtendedBinary"),
+            Self::Nan => write!(f, "cannot convert NaN to XBinary"),
             Self::Binary(err) => write!(f, "{err}"),
         }
     }
 }
 
-impl std::error::Error for ExtendedBinaryError {}
+impl std::error::Error for XBinaryError {}
 
-impl From<BinaryError> for ExtendedBinaryError {
+impl From<BinaryError> for XBinaryError {
     fn from(error: BinaryError) -> Self {
         Self::Binary(error)
     }
@@ -259,13 +259,13 @@ impl PartialOrd for Binary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ExtendedBinary {
+pub enum XBinary {
     NegInf,
     Finite(Binary),
     PosInf,
 }
 
-impl ExtendedBinary {
+impl XBinary {
     pub fn zero() -> Self {
         Self::Finite(Binary::zero())
     }
@@ -282,9 +282,9 @@ impl ExtendedBinary {
         matches!(self, Self::Finite(value) if value.mantissa().is_zero())
     }
 
-    pub fn from_f64(value: f64) -> Result<Self, ExtendedBinaryError> {
+    pub fn from_f64(value: f64) -> Result<Self, XBinaryError> {
         if value.is_nan() {
-            return Err(ExtendedBinaryError::Nan);
+            return Err(XBinaryError::Nan);
         }
         if value == 0.0 {
             return Ok(Self::Finite(Binary::zero()));
@@ -304,7 +304,7 @@ impl ExtendedBinary {
     }
 
     pub fn add_lower(&self, other: &Self) -> Self {
-        use ExtendedBinary::{Finite, NegInf, PosInf};
+        use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
             (NegInf, _) | (_, NegInf) => NegInf,
             (PosInf, _) | (_, PosInf) => PosInf,
@@ -313,7 +313,7 @@ impl ExtendedBinary {
     }
 
     pub fn add_upper(&self, other: &Self) -> Self {
-        use ExtendedBinary::{Finite, NegInf, PosInf};
+        use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
             (PosInf, _) | (_, PosInf) => PosInf,
             (NegInf, _) | (_, NegInf) => NegInf,
@@ -322,7 +322,7 @@ impl ExtendedBinary {
     }
 
     pub fn add(&self, other: &Self) -> Self {
-        use ExtendedBinary::{Finite, NegInf, PosInf};
+        use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
             (PosInf, _) | (_, PosInf) => PosInf,
             (NegInf, _) | (_, NegInf) => NegInf,
@@ -331,7 +331,7 @@ impl ExtendedBinary {
     }
 
     pub fn sub(&self, other: &Self) -> Self {
-        use ExtendedBinary::{Finite, NegInf, PosInf};
+        use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
             (PosInf, PosInf) | (NegInf, NegInf) => Finite(Binary::zero()),
             (PosInf, _) | (Finite(_), NegInf) => PosInf,
@@ -341,7 +341,7 @@ impl ExtendedBinary {
     }
 
     pub fn mul(&self, other: &Self) -> Self {
-        use ExtendedBinary::{Finite, NegInf, PosInf};
+        use XBinary::{Finite, NegInf, PosInf};
         if self.is_zero() || other.is_zero() {
             return Finite(Binary::zero());
         }
@@ -367,33 +367,33 @@ impl ExtendedBinary {
     }
 }
 
-impl std::ops::Add for ExtendedBinary {
+impl std::ops::Add for XBinary {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        ExtendedBinary::add(&self, &rhs)
+        XBinary::add(&self, &rhs)
     }
 }
 
-impl std::ops::Sub for ExtendedBinary {
+impl std::ops::Sub for XBinary {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        ExtendedBinary::sub(&self, &rhs)
+        XBinary::sub(&self, &rhs)
     }
 }
 
-impl std::ops::Neg for ExtendedBinary {
+impl std::ops::Neg for XBinary {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        ExtendedBinary::neg(&self)
+        XBinary::neg(&self)
     }
 }
 
-impl num_traits::Zero for ExtendedBinary {
+impl num_traits::Zero for XBinary {
     fn zero() -> Self {
-        ExtendedBinary::zero()
+        XBinary::zero()
     }
 
     fn is_zero(&self) -> bool {
@@ -402,9 +402,9 @@ impl num_traits::Zero for ExtendedBinary {
 }
 
 
-impl Ord for ExtendedBinary {
+impl Ord for XBinary {
     fn cmp(&self, other: &Self) -> Ordering {
-        use ExtendedBinary::{Finite, NegInf, PosInf};
+        use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
             (NegInf, NegInf) | (PosInf, PosInf) => Ordering::Equal,
             (NegInf, _) => Ordering::Less,
@@ -416,7 +416,7 @@ impl Ord for ExtendedBinary {
     }
 }
 
-impl PartialOrd for ExtendedBinary {
+impl PartialOrd for XBinary {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -429,12 +429,12 @@ pub(crate) enum ReciprocalRounding {
 }
 
 pub(crate) fn reciprocal_rounded_abs_extended(
-    value: &ExtendedBinary,
+    value: &XBinary,
     precision_bits: &BigInt,
     rounding: ReciprocalRounding,
-) -> Result<ExtendedBinary, BinaryError> {
+) -> Result<XBinary, BinaryError> {
     match value {
-        ExtendedBinary::Finite(finite_value) => {
+        XBinary::Finite(finite_value) => {
             let abs_mantissa = finite_value.mantissa().abs();
             let shift_bits = precision_bits - finite_value.exponent();
             let quotient = if shift_bits.is_negative() {
@@ -451,10 +451,10 @@ pub(crate) fn reciprocal_rounded_abs_extended(
                 }
             };
             let exponent = reciprocal_exponent(precision_bits)?;
-            Ok(ExtendedBinary::Finite(Binary::new(quotient, exponent)))
+            Ok(XBinary::Finite(Binary::new(quotient, exponent)))
         }
-        ExtendedBinary::NegInf | ExtendedBinary::PosInf => {
-            Ok(ExtendedBinary::Finite(Binary::zero()))
+        XBinary::NegInf | XBinary::PosInf => {
+            Ok(XBinary::Finite(Binary::zero()))
         }
     }
 }

@@ -27,11 +27,11 @@ mod binary;
 mod concurrency;
 mod ordered_pair;
 
-pub use binary::{Binary, BinaryError, ExtendedBinary, ExtendedBinaryError};
+pub use binary::{Binary, BinaryError, XBinary, XBinaryError};
 use concurrency::StopFlag;
 pub use ordered_pair::{OrderedPair, OrderedPairError};
 
-pub type Bounds = OrderedPair<ExtendedBinary>;
+pub type Bounds = OrderedPair<XBinary>;
 
 /// Shared API for retrieving bounds with lazy computation.
 trait BoundsAccess {
@@ -254,8 +254,8 @@ impl Computable {
     pub fn constant(value: Binary) -> Self {
         fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
             Ok(OrderedPair::new(
-                ExtendedBinary::Finite(value.clone()),
-                ExtendedBinary::Finite(value.clone()),
+                XBinary::Finite(value.clone()),
+                XBinary::Finite(value.clone()),
             ))
         }
 
@@ -816,11 +816,11 @@ pub const DEFAULT_MAX_REFINEMENT_ITERATIONS: usize = 4096;
 fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds, ComputableError> {
     let lower = bounds.small();
     let upper = bounds.large();
-    let zero = ExtendedBinary::zero();
+    let zero = XBinary::zero();
     if lower <= &zero && upper >= zero {
         return Ok(OrderedPair::new(
-            ExtendedBinary::NegInf,
-            ExtendedBinary::PosInf,
+            XBinary::NegInf,
+            XBinary::PosInf,
         ));
     }
 
@@ -858,7 +858,7 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
 
 fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> bool {
     let width_value = bounds.width();
-    let ExtendedBinary::Finite(width) = width_value else {
+    let XBinary::Finite(width) = width_value else {
         return false;
     };
     width <= epsilon
@@ -880,14 +880,14 @@ mod tests {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
     }
 
-    fn ext(mantissa: i64, exponent: i64) -> ExtendedBinary {
-        ExtendedBinary::Finite(bin(mantissa, exponent))
+    fn ext(mantissa: i64, exponent: i64) -> XBinary {
+        XBinary::Finite(bin(mantissa, exponent))
     }
 
-    fn unwrap_finite(input: &ExtendedBinary) -> Binary {
+    fn unwrap_finite(input: &XBinary) -> Binary {
         match input {
-            ExtendedBinary::Finite(value) => value.clone(),
-            ExtendedBinary::NegInf | ExtendedBinary::PosInf => {
+            XBinary::Finite(value) => value.clone(),
+            XBinary::NegInf | XBinary::PosInf => {
                 panic!("expected finite extended binary")
             }
         }
@@ -897,7 +897,7 @@ mod tests {
         state.clone()
     }
 
-    fn midpoint_between(lower: &ExtendedBinary, upper: &ExtendedBinary) -> Binary {
+    fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
         let mid_sum = unwrap_finite(lower).add(&unwrap_finite(upper));
         let exponent = mid_sum.exponent() - BigInt::one();
         Binary::new(mid_sum.mantissa().clone(), exponent)
@@ -906,14 +906,14 @@ mod tests {
     fn interval_refine(state: IntervalState) -> IntervalState {
         let midpoint = midpoint_between(state.small(), &state.large());
         OrderedPair::new(
-            ExtendedBinary::Finite(midpoint.clone()),
-            ExtendedBinary::Finite(midpoint),
+            XBinary::Finite(midpoint.clone()),
+            XBinary::Finite(midpoint),
         )
     }
 
     fn interval_refine_strict(state: IntervalState) -> IntervalState {
         let midpoint = midpoint_between(state.small(), &state.large());
-        OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(midpoint))
+        OrderedPair::new(state.small().clone(), XBinary::Finite(midpoint))
     }
 
     fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
@@ -934,9 +934,9 @@ mod tests {
             let value = bin(value_int as i64, 0);
 
             if mid_sq <= value {
-                OrderedPair::new(ExtendedBinary::Finite(mid), inner_state.large().clone())
+                OrderedPair::new(XBinary::Finite(mid), inner_state.large().clone())
             } else {
-                OrderedPair::new(inner_state.small().clone(), ExtendedBinary::Finite(mid))
+                OrderedPair::new(inner_state.small().clone(), XBinary::Finite(mid))
             }
         };
 
@@ -1019,8 +1019,8 @@ mod tests {
             0usize,
             |_| {
                 Ok(OrderedPair::new(
-                    ExtendedBinary::NegInf,
-                    ExtendedBinary::PosInf,
+                    XBinary::NegInf,
+                    XBinary::PosInf,
                 ))
             },
             |state| state + 1,
@@ -1063,7 +1063,7 @@ mod tests {
                 let worse_upper = unwrap_finite(&upper).add(&bin(1, 0));
                 OrderedPair::new(
                     inner_state.small().clone(),
-                    ExtendedBinary::Finite(worse_upper),
+                    XBinary::Finite(worse_upper),
                 )
             },
         );
@@ -1109,7 +1109,7 @@ mod tests {
         let bounds = inv.bounds().expect("bounds should succeed");
         assert_eq!(
             bounds,
-            OrderedPair::new(ExtendedBinary::NegInf, ExtendedBinary::PosInf)
+            OrderedPair::new(XBinary::NegInf, XBinary::PosInf)
         );
     }
 
@@ -1121,7 +1121,7 @@ mod tests {
         let bounds = inv
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
-        let expected_binary = ExtendedBinary::from_f64(1.0 / 3.0)
+        let expected_binary = XBinary::from_f64(1.0 / 3.0)
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
 
@@ -1177,8 +1177,8 @@ mod tests {
         assert_eq!(
             bounds,
             OrderedPair::new(
-                ExtendedBinary::Finite(value.clone()),
-                ExtendedBinary::Finite(value)
+                XBinary::Finite(value.clone()),
+                XBinary::Finite(value)
             )
         );
     }
@@ -1200,7 +1200,7 @@ mod tests {
         let upper = bounds.large();
         let upper = unwrap_finite(&upper);
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
-        let expected_binary = ExtendedBinary::from_f64(expected)
+        let expected_binary = XBinary::from_f64(expected)
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon;
@@ -1226,7 +1226,7 @@ mod tests {
         let upper = bounds.large();
         let upper = unwrap_finite(&upper);
         let expected = 2.0_f64 * 2.0_f64.sqrt();
-        let expected_binary = ExtendedBinary::from_f64(expected)
+        let expected_binary = XBinary::from_f64(expected)
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon;
@@ -1260,8 +1260,8 @@ mod tests {
             0usize,
             |_| {
                 Ok(OrderedPair::new(
-                    ExtendedBinary::NegInf,
-                    ExtendedBinary::PosInf,
+                    XBinary::NegInf,
+                    XBinary::PosInf,
                 ))
             },
             |_| panic!("refiner panic"),
@@ -1281,8 +1281,8 @@ mod tests {
             0usize,
             |_| {
                 Ok(OrderedPair::new(
-                    ExtendedBinary::NegInf,
-                    ExtendedBinary::PosInf,
+                    XBinary::NegInf,
+                    XBinary::PosInf,
                 ))
             },
             |state| state + 1,
@@ -1291,8 +1291,8 @@ mod tests {
             0usize,
             |_| {
                 Ok(OrderedPair::new(
-                    ExtendedBinary::NegInf,
-                    ExtendedBinary::PosInf,
+                    XBinary::NegInf,
+                    XBinary::PosInf,
                 ))
             },
             |state| state + 1,
@@ -1326,8 +1326,8 @@ mod tests {
             0usize,
             |_| {
                 Ok(OrderedPair::new(
-                    ExtendedBinary::NegInf,
-                    ExtendedBinary::PosInf,
+                    XBinary::NegInf,
+                    XBinary::PosInf,
                 ))
             },
             |state| state + 1,
@@ -1361,8 +1361,8 @@ mod tests {
                 0usize,
                 |_| {
                     Ok(OrderedPair::new(
-                        ExtendedBinary::NegInf,
-                        ExtendedBinary::PosInf,
+                        XBinary::NegInf,
+                        XBinary::PosInf,
                     ))
                 },
                 |state| {
