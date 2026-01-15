@@ -159,8 +159,7 @@ where
         let previous_state = snapshot.state.clone();
         let next_state = (self.refine)(previous_state.clone());
         if next_state == previous_state {
-            let previous_upper = bounds_upper(&previous_bounds);
-            if bounds_lower(&previous_bounds) == &previous_upper {
+            if bounds_lower(&previous_bounds) == &bounds_upper(&previous_bounds) {
                 return Ok(());
             }
             return Err(ComputableError::StateUnchanged);
@@ -168,9 +167,7 @@ where
 
         let next_bounds = (self.bounds)(&next_state)?;
         let lower_worsened = bounds_lower(&next_bounds) < bounds_lower(&previous_bounds);
-        let next_upper = bounds_upper(&next_bounds);
-        let previous_upper = bounds_upper(&previous_bounds);
-        let upper_worsened = next_upper > previous_upper;
+        let upper_worsened =  bounds_upper(&next_bounds) > bounds_upper(&previous_bounds);
         if lower_worsened || upper_worsened {
             return Err(ComputableError::BoundsWorsened);
         }
@@ -915,8 +912,7 @@ mod tests {
     }
 
     fn interval_refine(state: IntervalState) -> IntervalState {
-        let upper = state.large();
-        let midpoint = midpoint_between(state.small(), &upper);
+        let midpoint = midpoint_between(state.small(), &state.large());
         OrderedPair::new(
             ExtendedBinary::Finite(midpoint.clone()),
             ExtendedBinary::Finite(midpoint),
@@ -924,8 +920,7 @@ mod tests {
     }
 
     fn interval_refine_strict(state: IntervalState) -> IntervalState {
-        let upper = state.large();
-        let midpoint = midpoint_between(state.small(), &upper);
+        let midpoint = midpoint_between(state.small(), &state.large());
         OrderedPair::new(state.small().clone(), ExtendedBinary::Finite(midpoint))
     }
 
@@ -942,13 +937,12 @@ mod tests {
         let interval_state = OrderedPair::new(ext(1, 0), ext(value_int as i64, 0));
         let bounds = |inner_state: &IntervalState| Ok(inner_state.clone());
         let refine = move |inner_state: IntervalState| {
-            let upper = inner_state.large();
-            let mid = midpoint_between(inner_state.small(), &upper);
+            let mid = midpoint_between(inner_state.small(), &inner_state.large());
             let mid_sq = mid.mul(&mid);
             let value = bin(value_int as i64, 0);
 
             if mid_sq <= value {
-                OrderedPair::new(ExtendedBinary::Finite(mid), upper)
+                OrderedPair::new(ExtendedBinary::Finite(mid), inner_state.large().clone())
             } else {
                 OrderedPair::new(inner_state.small().clone(), ExtendedBinary::Finite(mid))
             }
@@ -963,17 +957,16 @@ mod tests {
         epsilon: &Binary,
     ) {
         let lower = unwrap_finite(bounds_lower(bounds));
-        let upper = bounds_upper(bounds);
+        let upper_xb = bounds_upper(bounds);
         let width = unwrap_finite(bounds.width());
-        let upper = unwrap_finite(&upper);
+        let upper = unwrap_finite(&upper_xb);
 
         assert!(lower <= *expected && *expected <= upper);
         assert!(&width <= epsilon);
     }
 
     fn assert_bounds_ordered(bounds: &Bounds) {
-        let upper = bounds_upper(bounds);
-        assert!(bounds_lower(bounds) <= &upper);
+        assert!(bounds_lower(bounds) <= &bounds_upper(bounds));
     }
 
     // --- tests for different results of refinement (mostly errors) ---

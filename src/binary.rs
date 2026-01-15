@@ -201,6 +201,14 @@ impl std::ops::Sub for Binary {
     }
 }
 
+impl std::ops::Neg for Binary {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Binary::neg(&self)
+    }
+}
+
 impl num_traits::Zero for Binary {
     fn zero() -> Self {
         Binary::zero()
@@ -350,7 +358,6 @@ impl ExtendedBinary {
 impl std::ops::Add for ExtendedBinary {
     type Output = Self;
 
-    #[allow(clippy::expect_used, clippy::panic)]
     fn add(self, rhs: Self) -> Self::Output {
         use ExtendedBinary::{Finite, NegInf, PosInf};
         match (self, rhs) {
@@ -364,7 +371,6 @@ impl std::ops::Add for ExtendedBinary {
 impl std::ops::Sub for ExtendedBinary {
     type Output = Self;
 
-    #[allow(clippy::expect_used, clippy::panic)]
     fn sub(self, rhs: Self) -> Self::Output {
         use ExtendedBinary::{Finite, NegInf, PosInf};
         match (self, rhs) {
@@ -373,6 +379,14 @@ impl std::ops::Sub for ExtendedBinary {
             (NegInf, _) | (Finite(_), PosInf) => NegInf,
             (Finite(lhs), Finite(rhs_value)) => Finite(Binary::sub(&lhs, &rhs_value))
         }
+    }
+}
+
+impl std::ops::Neg for ExtendedBinary {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        ExtendedBinary::neg(&self)
     }
 }
 
