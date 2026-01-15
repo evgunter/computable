@@ -49,6 +49,7 @@ sadly, the implementation cannot exactly realize the formalism.
 - when a composition is refined, all its branches are refined in parallel.
 - refinements of the branches are propagated upwards live, and refinement is halted as soon as the overall expression reaches the required precision.
 <!-- TODO: add a propagated stopping condition so branches can be halted when they can no longer tighten the overall bounds. -->
+<!-- TODO: add support for distributive law/commutativity-type-things, where e.g. Mul(Add(a, b), c) can be converted to Add(Mul(a, c), Mul(b, c)) or Mod_n(Mul(a, b)) can be converted to Mod_n(Mul(Mod_n(a), Mod_n(b))) -->
 
 ### example
 let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$.
