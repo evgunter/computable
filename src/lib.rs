@@ -167,7 +167,7 @@ where
 
         let next_bounds = (self.bounds)(&next_state)?;
         let lower_worsened = bounds_lower(&next_bounds) < bounds_lower(&previous_bounds);
-        let upper_worsened =  bounds_upper(&next_bounds) > bounds_upper(&previous_bounds);
+        let upper_worsened = bounds_upper(&next_bounds) > bounds_upper(&previous_bounds);
         if lower_worsened || upper_worsened {
             return Err(ComputableError::BoundsWorsened);
         }

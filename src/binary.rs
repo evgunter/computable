@@ -241,7 +241,6 @@ fn shift_mantissa_chunked(mantissa: &BigInt, shift: &BigUint, chunk_limit: &BigU
     shifted
 }
 
-
 impl Ord for Binary {
     fn cmp(&self, other: &Self) -> Ordering {
         Self::cmp_shifted(
@@ -322,6 +321,25 @@ impl ExtendedBinary {
         }
     }
 
+    pub fn add(&self, other: &Self) -> Self {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, other) {
+            (PosInf, _) | (_, PosInf) => PosInf,
+            (NegInf, _) | (_, NegInf) => NegInf,
+            (Finite(lhs), Finite(rhs)) => Finite(lhs.add(rhs)),
+        }
+    }
+
+    pub fn sub(&self, other: &Self) -> Self {
+        use ExtendedBinary::{Finite, NegInf, PosInf};
+        match (self, other) {
+            (PosInf, PosInf) | (NegInf, NegInf) => Finite(Binary::zero()),
+            (PosInf, _) | (Finite(_), NegInf) => PosInf,
+            (NegInf, _) | (Finite(_), PosInf) => NegInf,
+            (Finite(lhs), Finite(rhs)) => Finite(lhs.sub(rhs)),
+        }
+    }
+
     pub fn mul(&self, other: &Self) -> Self {
         use ExtendedBinary::{Finite, NegInf, PosInf};
         if self.is_zero() || other.is_zero() {
@@ -353,12 +371,7 @@ impl std::ops::Add for ExtendedBinary {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        use ExtendedBinary::{Finite, NegInf, PosInf};
-        match (self, rhs) {
-            (PosInf, _) | (_, PosInf) => PosInf,
-            (NegInf, _) | (_, NegInf) => NegInf,
-            (Finite(lhs), Finite(rhs_value)) => Finite(Binary::add(&lhs, &rhs_value))
-        }
+        ExtendedBinary::add(&self, &rhs)
     }
 }
 
@@ -366,13 +379,7 @@ impl std::ops::Sub for ExtendedBinary {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        use ExtendedBinary::{Finite, NegInf, PosInf};
-        match (self, rhs) {
-            (PosInf, PosInf) | (NegInf, NegInf) => Finite(Binary::zero()),
-            (PosInf, _) | (Finite(_), NegInf) => PosInf,
-            (NegInf, _) | (Finite(_), PosInf) => NegInf,
-            (Finite(lhs), Finite(rhs_value)) => Finite(Binary::sub(&lhs, &rhs_value))
-        }
+        ExtendedBinary::sub(&self, &rhs)
     }
 }
 
