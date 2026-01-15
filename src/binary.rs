@@ -7,12 +7,6 @@ use num_traits::{Float, One, Signed, ToPrimitive, Zero};
 
 use crate::ordered_pair::OrderedPair;
 
-impl OrderedPair<BigInt> {
-    pub fn delta_usize(&self) -> Option<usize> {
-        usize::try_from(self.width()).ok()
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinaryError {
     ReciprocalOverflow,
@@ -157,7 +151,7 @@ impl Binary {
             small_mantissa: &BigInt,
             pair: OrderedPair<BigInt>,
         ) -> Ordering {
-            let shift_amount_opt = pair.delta_usize();
+            let shift_amount_opt = pair.width().to_usize();
 
             if let Some(shift_amount) = shift_amount_opt {
                 let shifted = large_mantissa << shift_amount;
