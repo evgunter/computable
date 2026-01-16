@@ -238,10 +238,9 @@ fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResu
 
     let total = balanced_sum(terms);
     
-    // Get initial bounds without refinement
-    // Note: Refinement with multiple binary-search refiners is slow due to
-    // a known issue. For now, we just measure construction and initial bounds.
-    let bounds = total.bounds().expect("bounds should succeed");
+    // Refine to epsilon = 1
+    let epsilon = Binary::new(BigInt::one(), BigInt::from(0));
+    let bounds = total.refine_to_default(epsilon).expect("refine_to should succeed");
 
     IntegerRootsComputableResult {
         duration: start.elapsed(),
@@ -379,8 +378,8 @@ fn main() {
     println!();
     println!("== Integer roots (binary search) benchmark ==");
     println!("samples: {INTEGER_ROOTS_SAMPLE_COUNT}");
+    println!("epsilon: 1");
     println!("root degrees: 2 (sqrt), 3 (cbrt), 4, 5, 6");
-    println!("note: bounds are unrefined (initial bounds only)");
     println!("float time:      {:?}", integer_roots_float_result.duration);
     println!("computable time: {:?}", integer_roots_computable_result.duration);
     println!("slowdown factor: {:.2}x", integer_roots_slowdown);
