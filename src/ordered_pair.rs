@@ -78,6 +78,21 @@ where
     }
 }
 
+impl<T, W> Interval<T, W>
+where
+    T: AddWidth<T, W> + SubWidth<T, W> + Clone,
+    W: Clone + PartialOrd + Unsigned + num_traits::Zero,
+{
+    /// Creates an interval where lower == upper (a point).
+    /// This is an optimization that avoids computing abs_distance.
+    pub fn point(value: T) -> Self {
+        Self {
+            lower: value,
+            width: W::zero(),
+        }
+    }
+}
+
 /// Bounds on a computable number: lower and upper bounds as XBinary values.
 /// The width is stored as UXBinary to guarantee non-negativity through the type system.
 ///
