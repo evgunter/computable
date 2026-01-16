@@ -10,13 +10,15 @@ pub trait SubWidth<T, W> {
     fn sub_width(self, width: W) -> T;
 }
 
+pub trait Unsigned {}
+
 /// TODO: require that `width` is positive.
 /// Stores two values ordered so that `large >= small` using a lower bound and width.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interval<T, W>
 where
     T: AddWidth<T, W> + SubWidth<T, W>,
-    W: PartialOrd,
+    W: Unsigned + PartialOrd,
 {
     lower: T,
     width: W,
@@ -44,7 +46,7 @@ pub trait AbsDistance<T, W> {
 impl<T, W> Interval<T, W>
 where
     T: Ord + AddWidth<T, W> + SubWidth<T, W> + Clone + AbsDistance<T, W>,
-    W: Clone + PartialOrd,
+    W: Clone + PartialOrd + Unsigned,
 {
     pub fn new(a: T, b: T) -> Self {
         let (lower, larger) = if a <= b { (a, b) } else { (b, a) };

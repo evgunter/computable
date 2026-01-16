@@ -1,3 +1,4 @@
+use std::ops::{Add, Mul, Neg, ShlAssign};
 use std::{cmp::Ordering, ops::Sub};
 use std::fmt;
 
@@ -6,7 +7,7 @@ use num_integer::Integer;
 use num_traits::{Float, One, Signed, ToPrimitive, Zero};
 
 use crate::Interval;
-use crate::ordered_pair::{AbsDistance, AddWidth, SubWidth};
+use crate::ordered_pair::{AbsDistance, AddWidth, SubWidth, Unsigned};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinaryError {
@@ -24,6 +25,8 @@ impl fmt::Display for BinaryError {
 }
 
 impl std::error::Error for BinaryError {}
+
+impl Unsigned for BigUint {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum XBinaryError {
@@ -200,7 +203,7 @@ impl Binary {
     }
 }
 
-impl std::ops::Add for Binary {
+impl Add for Binary {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -208,7 +211,7 @@ impl std::ops::Add for Binary {
     }
 }
 
-impl std::ops::Sub for Binary {
+impl Sub for Binary {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -216,11 +219,19 @@ impl std::ops::Sub for Binary {
     }
 }
 
-impl std::ops::Neg for Binary {
+impl Neg for Binary {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
         Binary::neg(&self)
+    }
+}
+
+impl Mul for Binary {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Binary::mul(&self, &rhs)
     }
 }
 
@@ -236,7 +247,7 @@ impl num_traits::Zero for Binary {
 
 fn shift_mantissa_chunked<M>(mantissa: &M, shift: &BigUint, chunk_limit: &BigUint) -> M
 where
-    M: Clone + std::ops::ShlAssign<usize>,
+    M: Clone + ShlAssign<usize>,
 {
     // chunk_limit is injected to make the chunking behavior testable with small shifts.
     let mut shifted = mantissa.clone();
@@ -390,7 +401,7 @@ impl XBinary {
     }
 }
 
-impl std::ops::Add for XBinary {
+impl Add for XBinary {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -398,7 +409,7 @@ impl std::ops::Add for XBinary {
     }
 }
 
-impl std::ops::Sub for XBinary {
+impl Sub for XBinary {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -406,11 +417,19 @@ impl std::ops::Sub for XBinary {
     }
 }
 
-impl std::ops::Neg for XBinary {
+impl Neg for XBinary {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
         XBinary::neg(&self)
+    }
+}
+
+impl Mul for XBinary {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        XBinary::mul(&self, &rhs)
     }
 }
 
@@ -571,7 +590,7 @@ impl num_traits::Zero for UBinary {
     }
 }
 
-impl std::ops::Add for UBinary {
+impl Add for UBinary {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -579,13 +598,23 @@ impl std::ops::Add for UBinary {
     }
 }
 
-impl std::ops::Sub for UBinary {
+impl Sub for UBinary {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
         UBinary::sub_saturating(&self, &rhs)
     }
 }
+
+impl Mul for UBinary {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        UBinary::mul(&self, &rhs)
+    }
+}
+
+impl Unsigned for UBinary {}
 
 /// Extended unsigned binary number: either a finite nonnegative value or +infinity.
 /// Used for representing bounds widths which are always nonnegative.
@@ -626,6 +655,19 @@ impl UXBinary {
         }
     }
 
+    pub fn mul(&self, other: &Self) -> Self {
+        use UXBinary::{Finite, PosInf};
+        // 0 * anything = 0 (including 0 * infinity)
+        if self.is_zero() || other.is_zero() {
+            return Finite(UBinary::zero());
+        }
+        match (self, other) {
+            (Finite(lhs), Finite(rhs)) => Finite(lhs.mul(rhs)),
+            // PosInf * nonzero = PosInf
+            (PosInf, _) | (_, PosInf) => PosInf,
+        }
+    }
+
     pub fn sub_saturating(&self, other: &Self) -> Self {
         use UXBinary::{Finite, PosInf};
         match (self, other) {
@@ -655,7 +697,7 @@ impl PartialOrd for UXBinary {
     }
 }
 
-impl num_traits::Zero for UXBinary {
+impl Zero for UXBinary {
     fn zero() -> Self {
         UXBinary::zero()
     }
@@ -665,7 +707,7 @@ impl num_traits::Zero for UXBinary {
     }
 }
 
-impl std::ops::Add for UXBinary {
+impl Add for UXBinary {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -673,13 +715,23 @@ impl std::ops::Add for UXBinary {
     }
 }
 
-impl std::ops::Sub for UXBinary {
+impl Sub for UXBinary {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
         UXBinary::sub_saturating(&self, &rhs)
     }
 }
+
+impl Mul for UXBinary {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        UXBinary::mul(&self, &rhs)
+    }
+}
+
+impl Unsigned for UXBinary {}
 
 impl From<UXBinary> for XBinary {
     fn from(uxbinary: UXBinary) -> Self {
@@ -883,7 +935,7 @@ mod tests {
     fn binary_mul_adds_exponents() {
         let two = bin(1, 1);
         let half = bin(1, -1);
-        let product = two.mul(&half);
+        let product = two.mul(half);
         let expected = bin(1, 0);
         assert_eq!(product, expected);
     }
