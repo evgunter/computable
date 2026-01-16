@@ -9,3 +9,12 @@ num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
 parking_lot = "0.12"
+rand = "0.8"
+
+[features]
+benchmarks = []
+
+[[bin]]
+name = "benchmarks"
+path = "benchmarks/benchmarks.rs"
+required-features = ["benchmarks"]
