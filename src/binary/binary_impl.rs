@@ -4,6 +4,7 @@
 //! as `mantissa * 2^exponent` where the mantissa is normalized to be odd (unless zero).
 
 use std::cmp::Ordering;
+use std::fmt;
 use std::ops::{Add, Mul, Neg, Sub};
 
 use num_bigint::{BigInt, BigUint};
@@ -217,6 +218,12 @@ impl Ord for Binary {
 impl PartialOrd for Binary {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl fmt::Display for Binary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} * 2^{}", self.mantissa, self.exponent)
     }
 }
 

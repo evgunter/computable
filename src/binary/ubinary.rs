@@ -4,6 +4,7 @@
 //! non-negative values like interval widths.
 
 use std::cmp::Ordering;
+use std::fmt;
 use std::ops::{Add, Mul, Sub};
 
 use num_bigint::{BigInt, BigUint};
@@ -179,6 +180,12 @@ impl Mul for UBinary {
 }
 
 impl Unsigned for UBinary {}
+
+impl fmt::Display for UBinary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} * 2^{}", self.mantissa, self.exponent)
+    }
+}
 
 #[cfg(test)]
 mod tests {

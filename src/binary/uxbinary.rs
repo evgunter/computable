@@ -4,6 +4,7 @@
 //! for representing unbounded non-negative quantities like infinite interval widths.
 
 use std::cmp::Ordering;
+use std::fmt;
 use std::ops::{Add, Mul, Sub};
 
 use num_traits::Zero;
@@ -190,6 +191,15 @@ impl AddWidth<XBinary, UXBinary> for XBinary {
 impl SubWidth<XBinary, UXBinary> for XBinary {
     fn sub_width(self, rhs: UXBinary) -> Self {
         self - XBinary::from(rhs)
+    }
+}
+
+impl fmt::Display for UXBinary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UXBinary::Finite(ubinary) => write!(f, "{}", ubinary),
+            UXBinary::PosInf => write!(f, "+∞"),
+        }
     }
 }
 

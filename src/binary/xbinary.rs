@@ -4,6 +4,7 @@
 //! infinity values for representing unbounded intervals and limits.
 
 use std::cmp::Ordering;
+use std::fmt;
 use std::ops::{Add, Mul, Neg, Sub};
 
 use num_bigint::BigInt;
@@ -201,6 +202,16 @@ impl Ord for XBinary {
 impl PartialOrd for XBinary {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl fmt::Display for XBinary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            XBinary::NegInf => write!(f, "-∞"),
+            XBinary::Finite(binary) => write!(f, "{}", binary),
+            XBinary::PosInf => write!(f, "+∞"),
+        }
     }
 }
 
