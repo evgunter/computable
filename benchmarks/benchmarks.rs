@@ -195,10 +195,16 @@ fn main() {
     let summation_error =
         (summation_float_result.value - summation_computable_result.midpoint).abs();
 
+    let complex_slowdown = complex_computable_result.duration.as_secs_f64()
+        / complex_float_result.duration.as_secs_f64();
+    let summation_slowdown = summation_computable_result.duration.as_secs_f64()
+        / summation_float_result.duration.as_secs_f64();
+
     println!("== Complex expression benchmark ==");
     println!("samples: {COMPLEX_SAMPLE_COUNT}");
     println!("float time: {:?}", complex_float_result.duration);
     println!("computable time: {:?}", complex_computable_result.duration);
+    println!("slowdown factor: {:.2}x", complex_slowdown);
     println!("float value: {:.10}", complex_float_result.value);
     println!("computable midpoint: {:.10}", complex_computable_result.midpoint);
     println!("computable width: {:.10}", complex_computable_result.width);
@@ -209,6 +215,7 @@ fn main() {
     println!("base value: {summation_base:.1}");
     println!("float time: {:?}", summation_float_result.duration);
     println!("computable time: {:?}", summation_computable_result.duration);
+    println!("slowdown factor: {:.2}x", summation_slowdown);
     println!("float value: {:.10}", summation_float_result.value);
     println!("computable midpoint: {:.10}", summation_computable_result.midpoint);
     println!("computable width: {:.10}", summation_computable_result.width);
