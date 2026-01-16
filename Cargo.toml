@@ -19,3 +19,23 @@ benchmarks = []
 name = "benchmarks"
 path = "benchmarks/benchmarks.rs"
 required-features = ["benchmarks"]
+
+[[bin]]
+name = "profile"
+path = "benchmarks/profile.rs"
+required-features = ["benchmarks"]
+
+[[bin]]
+name = "profile_refinement"
+path = "benchmarks/profile_refinement.rs"
+required-features = ["benchmarks"]
+
+[[bin]]
+name = "profile_detailed"
+path = "benchmarks/profile_detailed.rs"
+required-features = ["benchmarks"]
+
+[[bin]]
+name = "profile_threadpool"
+path = "benchmarks/profile_threadpool.rs"
+required-features = ["benchmarks"]

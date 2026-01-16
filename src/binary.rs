@@ -754,6 +754,10 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
             (NegInf, Finite(_)) | (Finite(_), PosInf) => UXBinary::PosInf,
             (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::PosInf,
             (Finite(l), Finite(u)) => {
+                // Fast path: identical values have zero distance
+                if l == u {
+                    return UXBinary::zero();
+                }
                 // Compute |u - l|
                 let diff = u.clone().sub(l.clone());
                 if diff.mantissa().is_negative() {
