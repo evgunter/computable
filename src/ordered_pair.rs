@@ -46,7 +46,7 @@ pub trait AbsDistance<T, W> {
 impl<T, W> Interval<T, W>
 where
     T: Ord + AddWidth<T, W> + SubWidth<T, W> + Clone + AbsDistance<T, W>,
-    W: Clone + PartialOrd + Unsigned,
+    W: Clone + PartialOrd + Unsigned + num_traits::Zero,
 {
     pub fn new(a: T, b: T) -> Self {
         let (lower, larger) = if a <= b { (a, b) } else { (b, a) };
@@ -65,6 +65,15 @@ where
         })
     }
 
+    /// Creates an interval where lower == upper (a point).
+    /// This is an optimization that avoids computing abs_distance.
+    pub fn point(value: T) -> Self {
+        Self {
+            lower: value,
+            width: W::zero(),
+        }
+    }
+
     pub fn small(&self) -> &T {
         &self.lower
     }
@@ -73,22 +82,12 @@ where
         &self.width
     }
 
+    /// Returns the upper bound, with fast path for zero-width intervals.
     pub fn large(&self) -> T {
-        self.lower.clone().add_width(self.width.clone())
-    }
-}
-
-impl<T, W> Interval<T, W>
-where
-    T: AddWidth<T, W> + SubWidth<T, W> + Clone,
-    W: Clone + PartialOrd + Unsigned + num_traits::Zero,
-{
-    /// Creates an interval where lower == upper (a point).
-    /// This is an optimization that avoids computing abs_distance.
-    pub fn point(value: T) -> Self {
-        Self {
-            lower: value,
-            width: W::zero(),
+        if self.width.is_zero() {
+            self.lower.clone()
+        } else {
+            self.lower.clone().add_width(self.width.clone())
         }
     }
 }
