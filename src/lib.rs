@@ -28,6 +28,7 @@ mod concurrency;
 mod ordered_pair;
 
 pub use binary::{Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError};
+use binary::{reciprocal_rounded_abs_extended, ReciprocalRounding};
 use concurrency::StopFlag;
 pub use ordered_pair::{Bounds, Interval, IntervalError};
 
@@ -848,29 +849,29 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
     }
 
     let (lower_bound, upper_bound) = if upper < zero {
-        let lower_bound = binary::reciprocal_rounded_abs_extended(
+        let lower_bound = reciprocal_rounded_abs_extended(
             &upper,
             precision_bits,
-            binary::ReciprocalRounding::Ceil,
+            ReciprocalRounding::Ceil,
         )?
         .neg();
-        let upper_bound = binary::reciprocal_rounded_abs_extended(
+        let upper_bound = reciprocal_rounded_abs_extended(
             lower,
             precision_bits,
-            binary::ReciprocalRounding::Floor,
+            ReciprocalRounding::Floor,
         )?
         .neg();
         (lower_bound, upper_bound)
     } else {
-        let lower_bound = binary::reciprocal_rounded_abs_extended(
+        let lower_bound = reciprocal_rounded_abs_extended(
             &upper,
             precision_bits,
-            binary::ReciprocalRounding::Floor,
+            ReciprocalRounding::Floor,
         )?;
-        let upper_bound = binary::reciprocal_rounded_abs_extended(
+        let upper_bound = reciprocal_rounded_abs_extended(
             lower,
             precision_bits,
-            binary::ReciprocalRounding::Ceil,
+            ReciprocalRounding::Ceil,
         )?;
         (lower_bound, upper_bound)
     };
