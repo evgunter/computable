@@ -196,11 +196,21 @@ fn main() {
         (summation_float_result.value - summation_computable_result.midpoint).abs();
 
     // Calculate true sum of inputs (without base) for comparison
-    let true_sum: f64 = summation_inputs.iter().sum();
+    let true_sum_float: f64 = summation_inputs.iter().sum();
+    let true_sum_computable = {
+        let terms: Vec<Computable> = summation_inputs
+            .iter()
+            .map(|&v| Computable::constant(binary_from_f64(v)))
+            .collect();
+        let sum = balanced_sum(terms);
+        let bounds = sum.bounds().expect("bounds should succeed");
+        midpoint(&bounds)
+    };
+
     let float_minus_base = summation_float_result.value - summation_base;
     let computable_minus_base = summation_computable_result.midpoint - summation_base;
-    let float_base_error = (float_minus_base - true_sum).abs();
-    let computable_base_error = (computable_minus_base - true_sum).abs();
+    let float_base_error = (float_minus_base - true_sum_computable).abs();
+    let computable_base_error = (computable_minus_base - true_sum_computable).abs();
 
     let complex_slowdown = complex_computable_result.duration.as_secs_f64()
         / complex_float_result.duration.as_secs_f64();
@@ -229,7 +239,8 @@ fn main() {
     println!("abs(float - midpoint): {:.10}", summation_error);
     println!();
     println!("After removing base value:");
-    println!("  true sum (inputs only): {:.10}", true_sum);
+    println!("  true sum (float): {:.10}", true_sum_float);
+    println!("  true sum (computable): {:.10}", true_sum_computable);
     println!("  float result: {:.10}", float_minus_base);
     println!("  computable result: {:.10}", computable_minus_base);
     println!("  float precision loss: {:.10}", float_base_error);
