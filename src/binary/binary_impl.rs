@@ -229,7 +229,7 @@ impl PartialOrd for Binary {
 
 impl fmt::Display for Binary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} * 2^{}", self.mantissa, self.exponent)
+        super::display::format_binary_display(f, &self.mantissa, &self.exponent)
     }
 }
 

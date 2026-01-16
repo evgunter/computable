@@ -34,6 +34,7 @@
 //! (unless the value is zero).
 
 mod binary_impl;
+mod display;
 mod error;
 mod reciprocal;
 mod shift;

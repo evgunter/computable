@@ -183,7 +183,7 @@ impl Unsigned for UBinary {}
 
 impl fmt::Display for UBinary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} * 2^{}", self.mantissa, self.exponent)
+        super::display::format_ubinary_display(f, &self.mantissa, &self.exponent)
     }
 }
 
