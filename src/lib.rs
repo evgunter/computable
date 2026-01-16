@@ -14,14 +14,14 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::{Condvar, Mutex, RwLock};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 
 mod binary;
 mod concurrency;
@@ -45,6 +45,7 @@ pub enum ComputableError {
     ExcludedValueUnreachable,
     RefinementChannelClosed,
     MaxRefinementIterations { max: usize },
+    ThreadPoolUnavailable,
     Binary(BinaryError),
 }
 
@@ -62,6 +63,7 @@ impl fmt::Display for ComputableError {
             Self::MaxRefinementIterations { max } => {
                 write!(f, "maximum refinement iterations ({max}) reached")
             }
+            Self::ThreadPoolUnavailable => write!(f, "thread pool unavailable"),
             Self::Binary(err) => write!(f, "{err}"),
         }
     }
@@ -582,10 +584,9 @@ enum RefineCommand {
     Stop,
 }
 
-/// Handle for a background refiner thread.
+/// Handle for a background refiner task.
 struct RefinerHandle {
     sender: Sender<RefineCommand>,
-    join: thread::JoinHandle<Result<(), ComputableError>>,
 }
 
 /// Snapshot of the node graph used to coordinate parallel refinement.
@@ -633,77 +634,84 @@ impl RefinementGraph {
         &self,
         epsilon: &Binary,
     ) -> Result<Bounds, ComputableError> {
-        let stop_flag = Arc::new(StopFlag::new());
-        let mut refiners = Vec::new();
-        let mut iterations = 0usize;
-        let (update_tx, update_rx) = unbounded();
+        let pool = refinement_pool()?;
+        let mut outcome = None;
+        pool.scope(|scope| {
+            let stop_flag = Arc::new(StopFlag::new());
+            let mut refiners = Vec::new();
+            let mut iterations = 0usize;
+            let (update_tx, update_rx) = unbounded();
 
-        for node in &self.refiners {
-            refiners.push(spawn_refiner(
-                Arc::clone(node),
-                Arc::clone(&stop_flag),
-                update_tx.clone(),
-            ));
-        }
-        drop(update_tx);
+            for node in &self.refiners {
+                refiners.push(spawn_refiner(
+                    scope,
+                    Arc::clone(node),
+                    Arc::clone(&stop_flag),
+                    update_tx.clone(),
+                ));
+            }
+            drop(update_tx);
 
-        let shutdown_refiners = |handles: Vec<RefinerHandle>| {
-            stop_flag.stop();
-            for refiner in &handles {
-                let _ = refiner.sender.send(RefineCommand::Stop);
-            }
-            for refiner in handles {
-                let _ = refiner.join.join();
-            }
-        };
+            let shutdown_refiners = |handles: Vec<RefinerHandle>, stop_signal: &Arc<StopFlag>| {
+                stop_signal.stop();
+                for refiner in &handles {
+                    let _ = refiner.sender.send(RefineCommand::Stop);
+                }
+            };
 
-        let mut root_bounds;
-        loop {
-            root_bounds = self.root.get_bounds()?;
-            if bounds_width_leq(&root_bounds, epsilon) {
-                break;
-            }
-            if iterations >= MAX_REFINEMENT_ITERATIONS {
-                // TODO: allow individual refiners to stop at the max without
-                // failing the whole refinement, only erroring if all refiners
-                // are exhausted before meeting the target precision.
-                shutdown_refiners(refiners);
-                return Err(ComputableError::MaxRefinementIterations {
-                    max: MAX_REFINEMENT_ITERATIONS,
-                });
-            }
-            iterations += 1;
-
-            for refiner in &refiners {
-                refiner
-                    .sender
-                    .send(RefineCommand::Step)
-                    .map_err(|_| ComputableError::RefinementChannelClosed)?;
-            }
-
-            let mut expected_updates = refiners.len();
-            while expected_updates > 0 {
-                let update_result = match update_rx.recv() {
-                    Ok(update_result) => update_result,
-                    Err(_) => {
-                        shutdown_refiners(refiners);
-                        return Err(ComputableError::RefinementChannelClosed);
+            let result = (|| {
+                let mut root_bounds;
+                loop {
+                    root_bounds = self.root.get_bounds()?;
+                    if bounds_width_leq(&root_bounds, epsilon) {
+                        break;
                     }
-                };
-                expected_updates -= 1;
-                match update_result {
-                    Ok(update) => self.apply_update(update)?,
-                    Err(error) => {
-                        shutdown_refiners(refiners);
-                        return Err(error);
+                    if iterations >= MAX_REFINEMENT_ITERATIONS {
+                        // TODO: allow individual refiners to stop at the max without
+                        // failing the whole refinement, only erroring if all refiners
+                        // are exhausted before meeting the target precision.
+                        return Err(ComputableError::MaxRefinementIterations {
+                            max: MAX_REFINEMENT_ITERATIONS,
+                        });
+                    }
+                    iterations += 1;
+
+                    for refiner in &refiners {
+                        refiner
+                            .sender
+                            .send(RefineCommand::Step)
+                            .map_err(|_| ComputableError::RefinementChannelClosed)?;
+                    }
+
+                    let mut expected_updates = refiners.len();
+                    while expected_updates > 0 {
+                        let update_result = match update_rx.recv() {
+                            Ok(update_result) => update_result,
+                            Err(_) => {
+                                return Err(ComputableError::RefinementChannelClosed);
+                            }
+                        };
+                        expected_updates -= 1;
+                        match update_result {
+                            Ok(update) => self.apply_update(update)?,
+                            Err(error) => {
+                                return Err(error);
+                            }
+                        }
                     }
                 }
-            }
+
+                self.root.get_bounds()
+            })();
+
+            shutdown_refiners(refiners, &stop_flag);
+            outcome = Some(result);
+        });
+
+        match outcome {
+            Some(result) => result,
+            None => Err(ComputableError::RefinementChannelClosed),
         }
-
-        shutdown_refiners(refiners);
-
-        self.root.get_bounds()
     }
 
     fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
@@ -741,16 +749,20 @@ struct NodeUpdate {
 }
 
 fn spawn_refiner(
+    scope: &rayon::Scope<'_>,
     node: Arc<Node>,
     stop: Arc<StopFlag>,
     updates: Sender<Result<NodeUpdate, ComputableError>>,
 ) -> RefinerHandle {
     let (command_tx, command_rx) = unbounded();
-    let join = thread::spawn(move || refiner_loop(node, stop, command_rx, updates));
+    scope.spawn(move |_| {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            refiner_loop(node, stop, command_rx, updates)
+        }));
+    });
 
     RefinerHandle {
         sender: command_tx,
-        join,
     }
 }
 
@@ -799,6 +811,19 @@ fn refiner_loop(
         }
     }
     Ok(())
+}
+
+static REFINEMENT_POOL: OnceLock<Result<ThreadPool, ComputableError>> = OnceLock::new();
+
+fn refinement_pool() -> Result<&'static ThreadPool, ComputableError> {
+    match REFINEMENT_POOL.get_or_init(|| {
+        ThreadPoolBuilder::new()
+            .build()
+            .map_err(|_| ComputableError::ThreadPoolUnavailable)
+    }) {
+        Ok(pool) => Ok(pool),
+        Err(error) => Err(error.clone()),
+    }
 }
 
 #[cfg(debug_assertions)]
