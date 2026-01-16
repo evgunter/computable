@@ -46,6 +46,16 @@ impl XBinary {
         matches!(self, Self::Finite(value) if value.mantissa().is_zero())
     }
 
+    /// Returns the magnitude (absolute value) of this extended binary number as a UXBinary.
+    pub fn magnitude(&self) -> super::uxbinary::UXBinary {
+        use super::uxbinary::UXBinary;
+        match self {
+            Self::NegInf => UXBinary::PosInf,
+            Self::PosInf => UXBinary::PosInf,
+            Self::Finite(value) => UXBinary::Finite(value.magnitude()),
+        }
+    }
+
     /// Converts an f64 to an XBinary.
     ///
     /// Returns an error if the input is NaN.

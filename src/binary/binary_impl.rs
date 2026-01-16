@@ -78,6 +78,12 @@ impl Binary {
         Self::normalize(mantissa, exponent)
     }
 
+    /// Returns the magnitude (absolute value) of this Binary number as a UBinary.
+    pub fn magnitude(&self) -> super::ubinary::UBinary {
+        use super::ubinary::UBinary;
+        UBinary::new(self.mantissa.magnitude().clone(), self.exponent.clone())
+    }
+
     /// Normalizes the representation by factoring out powers of 2 from the mantissa.
     fn normalize(mut mantissa: BigInt, mut exponent: BigInt) -> Self {
         use num_integer::Integer;
