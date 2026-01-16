@@ -195,6 +195,13 @@ fn main() {
     let summation_error =
         (summation_float_result.value - summation_computable_result.midpoint).abs();
 
+    // Calculate true sum of inputs (without base) for comparison
+    let true_sum: f64 = summation_inputs.iter().sum();
+    let float_minus_base = summation_float_result.value - summation_base;
+    let computable_minus_base = summation_computable_result.midpoint - summation_base;
+    let float_base_error = (float_minus_base - true_sum).abs();
+    let computable_base_error = (computable_minus_base - true_sum).abs();
+
     let complex_slowdown = complex_computable_result.duration.as_secs_f64()
         / complex_float_result.duration.as_secs_f64();
     let summation_slowdown = summation_computable_result.duration.as_secs_f64()
@@ -220,4 +227,11 @@ fn main() {
     println!("computable midpoint: {:.10}", summation_computable_result.midpoint);
     println!("computable width: {:.10}", summation_computable_result.width);
     println!("abs(float - midpoint): {:.10}", summation_error);
+    println!();
+    println!("After removing base value:");
+    println!("  true sum (inputs only): {:.10}", true_sum);
+    println!("  float result: {:.10}", float_minus_base);
+    println!("  computable result: {:.10}", computable_minus_base);
+    println!("  float precision loss: {:.10}", float_base_error);
+    println!("  computable precision loss: {:.10}", computable_base_error);
 }
