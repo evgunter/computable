@@ -174,7 +174,7 @@ fn main() {
         diff.magnitude()
     };
 
-    let summation_base = 1.0e10;
+    let summation_base = 2_i64.pow(30) as f64;
     let summation_float_result = summation_float(summation_base, &summation_inputs);
     let summation_computable_result = summation_computable(summation_base, &summation_inputs_computable);
     let summation_error = {
@@ -223,11 +223,11 @@ fn main() {
     println!();
     println!("== Summation (catastrophic) benchmark ==");
     println!("samples: {SUMMATION_SAMPLE_COUNT}");
-    println!("base value: {summation_base:.1}");
+    println!("base value: {}", binary_from_f64(summation_base));
     println!("float time: {:?}", summation_float_result.duration);
     println!("computable time: {:?}", summation_computable_result.duration);
     println!("slowdown factor: {:.2}x", summation_slowdown);
-    println!("float value: {}", binary_from_f64(summation_float_result.value));
+    println!("float value:         {}", binary_from_f64(summation_float_result.value));
     println!("computable midpoint: {}", summation_computable_result.midpoint);
     println!("computable width: {}", summation_computable_result.width);
     println!("abs(float - midpoint): {}", summation_error);
