@@ -14,17 +14,21 @@
 //!
 //! # Architecture
 //!
-//! The types form a hierarchy:
+//! The types are organized as two parallel families:
 //!
 //! ```text
-//! Binary (signed, finite)
-//!    │
-//!    ├──► XBinary (signed, extended with ±∞)
-//!    │
-//!    └──► UBinary (unsigned, finite)
-//!            │
-//!            └──► UXBinary (unsigned, extended with +∞)
+//! Signed:                      Unsigned:
+//! Binary (finite)              UBinary (finite)
+//!    │                            │
+//!    └──► XBinary (±∞)            └──► UXBinary (+∞)
+//!
+//! Binary ←──────────────────────► UBinary
+//!       (conversions: try_from_binary, to_binary)
 //! ```
+//!
+//! - `XBinary` is `enum { NegInf, Finite(Binary), PosInf }`
+//! - `UXBinary` is `enum { Finite(UBinary), PosInf }`
+//! - `Binary` and `UBinary` are independent structs with different mantissa types
 //!
 //! All types maintain a canonical representation where the mantissa is odd
 //! (unless the value is zero).
@@ -54,7 +58,7 @@ impl Unsigned for BigUint {}
 
 impl AbsDistance<BigInt, BigUint> for BigInt {
     fn abs_distance(self, other: BigInt) -> BigUint {
-        num_traits::Signed::abs(&(self - other)).to_biguint().unwrap_or_default()
+        (self - other).magnitude().clone()
     }
 }
 
