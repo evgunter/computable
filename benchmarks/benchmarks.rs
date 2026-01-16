@@ -213,10 +213,10 @@ fn main() {
 
     println!("== Complex expression benchmark ==");
     println!("samples: {COMPLEX_SAMPLE_COUNT}");
-    println!("float time: {:?}", complex_float_result.duration);
+    println!("float time:      {:?}", complex_float_result.duration);
     println!("computable time: {:?}", complex_computable_result.duration);
     println!("slowdown factor: {:.2}x", complex_slowdown);
-    println!("float value: {:.10}", complex_float_result.value);
+    println!("float value:         {}", binary_from_f64(complex_float_result.value));
     println!("computable midpoint: {}", complex_computable_result.midpoint);
     println!("computable width: {}", complex_computable_result.width);
     println!("abs(float - midpoint): {}", complex_error);
@@ -227,16 +227,17 @@ fn main() {
     println!("float time: {:?}", summation_float_result.duration);
     println!("computable time: {:?}", summation_computable_result.duration);
     println!("slowdown factor: {:.2}x", summation_slowdown);
-    println!("float value: {:.10}", summation_float_result.value);
+    println!("float value: {}", binary_from_f64(summation_float_result.value));
     println!("computable midpoint: {}", summation_computable_result.midpoint);
     println!("computable width: {}", summation_computable_result.width);
     println!("abs(float - midpoint): {}", summation_error);
     println!();
     println!("After removing base value:");
-    println!("  sum without base (float): {:.10}", baseless_sum_float);
+    println!("  sum without base (float):      {}", binary_from_f64(baseless_sum_float));
     println!("  sum without base (computable): {}", baseless_sum_computable);
-    println!("  float result: {:.10}", float_minus_base);
-    println!("  computable result: {}", computable_minus_base);
+    println!("  abs(float - midpoint): {}", (binary_from_f64(baseless_sum_float) - baseless_sum_computable).magnitude());
+    println!("  sum with base minus base (float):      {}", binary_from_f64(float_minus_base));
+    println!("  sum with base minus base (computable): {}", computable_minus_base);
     println!("  float precision loss: {}", float_base_error);
     println!("  computable precision loss: {}", computable_base_error);
 }
