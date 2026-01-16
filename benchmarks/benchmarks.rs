@@ -237,6 +237,10 @@ fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResu
         .collect();
 
     let total = balanced_sum(terms);
+    
+    // Get initial bounds without refinement
+    // Note: Refinement with multiple binary-search refiners is slow due to
+    // a known issue. For now, we just measure construction and initial bounds.
     let bounds = total.bounds().expect("bounds should succeed");
 
     IntegerRootsComputableResult {
@@ -248,8 +252,9 @@ fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResu
 
 fn main() {
     // Limit threads to avoid a bug with too many threads
+    // Using 1 thread to work around concurrency issues
     ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(1)
         .build_global()
         .ok(); // Ignore error if already initialized
     let mut rng = StdRng::seed_from_u64(7);
@@ -375,6 +380,7 @@ fn main() {
     println!("== Integer roots (binary search) benchmark ==");
     println!("samples: {INTEGER_ROOTS_SAMPLE_COUNT}");
     println!("root degrees: 2 (sqrt), 3 (cbrt), 4, 5, 6");
+    println!("note: bounds are unrefined (initial bounds only)");
     println!("float time:      {:?}", integer_roots_float_result.duration);
     println!("computable time: {:?}", integer_roots_computable_result.duration);
     println!("slowdown factor: {:.2}x", integer_roots_slowdown);
