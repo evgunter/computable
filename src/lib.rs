@@ -686,10 +686,8 @@ impl RefinementGraph {
                     let mut expected_updates = refiners.len();
                     while expected_updates > 0 {
                         let update_result = match update_rx.recv() {
-                            Ok(update_result) => update_result,
-                            Err(_) => {
-                                return Err(ComputableError::RefinementChannelClosed);
-                            }
+                            Ok(result) => result,
+                            Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
                         expected_updates -= 1;
                         match update_result {
@@ -817,7 +815,18 @@ static REFINEMENT_POOL: OnceLock<Result<ThreadPool, ComputableError>> = OnceLock
 
 fn refinement_pool() -> Result<&'static ThreadPool, ComputableError> {
     match REFINEMENT_POOL.get_or_init(|| {
+        // When pool.scope() is called from outside the pool, rayon transfers
+        // execution to a pool worker thread, consuming one thread for the scope
+        // closure. To avoid deadlock, the pool must have at least (N + 1)
+        // threads where N is the maximum number of spawned tasks.
+        //
+        // Since we don't know N ahead of time, we use 2x CPUs as a heuristic
+        // that provides reasonable headroom for typical workloads.
+        let num_threads = std::thread::available_parallelism()
+            .map(|n| n.get() * 2)
+            .unwrap_or(8);
         ThreadPoolBuilder::new()
+            .num_threads(num_threads)
             .build()
             .map_err(|_| ComputableError::ThreadPoolUnavailable)
     }) {
