@@ -27,9 +27,9 @@ mod binary;
 mod concurrency;
 mod ordered_pair;
 
-pub use binary::{Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError, xbinary_width};
+pub use binary::{Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError};
 use concurrency::StopFlag;
-pub use ordered_pair::{Bounds, OrderedPair, OrderedPairError};
+pub use ordered_pair::{Bounds, Interval, IntervalError};
 
 /// Shared API for retrieving bounds with lazy computation.
 trait BoundsAccess {
@@ -879,7 +879,7 @@ mod tests {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
     }
 
-    fn ext(mantissa: i64, exponent: i64) -> XBinary {
+    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
         XBinary::Finite(bin(mantissa, exponent))
     }
 
@@ -925,7 +925,7 @@ mod tests {
     }
 
     fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
-        let interval_state = Bounds::new(ext(lower, 0), ext(upper, 0));
+        let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
         Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
@@ -934,7 +934,7 @@ mod tests {
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        let interval_state = Bounds::new(ext(1, 0), ext(value_int as i64, 0));
+        let interval_state = Bounds::new(xbin(1, 0), xbin(value_int as i64, 0));
         let bounds = |inner_state: &IntervalState| Ok(inner_state.clone());
         let refine = move |inner_state: IntervalState| {
             let mid = midpoint_between(inner_state.small(), &inner_state.large());
@@ -965,8 +965,8 @@ mod tests {
         assert!(&width <= epsilon);
     }
 
-    fn assert_bounds_ordered(bounds: &Bounds) {
-        assert!(bounds.small() <= &bounds.large());
+    fn assert_width_nonnegative(bounds: &Bounds) {
+        assert!(*bounds.width() >= UXBinary::zero());
     }
 
     // --- tests for different results of refinement (mostly errors) ---
@@ -994,7 +994,7 @@ mod tests {
         let bounds = computable
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
-        let expected = ext(1, 0);
+        let expected = xbin(1, 0);
         let upper = bounds.large();
         let width = unwrap_finite_uxbinary(bounds.width());
 
@@ -1010,7 +1010,7 @@ mod tests {
 
     #[test]
     fn computable_refine_to_rejects_unchanged_state() {
-        let interval_state = Bounds::new(ext(0, 0), ext(2, 0));
+        let interval_state = Bounds::new(xbin(0, 0), xbin(2, 0));
         let computable = Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
@@ -1044,7 +1044,7 @@ mod tests {
     // test the "normal case" where the bounds shrink but never meet
     #[test]
     fn computable_refine_to_handles_non_meeting_bounds() {
-        let interval_state = Bounds::new(ext(0, 0), ext(4, 0));
+        let interval_state = Bounds::new(xbin(0, 0), xbin(4, 0));
         let computable = Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
@@ -1062,7 +1062,7 @@ mod tests {
 
     #[test]
     fn computable_refine_to_rejects_worsened_bounds() {
-        let interval_state = Bounds::new(ext(0, 0), ext(1, 0));
+        let interval_state = Bounds::new(xbin(0, 0), xbin(1, 0));
         let computable = Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
@@ -1089,7 +1089,7 @@ mod tests {
 
         let sum = left + right;
         let sum_bounds = sum.bounds().expect("bounds should succeed");
-        assert_eq!(sum_bounds, Bounds::new(ext(1, 0), ext(5, 0)));
+        assert_eq!(sum_bounds, Bounds::new(xbin(1, 0), xbin(5, 0)));
     }
 
     #[test]
@@ -1099,7 +1099,7 @@ mod tests {
 
         let diff = left - right;
         let diff_bounds = diff.bounds().expect("bounds should succeed");
-        assert_eq!(diff_bounds, Bounds::new(ext(2, 0), ext(5, 0)));
+        assert_eq!(diff_bounds, Bounds::new(xbin(2, 0), xbin(5, 0)));
     }
 
     #[test]
@@ -1107,7 +1107,7 @@ mod tests {
         let value = interval_midpoint_computable(1, 3);
         let negated = -value;
         let bounds = negated.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(ext(-3, 0), ext(-1, 0)));
+        assert_eq!(bounds, Bounds::new(xbin(-3, 0), xbin(-1, 0)));
     }
 
     #[test]
@@ -1143,7 +1143,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(ext(2, 0), ext(12, 0)));
+        assert_eq!(bounds, Bounds::new(xbin(2, 0), xbin(12, 0)));
     }
 
     #[test]
@@ -1153,7 +1153,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(ext(-12, 0), ext(-2, 0)));
+        assert_eq!(bounds, Bounds::new(xbin(-12, 0), xbin(-2, 0)));
     }
 
     #[test]
@@ -1163,7 +1163,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(ext(-10, 0), ext(15, 0)));
+        assert_eq!(bounds, Bounds::new(xbin(-10, 0), xbin(15, 0)));
     }
 
     #[test]
@@ -1173,7 +1173,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(ext(-8, 0), ext(12, 0)));
+        assert_eq!(bounds, Bounds::new(xbin(-8, 0), xbin(12, 0)));
     }
 
     #[test]
@@ -1318,9 +1318,9 @@ mod tests {
     fn computable_refine_to_error_path_stops_refiners() {
         let stable = interval_midpoint_computable(0, 2);
         let faulty = Computable::new(
-            Bounds::new(ext(0, 0), ext(1, 0)),
+            Bounds::new(xbin(0, 0), xbin(1, 0)),
             |state| Ok(state.clone()),
-            |state| Bounds::new(state.small().clone(), ext(2, 0)),
+            |state| Bounds::new(state.small().clone(), xbin(2, 0)),
         );
         let expr = stable + faulty;
         let epsilon = bin(1, -4);
@@ -1345,7 +1345,7 @@ mod tests {
         let handle = thread::spawn(move || {
             for _ in 0..8 {
                 let bounds = reader.bounds().expect("bounds should succeed");
-                assert_bounds_ordered(&bounds);
+                assert_width_nonnegative(&bounds);
             }
         });
 
@@ -1436,7 +1436,7 @@ mod tests {
                 .expect("thread should join")
                 .expect("refine_to should succeed");
             let bounds_upper = bounds.large();
-            assert_bounds_ordered(&bounds);
+            assert_width_nonnegative(&bounds);
             assert!(bounds_width_leq(&bounds, &epsilon));
             assert!(bounds.small() <= &main_upper);
             assert!(main_bounds.small() <= &bounds_upper);
@@ -1454,7 +1454,7 @@ mod tests {
         let shared_active = Arc::clone(&active_refines);
         let shared_overlap = Arc::clone(&saw_overlap);
         let computable = Computable::new(
-            Bounds::new(ext(0, 0), ext(4, 0)),
+            Bounds::new(xbin(0, 0), xbin(4, 0)),
             |state| Ok(state.clone()),
             move |state: IntervalState| {
                 let prior = shared_active.fetch_add(1, Ordering::SeqCst);
@@ -1492,7 +1492,7 @@ mod tests {
 
         for handle in handles {
             let bounds = handle.join().expect("thread should join");
-            assert_bounds_ordered(&bounds);
+            assert_width_nonnegative(&bounds);
         }
 
         assert!(!saw_overlap.load(Ordering::SeqCst));
@@ -1514,7 +1514,7 @@ mod tests {
                 reader_barrier.wait();
                 for _ in 0..32 {
                     let bounds = reader_value.bounds().expect("bounds should succeed");
-                    assert_bounds_ordered(&bounds);
+                    assert_width_nonnegative(&bounds);
                 }
             })
         };
@@ -1525,6 +1525,6 @@ mod tests {
             .expect("refine_to should succeed");
 
         reader.join().expect("reader should join");
-        assert_bounds_ordered(&refined);
+        assert_width_nonnegative(&refined);
     }
 }

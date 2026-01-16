@@ -1,11 +1,12 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Sub};
 use std::fmt;
 
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{Float, One, Signed, ToPrimitive, Zero};
 
-use crate::ordered_pair::OrderedPair;
+use crate::Interval;
+use crate::ordered_pair::{AbsDistance, AddWidth, SubWidth};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinaryError {
@@ -44,6 +45,24 @@ impl std::error::Error for XBinaryError {}
 impl From<BinaryError> for XBinaryError {
     fn from(error: BinaryError) -> Self {
         Self::Binary(error)
+    }
+}
+
+impl AbsDistance<BigInt, BigUint> for BigInt {
+    fn abs_distance(self, other: BigInt) -> BigUint {
+        (self - other).magnitude().clone()
+    }
+}
+
+impl AddWidth<BigInt, BigUint> for BigInt {
+    fn add_width(self, width: BigUint) -> Self {
+        self + BigInt::from(width)
+    }
+}
+
+impl SubWidth<BigInt, BigUint> for BigInt {
+    fn sub_width(self, width: BigUint) -> Self {
+        self - BigInt::from(width)
     }
 }
 
@@ -151,7 +170,7 @@ impl Binary {
         fn cmp_large_exp(
             large_mantissa: &BigInt,
             small_mantissa: &BigInt,
-            pair: OrderedPair<BigInt>,
+            pair: Interval<BigInt, BigUint>,
         ) -> Ordering {
             let shift_amount_opt = pair.width().to_usize();
 
@@ -170,11 +189,11 @@ impl Binary {
         match exponent.cmp(&other_exp) {
             Ordering::Equal => mantissa.cmp(other),
             Ordering::Greater => {
-                let pair = OrderedPair::new(exponent, other_exp);
+                let pair = Interval::new(exponent, other_exp);
                 cmp_large_exp(mantissa, other, pair)
             }
             Ordering::Less => {
-                let pair = OrderedPair::new(other_exp, exponent);
+                let pair = Interval::new(other_exp, exponent);
                 cmp_large_exp(other, mantissa, pair).reverse()
             }
         }
@@ -599,14 +618,6 @@ impl UXBinary {
         }
     }
 
-    /// Converts this extended unsigned binary to an extended signed binary.
-    pub fn to_xbinary(&self) -> XBinary {
-        match self {
-            Self::PosInf => XBinary::PosInf,
-            Self::Finite(ubinary) => XBinary::Finite(ubinary.to_binary()),
-        }
-    }
-
     pub fn add(&self, other: &Self) -> Self {
         use UXBinary::{Finite, PosInf};
         match (self, other) {
@@ -670,33 +681,56 @@ impl std::ops::Sub for UXBinary {
     }
 }
 
-/// Computes the width between two XBinary values, returning a UXBinary.
-/// Width is always nonnegative: |upper - lower|.
-pub fn xbinary_width(lower: &XBinary, upper: &XBinary) -> UXBinary {
-    use XBinary::{Finite, NegInf, PosInf};
-    match (lower, upper) {
-        // If either bound is infinite and they're different, width is infinite
-        (NegInf, PosInf) | (PosInf, NegInf) => UXBinary::PosInf,
-        (NegInf, NegInf) | (PosInf, PosInf) => UXBinary::zero(),
-        (NegInf, Finite(_)) | (Finite(_), PosInf) => UXBinary::PosInf,
-        (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::PosInf,
-        (Finite(l), Finite(u)) => {
-            // Compute |u - l|
-            let diff = u.sub(l);
-            if diff.mantissa().is_negative() {
-                // This means lower > upper, use |lower - upper| instead
-                let abs_diff = l.sub(u);
-                UXBinary::Finite(
-                    UBinary::try_from_binary(&abs_diff)
-                        .unwrap_or_else(|_| UBinary::zero())
-                )
-            } else {
-                UXBinary::Finite(
-                    UBinary::try_from_binary(&diff)
-                        .unwrap_or_else(|_| UBinary::zero())
-                )
+impl From<UXBinary> for XBinary {
+    fn from(uxbinary: UXBinary) -> Self {
+        match uxbinary {
+            UXBinary::PosInf => XBinary::PosInf,
+            UXBinary::Finite(ubinary) => XBinary::Finite(ubinary.to_binary()),
+        }
+    }
+}
+
+impl AbsDistance<XBinary, UXBinary> for XBinary {
+    /// Computes the width between two XBinary values, returning a UXBinary.
+    /// Width is always nonnegative: |other - self|.
+    fn abs_distance(self, other: Self) -> UXBinary {
+        use XBinary::{Finite, NegInf, PosInf};
+        match (self, other) {
+            // If either bound is infinite and they're different, width is infinite
+            (NegInf, PosInf) | (PosInf, NegInf) => UXBinary::PosInf,
+            (NegInf, NegInf) | (PosInf, PosInf) => UXBinary::zero(),
+            (NegInf, Finite(_)) | (Finite(_), PosInf) => UXBinary::PosInf,
+            (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::PosInf,
+            (Finite(l), Finite(u)) => {
+                // Compute |u - l|
+                let diff = u.clone().sub(l.clone());
+                if diff.mantissa().is_negative() {
+                    // This means lower > upper, use |lower - upper| instead
+                    let abs_diff = l.sub(u);
+                    UXBinary::Finite(
+                        UBinary::try_from_binary(&abs_diff)
+                            .unwrap_or_else(|_| UBinary::zero())
+                    )
+                } else {
+                    UXBinary::Finite(
+                        UBinary::try_from_binary(&diff)
+                            .unwrap_or_else(|_| UBinary::zero())
+                    )
+                }
             }
         }
+    }
+}
+
+impl AddWidth<XBinary, UXBinary> for XBinary {
+    fn add_width(self, rhs: UXBinary) -> Self {
+        self + XBinary::from(rhs)
+    }
+}
+
+impl SubWidth<XBinary, UXBinary> for XBinary {
+    fn sub_width(self, rhs: UXBinary) -> Self {
+        self - XBinary::from(rhs)
     }
 }
 
@@ -763,10 +797,14 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use crate::ordered_pair::OrderedPair;
+    use crate::ordered_pair::Bounds;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
+    }
+
+    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
+        XBinary::Finite(bin(mantissa, exponent))
     }
 
     #[test]
@@ -792,9 +830,9 @@ mod tests {
 
     #[test]
     fn bounds_reject_invalid_order() {
-        let lower = bin(1, 0);
-        let upper = bin(-1, 0);
-        let result = OrderedPair::new_checked(lower, upper);
+        let lower = xbin(1, 0);
+        let upper = xbin(-1, 0);
+        let result = Bounds::new_checked(lower, upper);
         assert!(result.is_err());
     }
 
@@ -827,7 +865,7 @@ mod tests {
     fn binary_add_aligns_exponents() {
         let one = bin(1, 0);
         let half = bin(1, -1);
-        let sum = one.add(&half);
+        let sum = one + half;
         let expected = bin(3, -1);
         assert_eq!(sum, expected);
     }
@@ -836,7 +874,7 @@ mod tests {
     fn binary_sub_handles_negative() {
         let one = bin(1, 0);
         let two = bin(1, 1);
-        let diff = one.sub(&two);
+        let diff = one - two;
         let expected = bin(-1, 0);
         assert_eq!(diff, expected);
     }
@@ -893,7 +931,7 @@ mod tests {
     fn ubinary_add_works() {
         let one = ubin(1, 0);
         let half = ubin(1, -1);
-        let sum = one.add(&half);
+        let sum = one + half;
         let expected = ubin(3, -1);
         assert_eq!(sum, expected);
     }
@@ -957,13 +995,13 @@ mod tests {
     fn uxbinary_add_works() {
         let one = UXBinary::Finite(ubin(1, 0));
         let two = UXBinary::Finite(ubin(1, 1));
-        let sum = one.add(&two);
+        let sum = one.clone() + two.clone();
         assert_eq!(sum, UXBinary::Finite(ubin(3, 0)));
 
         // Adding infinity
         let inf = UXBinary::PosInf;
-        assert_eq!(one.add(&inf), UXBinary::PosInf);
-        assert_eq!(inf.add(&one), UXBinary::PosInf);
+        assert_eq!(one.clone() + inf.clone(), UXBinary::PosInf);
+        assert_eq!(inf + one, UXBinary::PosInf);
     }
 
     #[test]
@@ -1009,49 +1047,49 @@ mod tests {
     }
 
     #[test]
-    fn uxbinary_to_xbinary_works() {
+    fn xbinary_from_uxbinary_works() {
         let ubx = UXBinary::Finite(ubin(7, 3));
-        let xb = ubx.to_xbinary();
+        let xb = XBinary::from(ubx);
         assert_eq!(xb, XBinary::Finite(bin(7, 3)));
 
-        assert_eq!(UXBinary::PosInf.to_xbinary(), XBinary::PosInf);
+        assert_eq!(XBinary::from(UXBinary::PosInf), XBinary::PosInf);
     }
 
-    // --- xbinary_width tests ---
+    // --- abs_distance tests ---
 
     #[test]
-    fn xbinary_width_finite_cases() {
+    fn abs_distance_finite_cases() {
         let one = XBinary::Finite(bin(1, 0));
         let three = XBinary::Finite(bin(3, 0));
 
         // Normal case: upper > lower
-        let width = xbinary_width(&one, &three);
+        let width = one.clone().abs_distance(three.clone());
         assert_eq!(width, UXBinary::Finite(ubin(1, 1)));
 
         // Equal bounds
-        let width = xbinary_width(&one, &one);
+        let width = one.clone().abs_distance(one.clone());
         assert_eq!(width, UXBinary::zero());
 
         // Swapped (lower > upper) - still returns absolute value
-        let width = xbinary_width(&three, &one);
+        let width = three.abs_distance(one);
         assert_eq!(width, UXBinary::Finite(ubin(1, 1)));
     }
 
     #[test]
-    fn xbinary_width_infinite_cases() {
+    fn abs_distance_infinite_cases() {
         let one = XBinary::Finite(bin(1, 0));
         let neg_inf = XBinary::NegInf;
         let pos_inf = XBinary::PosInf;
 
         // One infinite bound
-        assert_eq!(xbinary_width(&neg_inf, &one), UXBinary::PosInf);
-        assert_eq!(xbinary_width(&one, &pos_inf), UXBinary::PosInf);
+        assert_eq!(neg_inf.clone().abs_distance(one.clone()), UXBinary::PosInf);
+        assert_eq!(one.clone().abs_distance(pos_inf.clone()), UXBinary::PosInf);
 
         // Both infinite (different)
-        assert_eq!(xbinary_width(&neg_inf, &pos_inf), UXBinary::PosInf);
+        assert_eq!(neg_inf.clone().abs_distance(pos_inf.clone()), UXBinary::PosInf);
 
         // Both infinite (same)
-        assert_eq!(xbinary_width(&neg_inf, &neg_inf), UXBinary::zero());
-        assert_eq!(xbinary_width(&pos_inf, &pos_inf), UXBinary::zero());
+        assert_eq!(neg_inf.clone().abs_distance(neg_inf), UXBinary::zero());
+        assert_eq!(pos_inf.clone().abs_distance(pos_inf), UXBinary::zero());
     }
 }
