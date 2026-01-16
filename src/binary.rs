@@ -10,12 +10,14 @@ use crate::ordered_pair::OrderedPair;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinaryError {
     ReciprocalOverflow,
+    NegativeMantissa,
 }
 
 impl fmt::Display for BinaryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ReciprocalOverflow => write!(f, "exponent overflow during reciprocal"),
+            Self::NegativeMantissa => write!(f, "cannot create unsigned binary from negative mantissa"),
         }
     }
 }
@@ -137,7 +139,7 @@ impl Binary {
         // this just keeps each individual shift within primitive bounds.
         // TODO: consider proactively erroring on huge shifts to avoid massive allocations.
         let chunk_limit = BigUint::from(usize::MAX);
-        shift_mantissa_chunked(mantissa, shift, &chunk_limit)
+        shift_mantissa_chunked::<BigInt>(mantissa, shift, &chunk_limit)
     }
 
     fn cmp_shifted(
@@ -213,8 +215,10 @@ impl num_traits::Zero for Binary {
     }
 }
 
-
-fn shift_mantissa_chunked(mantissa: &BigInt, shift: &BigUint, chunk_limit: &BigUint) -> BigInt {
+fn shift_mantissa_chunked<M>(mantissa: &M, shift: &BigUint, chunk_limit: &BigUint) -> M
+where
+    M: Clone + std::ops::ShlAssign<usize>,
+{
     // chunk_limit is injected to make the chunking behavior testable with small shifts.
     let mut shifted = mantissa.clone();
     let mut remaining = shift.clone();
@@ -422,6 +426,280 @@ impl PartialOrd for XBinary {
     }
 }
 
+/// Unsigned binary number represented as `mantissa * 2^exponent` where mantissa >= 0.
+/// `mantissa` is normalized to be odd unless the value is zero.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UBinary {
+    mantissa: BigUint,
+    exponent: BigInt,
+}
+
+impl UBinary {
+    pub fn new(mantissa: BigUint, exponent: BigInt) -> Self {
+        Self::normalize(mantissa, exponent)
+    }
+
+    pub fn zero() -> Self {
+        Self {
+            mantissa: BigUint::zero(),
+            exponent: BigInt::zero(),
+        }
+    }
+
+    pub fn mantissa(&self) -> &BigUint {
+        &self.mantissa
+    }
+
+    pub fn exponent(&self) -> &BigInt {
+        &self.exponent
+    }
+
+    /// Creates a UBinary from a Binary, returning an error if the mantissa is negative.
+    pub fn try_from_binary(binary: &Binary) -> Result<Self, BinaryError> {
+        if binary.mantissa().is_negative() {
+            return Err(BinaryError::NegativeMantissa);
+        }
+        let mantissa = binary.mantissa().magnitude().clone();
+        Ok(Self::new(mantissa, binary.exponent().clone()))
+    }
+
+    /// Converts this unsigned binary to a signed binary.
+    pub fn to_binary(&self) -> Binary {
+        Binary::new(BigInt::from(self.mantissa.clone()), self.exponent.clone())
+    }
+
+    pub fn add(&self, other: &Self) -> Self {
+        let (lhs, rhs, exponent) = Self::align_mantissas(self, other);
+        Self::normalize(lhs + rhs, exponent)
+    }
+
+    pub fn sub_saturating(&self, other: &Self) -> Self {
+        let (lhs, rhs, exponent) = Self::align_mantissas(self, other);
+        if lhs >= rhs {
+            Self::normalize(lhs - rhs, exponent)
+        } else {
+            Self::zero()
+        }
+    }
+
+    pub fn mul(&self, other: &Self) -> Self {
+        let exponent = &self.exponent + &other.exponent;
+        let mantissa = &self.mantissa * &other.mantissa;
+        Self::normalize(mantissa, exponent)
+    }
+
+    fn normalize(mut mantissa: BigUint, mut exponent: BigInt) -> Self {
+        if mantissa.is_zero() {
+            return Self {
+                mantissa,
+                exponent: BigInt::zero(),
+            };
+        }
+
+        while (&mantissa % 2u32).is_zero() {
+            mantissa /= 2u32;
+            exponent += 1;
+        }
+
+        Self { mantissa, exponent }
+    }
+
+    fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigUint, BigUint, BigInt) {
+        let exponent = if lhs.exponent <= rhs.exponent {
+            lhs.exponent.clone()
+        } else {
+            rhs.exponent.clone()
+        };
+        let lhs_shift = BigUint::try_from(&lhs.exponent - &exponent).unwrap_or_default();
+        let rhs_shift = BigUint::try_from(&rhs.exponent - &exponent).unwrap_or_default();
+        let lhs_mantissa = Self::shift_mantissa(&lhs.mantissa, &lhs_shift);
+        let rhs_mantissa = Self::shift_mantissa(&rhs.mantissa, &rhs_shift);
+        (lhs_mantissa, rhs_mantissa, exponent)
+    }
+
+    fn shift_mantissa(mantissa: &BigUint, shift: &BigUint) -> BigUint {
+        if shift.is_zero() {
+            return mantissa.clone();
+        }
+        let chunk_limit = BigUint::from(usize::MAX);
+        shift_mantissa_chunked::<BigUint>(mantissa, shift, &chunk_limit)
+    }
+}
+
+
+impl Ord for UBinary {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Use the same comparison logic as Binary but with unsigned mantissas
+        let self_binary = self.to_binary();
+        let other_binary = other.to_binary();
+        self_binary.cmp(&other_binary)
+    }
+}
+
+impl PartialOrd for UBinary {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl num_traits::Zero for UBinary {
+    fn zero() -> Self {
+        UBinary::zero()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.mantissa.is_zero()
+    }
+}
+
+impl std::ops::Add for UBinary {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        UBinary::add(&self, &rhs)
+    }
+}
+
+impl std::ops::Sub for UBinary {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        UBinary::sub_saturating(&self, &rhs)
+    }
+}
+
+/// Extended unsigned binary number: either a finite nonnegative value or +infinity.
+/// Used for representing bounds widths which are always nonnegative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UXBinary {
+    Finite(UBinary),
+    PosInf,
+}
+
+impl UXBinary {
+    pub fn zero() -> Self {
+        Self::Finite(UBinary::zero())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        matches!(self, Self::Finite(value) if value.mantissa().is_zero())
+    }
+
+    /// Creates a UXBinary from an XBinary, returning an error if the value is negative.
+    pub fn try_from_xbinary(xbinary: &XBinary) -> Result<Self, BinaryError> {
+        match xbinary {
+            XBinary::NegInf => Err(BinaryError::NegativeMantissa),
+            XBinary::PosInf => Ok(Self::PosInf),
+            XBinary::Finite(binary) => {
+                if binary.mantissa().is_negative() {
+                    return Err(BinaryError::NegativeMantissa);
+                }
+                Ok(Self::Finite(UBinary::try_from_binary(binary)?))
+            }
+        }
+    }
+
+    /// Converts this extended unsigned binary to an extended signed binary.
+    pub fn to_xbinary(&self) -> XBinary {
+        match self {
+            Self::PosInf => XBinary::PosInf,
+            Self::Finite(ubinary) => XBinary::Finite(ubinary.to_binary()),
+        }
+    }
+
+    pub fn add(&self, other: &Self) -> Self {
+        use UXBinary::{Finite, PosInf};
+        match (self, other) {
+            (PosInf, _) | (_, PosInf) => PosInf,
+            (Finite(lhs), Finite(rhs)) => Finite(lhs.add(rhs)),
+        }
+    }
+
+    pub fn sub_saturating(&self, other: &Self) -> Self {
+        use UXBinary::{Finite, PosInf};
+        match (self, other) {
+            (PosInf, Finite(_)) => PosInf,
+            (PosInf, PosInf) => Finite(UBinary::zero()),
+            (Finite(_), PosInf) => Finite(UBinary::zero()),
+            (Finite(lhs), Finite(rhs)) => Finite(lhs.sub_saturating(rhs)),
+        }
+    }
+}
+
+impl Ord for UXBinary {
+    fn cmp(&self, other: &Self) -> Ordering {
+        use UXBinary::{Finite, PosInf};
+        match (self, other) {
+            (PosInf, PosInf) => Ordering::Equal,
+            (PosInf, _) => Ordering::Greater,
+            (_, PosInf) => Ordering::Less,
+            (Finite(lhs), Finite(rhs)) => lhs.cmp(rhs),
+        }
+    }
+}
+
+impl PartialOrd for UXBinary {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl num_traits::Zero for UXBinary {
+    fn zero() -> Self {
+        UXBinary::zero()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.is_zero()
+    }
+}
+
+impl std::ops::Add for UXBinary {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        UXBinary::add(&self, &rhs)
+    }
+}
+
+impl std::ops::Sub for UXBinary {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        UXBinary::sub_saturating(&self, &rhs)
+    }
+}
+
+/// Computes the width between two XBinary values, returning a UXBinary.
+/// Width is always nonnegative: |upper - lower|.
+pub fn xbinary_width(lower: &XBinary, upper: &XBinary) -> UXBinary {
+    use XBinary::{Finite, NegInf, PosInf};
+    match (lower, upper) {
+        // If either bound is infinite and they're different, width is infinite
+        (NegInf, PosInf) | (PosInf, NegInf) => UXBinary::PosInf,
+        (NegInf, NegInf) | (PosInf, PosInf) => UXBinary::zero(),
+        (NegInf, Finite(_)) | (Finite(_), PosInf) => UXBinary::PosInf,
+        (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::PosInf,
+        (Finite(l), Finite(u)) => {
+            // Compute |u - l|
+            let diff = u.sub(l);
+            if diff.mantissa().is_negative() {
+                // This means lower > upper, use |lower - upper| instead
+                let abs_diff = l.sub(u);
+                UXBinary::Finite(
+                    UBinary::try_from_binary(&abs_diff)
+                        .unwrap_or_else(|_| UBinary::zero())
+                )
+            } else {
+                UXBinary::Finite(
+                    UBinary::try_from_binary(&diff)
+                        .unwrap_or_else(|_| UBinary::zero())
+                )
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ReciprocalRounding {
     Floor,
@@ -577,8 +855,203 @@ mod tests {
         let mantissa = BigInt::from(1);
         let shift = BigUint::from(128u32);
         let chunk_limit = BigUint::from(64u32);
-        let chunked = shift_mantissa_chunked(&mantissa, &shift, &chunk_limit);
+        let chunked = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, &chunk_limit);
         let expected = &mantissa << 128usize;
         assert_eq!(chunked, expected);
+    }
+
+    // --- UBinary tests ---
+
+    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
+        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
+    }
+
+    #[test]
+    fn ubinary_normalizes_even_mantissa() {
+        let value = ubin(8, 0);
+        assert_eq!(value.mantissa(), &BigUint::from(1u32));
+        assert_eq!(value.exponent(), &BigInt::from(3));
+    }
+
+    #[test]
+    fn ubinary_zero_uses_zero_exponent() {
+        let value = UBinary::new(BigUint::zero(), BigInt::from(42));
+        assert_eq!(value.mantissa(), &BigUint::zero());
+        assert_eq!(value.exponent(), &BigInt::zero());
+    }
+
+    #[test]
+    fn ubinary_ordering_works() {
+        let one = ubin(1, 0);
+        let two = ubin(1, 1);
+        let half = ubin(1, -1);
+        assert!(two > one);
+        assert!(one > half);
+    }
+
+    #[test]
+    fn ubinary_add_works() {
+        let one = ubin(1, 0);
+        let half = ubin(1, -1);
+        let sum = one.add(&half);
+        let expected = ubin(3, -1);
+        assert_eq!(sum, expected);
+    }
+
+    #[test]
+    fn ubinary_sub_saturating_works() {
+        let two = ubin(1, 1);
+        let one = ubin(1, 0);
+        let diff = two.sub_saturating(&one);
+        let expected = ubin(1, 0);
+        assert_eq!(diff, expected);
+
+        // Test saturation at zero
+        let saturated = one.sub_saturating(&two);
+        assert_eq!(saturated, UBinary::zero());
+    }
+
+    #[test]
+    fn ubinary_try_from_binary_works() {
+        let positive = bin(5, 2);
+        let result = UBinary::try_from_binary(&positive);
+        assert!(result.is_ok());
+        let ubinary = result.expect("should succeed");
+        assert_eq!(ubinary.mantissa(), &BigUint::from(5u32));
+        assert_eq!(ubinary.exponent(), &BigInt::from(2));
+
+        let negative = bin(-5, 2);
+        let result = UBinary::try_from_binary(&negative);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ubinary_to_binary_works() {
+        let ubinary = ubin(7, 3);
+        let binary = ubinary.to_binary();
+        assert_eq!(binary.mantissa(), &BigInt::from(7));
+        assert_eq!(binary.exponent(), &BigInt::from(3));
+    }
+
+    // --- UXBinary tests ---
+
+    #[test]
+    fn uxbinary_zero_is_zero() {
+        assert!(UXBinary::zero().is_zero());
+        assert!(!UXBinary::PosInf.is_zero());
+    }
+
+    #[test]
+    fn uxbinary_ordering_works() {
+        let zero = UXBinary::zero();
+        let one = UXBinary::Finite(ubin(1, 0));
+        let inf = UXBinary::PosInf;
+
+        assert!(zero < one);
+        assert!(one < inf);
+        assert!(zero < inf);
+        assert_eq!(inf, UXBinary::PosInf);
+    }
+
+    #[test]
+    fn uxbinary_add_works() {
+        let one = UXBinary::Finite(ubin(1, 0));
+        let two = UXBinary::Finite(ubin(1, 1));
+        let sum = one.add(&two);
+        assert_eq!(sum, UXBinary::Finite(ubin(3, 0)));
+
+        // Adding infinity
+        let inf = UXBinary::PosInf;
+        assert_eq!(one.add(&inf), UXBinary::PosInf);
+        assert_eq!(inf.add(&one), UXBinary::PosInf);
+    }
+
+    #[test]
+    fn uxbinary_sub_saturating_works() {
+        let two = UXBinary::Finite(ubin(1, 1));
+        let one = UXBinary::Finite(ubin(1, 0));
+
+        let diff = two.sub_saturating(&one);
+        assert_eq!(diff, UXBinary::Finite(ubin(1, 0)));
+
+        // Saturation cases
+        let saturated = one.sub_saturating(&two);
+        assert_eq!(saturated, UXBinary::zero());
+
+        let inf = UXBinary::PosInf;
+        assert_eq!(inf.sub_saturating(&one), UXBinary::PosInf);
+        assert_eq!(inf.sub_saturating(&inf), UXBinary::zero());
+        assert_eq!(one.sub_saturating(&inf), UXBinary::zero());
+    }
+
+    #[test]
+    fn uxbinary_try_from_xbinary_works() {
+        // Positive finite
+        let pos_finite = XBinary::Finite(bin(5, 2));
+        let result = UXBinary::try_from_xbinary(&pos_finite);
+        assert!(result.is_ok());
+
+        // Negative finite
+        let neg_finite = XBinary::Finite(bin(-5, 2));
+        let result = UXBinary::try_from_xbinary(&neg_finite);
+        assert!(result.is_err());
+
+        // Positive infinity
+        let pos_inf = XBinary::PosInf;
+        let result = UXBinary::try_from_xbinary(&pos_inf);
+        assert!(result.is_ok());
+        assert_eq!(result.expect("should succeed"), UXBinary::PosInf);
+
+        // Negative infinity
+        let neg_inf = XBinary::NegInf;
+        let result = UXBinary::try_from_xbinary(&neg_inf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn uxbinary_to_xbinary_works() {
+        let ubx = UXBinary::Finite(ubin(7, 3));
+        let xb = ubx.to_xbinary();
+        assert_eq!(xb, XBinary::Finite(bin(7, 3)));
+
+        assert_eq!(UXBinary::PosInf.to_xbinary(), XBinary::PosInf);
+    }
+
+    // --- xbinary_width tests ---
+
+    #[test]
+    fn xbinary_width_finite_cases() {
+        let one = XBinary::Finite(bin(1, 0));
+        let three = XBinary::Finite(bin(3, 0));
+
+        // Normal case: upper > lower
+        let width = xbinary_width(&one, &three);
+        assert_eq!(width, UXBinary::Finite(ubin(1, 1)));
+
+        // Equal bounds
+        let width = xbinary_width(&one, &one);
+        assert_eq!(width, UXBinary::zero());
+
+        // Swapped (lower > upper) - still returns absolute value
+        let width = xbinary_width(&three, &one);
+        assert_eq!(width, UXBinary::Finite(ubin(1, 1)));
+    }
+
+    #[test]
+    fn xbinary_width_infinite_cases() {
+        let one = XBinary::Finite(bin(1, 0));
+        let neg_inf = XBinary::NegInf;
+        let pos_inf = XBinary::PosInf;
+
+        // One infinite bound
+        assert_eq!(xbinary_width(&neg_inf, &one), UXBinary::PosInf);
+        assert_eq!(xbinary_width(&one, &pos_inf), UXBinary::PosInf);
+
+        // Both infinite (different)
+        assert_eq!(xbinary_width(&neg_inf, &pos_inf), UXBinary::PosInf);
+
+        // Both infinite (same)
+        assert_eq!(xbinary_width(&neg_inf, &neg_inf), UXBinary::zero());
+        assert_eq!(xbinary_width(&pos_inf, &pos_inf), UXBinary::zero());
     }
 }

@@ -27,11 +27,9 @@ mod binary;
 mod concurrency;
 mod ordered_pair;
 
-pub use binary::{Binary, BinaryError, XBinary, XBinaryError};
+pub use binary::{Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError, xbinary_width};
 use concurrency::StopFlag;
-pub use ordered_pair::{OrderedPair, OrderedPairError};
-
-pub type Bounds = OrderedPair<XBinary>;
+pub use ordered_pair::{Bounds, OrderedPair, OrderedPairError};
 
 /// Shared API for retrieving bounds with lazy computation.
 trait BoundsAccess {
@@ -253,7 +251,7 @@ impl Computable {
     #[allow(clippy::type_complexity)]
     pub fn constant(value: Binary) -> Self {
         fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
-            Ok(OrderedPair::new(
+            Ok(Bounds::new(
                 XBinary::Finite(value.clone()),
                 XBinary::Finite(value.clone()),
             ))
@@ -366,7 +364,7 @@ impl NodeOp for NegOp {
         let existing = self.inner.get_bounds()?;
         let lower = existing.small().neg();
         let upper = existing.large().neg();
-        OrderedPair::new_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
+        Bounds::new_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -393,7 +391,7 @@ impl NodeOp for AddOp {
         let right_bounds = self.right.get_bounds()?;
         let lower = left_bounds.small().add_lower(right_bounds.small());
         let upper = left_bounds.large().add_upper(&right_bounds.large());
-        OrderedPair::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
+        Bounds::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -441,7 +439,7 @@ impl NodeOp for MulOp {
             }
         }
 
-        OrderedPair::new_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
+        Bounds::new_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -818,7 +816,7 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
     let upper = bounds.large();
     let zero = XBinary::zero();
     if lower <= &zero && upper >= zero {
-        return Ok(OrderedPair::new(
+        return Ok(Bounds::new(
             XBinary::NegInf,
             XBinary::PosInf,
         ));
@@ -852,16 +850,17 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
         (lower_bound, upper_bound)
     };
 
-    OrderedPair::new_checked(lower_bound, upper_bound)
+    Bounds::new_checked(lower_bound, upper_bound)
         .map_err(|_| ComputableError::InvalidBoundsOrder)
 }
 
+/// Compares bounds width (UXBinary) against epsilon (Binary).
+/// Returns true if width <= epsilon.
 fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> bool {
-    let width_value = bounds.width();
-    let XBinary::Finite(width) = width_value else {
-        return false;
-    };
-    width <= epsilon
+    match bounds.width() {
+        UXBinary::PosInf => false,
+        UXBinary::Finite(uwidth) => uwidth.to_binary() <= *epsilon,
+    }
 }
 
 #[cfg(test)]
@@ -893,6 +892,15 @@ mod tests {
         }
     }
 
+    fn unwrap_finite_uxbinary(input: &UXBinary) -> Binary {
+        match input {
+            UXBinary::Finite(value) => value.to_binary(),
+            UXBinary::PosInf => {
+                panic!("expected finite unsigned extended binary")
+            }
+        }
+    }
+
     fn interval_bounds(state: &IntervalState) -> Bounds {
         state.clone()
     }
@@ -905,7 +913,7 @@ mod tests {
 
     fn interval_refine(state: IntervalState) -> IntervalState {
         let midpoint = midpoint_between(state.small(), &state.large());
-        OrderedPair::new(
+        Bounds::new(
             XBinary::Finite(midpoint.clone()),
             XBinary::Finite(midpoint),
         )
@@ -913,11 +921,11 @@ mod tests {
 
     fn interval_refine_strict(state: IntervalState) -> IntervalState {
         let midpoint = midpoint_between(state.small(), &state.large());
-        OrderedPair::new(state.small().clone(), XBinary::Finite(midpoint))
+        Bounds::new(state.small().clone(), XBinary::Finite(midpoint))
     }
 
     fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
-        let interval_state = OrderedPair::new(ext(lower, 0), ext(upper, 0));
+        let interval_state = Bounds::new(ext(lower, 0), ext(upper, 0));
         Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
@@ -926,7 +934,7 @@ mod tests {
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        let interval_state = OrderedPair::new(ext(1, 0), ext(value_int as i64, 0));
+        let interval_state = Bounds::new(ext(1, 0), ext(value_int as i64, 0));
         let bounds = |inner_state: &IntervalState| Ok(inner_state.clone());
         let refine = move |inner_state: IntervalState| {
             let mid = midpoint_between(inner_state.small(), &inner_state.large());
@@ -934,9 +942,9 @@ mod tests {
             let value = bin(value_int as i64, 0);
 
             if mid_sq <= value {
-                OrderedPair::new(XBinary::Finite(mid), inner_state.large().clone())
+                Bounds::new(XBinary::Finite(mid), inner_state.large().clone())
             } else {
-                OrderedPair::new(inner_state.small().clone(), XBinary::Finite(mid))
+                Bounds::new(inner_state.small().clone(), XBinary::Finite(mid))
             }
         };
 
@@ -950,7 +958,7 @@ mod tests {
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
-        let width = unwrap_finite(bounds.width());
+        let width = unwrap_finite_uxbinary(bounds.width());
         let upper = unwrap_finite(&upper_xb);
 
         assert!(lower <= *expected && *expected <= upper);
@@ -988,7 +996,7 @@ mod tests {
             .expect("refine_to should succeed");
         let expected = ext(1, 0);
         let upper = bounds.large();
-        let width = unwrap_finite(bounds.width());
+        let width = unwrap_finite_uxbinary(bounds.width());
 
         assert!(bounds.small() <= &expected && &expected <= &upper);
         assert!(width < epsilon);
@@ -1002,7 +1010,7 @@ mod tests {
 
     #[test]
     fn computable_refine_to_rejects_unchanged_state() {
-        let interval_state = OrderedPair::new(ext(0, 0), ext(2, 0));
+        let interval_state = Bounds::new(ext(0, 0), ext(2, 0));
         let computable = Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
@@ -1018,7 +1026,7 @@ mod tests {
         let computable = Computable::new(
             0usize,
             |_| {
-                Ok(OrderedPair::new(
+                Ok(Bounds::new(
                     XBinary::NegInf,
                     XBinary::PosInf,
                 ))
@@ -1036,7 +1044,7 @@ mod tests {
     // test the "normal case" where the bounds shrink but never meet
     #[test]
     fn computable_refine_to_handles_non_meeting_bounds() {
-        let interval_state = OrderedPair::new(ext(0, 0), ext(4, 0));
+        let interval_state = Bounds::new(ext(0, 0), ext(4, 0));
         let computable = Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
@@ -1054,14 +1062,14 @@ mod tests {
 
     #[test]
     fn computable_refine_to_rejects_worsened_bounds() {
-        let interval_state = OrderedPair::new(ext(0, 0), ext(1, 0));
+        let interval_state = Bounds::new(ext(0, 0), ext(1, 0));
         let computable = Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
             |inner_state: IntervalState| {
                 let upper = inner_state.large();
                 let worse_upper = unwrap_finite(&upper).add(&bin(1, 0));
-                OrderedPair::new(
+                Bounds::new(
                     inner_state.small().clone(),
                     XBinary::Finite(worse_upper),
                 )
@@ -1081,7 +1089,7 @@ mod tests {
 
         let sum = left + right;
         let sum_bounds = sum.bounds().expect("bounds should succeed");
-        assert_eq!(sum_bounds, OrderedPair::new(ext(1, 0), ext(5, 0)));
+        assert_eq!(sum_bounds, Bounds::new(ext(1, 0), ext(5, 0)));
     }
 
     #[test]
@@ -1091,7 +1099,7 @@ mod tests {
 
         let diff = left - right;
         let diff_bounds = diff.bounds().expect("bounds should succeed");
-        assert_eq!(diff_bounds, OrderedPair::new(ext(2, 0), ext(5, 0)));
+        assert_eq!(diff_bounds, Bounds::new(ext(2, 0), ext(5, 0)));
     }
 
     #[test]
@@ -1099,7 +1107,7 @@ mod tests {
         let value = interval_midpoint_computable(1, 3);
         let negated = -value;
         let bounds = negated.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, OrderedPair::new(ext(-3, 0), ext(-1, 0)));
+        assert_eq!(bounds, Bounds::new(ext(-3, 0), ext(-1, 0)));
     }
 
     #[test]
@@ -1109,7 +1117,7 @@ mod tests {
         let bounds = inv.bounds().expect("bounds should succeed");
         assert_eq!(
             bounds,
-            OrderedPair::new(XBinary::NegInf, XBinary::PosInf)
+            Bounds::new(XBinary::NegInf, XBinary::PosInf)
         );
     }
 
@@ -1135,7 +1143,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, OrderedPair::new(ext(2, 0), ext(12, 0)));
+        assert_eq!(bounds, Bounds::new(ext(2, 0), ext(12, 0)));
     }
 
     #[test]
@@ -1145,7 +1153,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, OrderedPair::new(ext(-12, 0), ext(-2, 0)));
+        assert_eq!(bounds, Bounds::new(ext(-12, 0), ext(-2, 0)));
     }
 
     #[test]
@@ -1155,7 +1163,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, OrderedPair::new(ext(-10, 0), ext(15, 0)));
+        assert_eq!(bounds, Bounds::new(ext(-10, 0), ext(15, 0)));
     }
 
     #[test]
@@ -1165,7 +1173,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, OrderedPair::new(ext(-8, 0), ext(12, 0)));
+        assert_eq!(bounds, Bounds::new(ext(-8, 0), ext(12, 0)));
     }
 
     #[test]
@@ -1176,7 +1184,7 @@ mod tests {
         let bounds = computable.bounds().expect("bounds should succeed");
         assert_eq!(
             bounds,
-            OrderedPair::new(
+            Bounds::new(
                 XBinary::Finite(value.clone()),
                 XBinary::Finite(value)
             )
@@ -1259,7 +1267,7 @@ mod tests {
         let computable = Computable::new(
             0usize,
             |_| {
-                Ok(OrderedPair::new(
+                Ok(Bounds::new(
                     XBinary::NegInf,
                     XBinary::PosInf,
                 ))
@@ -1280,7 +1288,7 @@ mod tests {
         let left = Computable::new(
             0usize,
             |_| {
-                Ok(OrderedPair::new(
+                Ok(Bounds::new(
                     XBinary::NegInf,
                     XBinary::PosInf,
                 ))
@@ -1290,7 +1298,7 @@ mod tests {
         let right = Computable::new(
             0usize,
             |_| {
-                Ok(OrderedPair::new(
+                Ok(Bounds::new(
                     XBinary::NegInf,
                     XBinary::PosInf,
                 ))
@@ -1310,9 +1318,9 @@ mod tests {
     fn computable_refine_to_error_path_stops_refiners() {
         let stable = interval_midpoint_computable(0, 2);
         let faulty = Computable::new(
-            OrderedPair::new(ext(0, 0), ext(1, 0)),
+            Bounds::new(ext(0, 0), ext(1, 0)),
             |state| Ok(state.clone()),
-            |state| OrderedPair::new(state.small().clone(), ext(2, 0)),
+            |state| Bounds::new(state.small().clone(), ext(2, 0)),
         );
         let expr = stable + faulty;
         let epsilon = bin(1, -4);
@@ -1325,7 +1333,7 @@ mod tests {
         let computable = Arc::new(Computable::new(
             0usize,
             |_| {
-                Ok(OrderedPair::new(
+                Ok(Bounds::new(
                     XBinary::NegInf,
                     XBinary::PosInf,
                 ))
@@ -1360,7 +1368,7 @@ mod tests {
             Computable::new(
                 0usize,
                 |_| {
-                    Ok(OrderedPair::new(
+                    Ok(Bounds::new(
                         XBinary::NegInf,
                         XBinary::PosInf,
                     ))
@@ -1446,7 +1454,7 @@ mod tests {
         let shared_active = Arc::clone(&active_refines);
         let shared_overlap = Arc::clone(&saw_overlap);
         let computable = Computable::new(
-            OrderedPair::new(ext(0, 0), ext(4, 0)),
+            Bounds::new(ext(0, 0), ext(4, 0)),
             |state| Ok(state.clone()),
             move |state: IntervalState| {
                 let prior = shared_active.fetch_add(1, Ordering::SeqCst);
