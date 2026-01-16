@@ -5,9 +5,11 @@ use num_bigint::BigInt;
 use num_traits::One;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use rayon::ThreadPoolBuilder;
 
 const COMPLEX_SAMPLE_COUNT: usize = 5_000;
 const SUMMATION_SAMPLE_COUNT: usize = 200_000;
+const INTEGER_ROOTS_SAMPLE_COUNT: usize = 1_000;
 
 #[derive(Debug)]
 struct BenchmarkResult {
@@ -144,7 +146,112 @@ fn balanced_sum(mut values: Vec<Computable>) -> Computable {
         .expect("values should contain at least one element")
 }
 
+/// Computes the n-th root of a value using binary search.
+/// Returns a Computable that refines by bisection.
+fn nth_root_computable(value: u64, n: u32) -> Computable {
+    // Initial bounds: [1, value] for roots of values >= 1
+    // For the n-th root of x, we know 1 <= x^(1/n) <= x for x >= 1
+    let upper_bound = if value > 1 { value as i64 } else { 1 };
+    let interval_state = Bounds::new(
+        XBinary::Finite(Binary::new(BigInt::one(), BigInt::from(0))),
+        XBinary::Finite(Binary::new(BigInt::from(upper_bound), BigInt::from(0))),
+    );
+
+    let bounds = |inner_state: &Bounds| -> Result<Bounds, computable::ComputableError> {
+        Ok(inner_state.clone())
+    };
+
+    let target = Binary::new(BigInt::from(value), BigInt::from(0));
+    let exponent = n;
+
+    let refine = move |inner_state: Bounds| -> Bounds {
+        let lower = match inner_state.small() {
+            XBinary::Finite(b) => b.clone(),
+            _ => panic!("expected finite lower bound"),
+        };
+        let upper = match inner_state.large() {
+            XBinary::Finite(b) => b.clone(),
+            _ => panic!("expected finite upper bound"),
+        };
+
+        // Compute midpoint: (lower + upper) / 2
+        let sum = lower.add(&upper);
+        let half = Binary::new(BigInt::one(), BigInt::from(-1));
+        let mid = sum.mul(&half);
+
+        // Compute mid^n
+        let mut mid_pow = mid.clone();
+        for _ in 1..exponent {
+            mid_pow = mid_pow.mul(&mid);
+        }
+
+        // Binary search: if mid^n <= target, search upper half; else search lower half
+        if mid_pow <= target {
+            Bounds::new(XBinary::Finite(mid), XBinary::Finite(upper))
+        } else {
+            Bounds::new(XBinary::Finite(lower), XBinary::Finite(mid))
+        }
+    };
+
+    Computable::new(interval_state, bounds, refine)
+}
+
+/// Computes integer n-th root using f64 (for comparison).
+fn nth_root_float(value: f64, n: u32) -> f64 {
+    value.powf(1.0 / n as f64)
+}
+
+#[derive(Debug)]
+struct IntegerRootsResult {
+    duration: Duration,
+    value: f64,
+}
+
+#[derive(Debug)]
+struct IntegerRootsComputableResult {
+    duration: Duration,
+    midpoint: Binary,
+    width: UXBinary,
+}
+
+/// Benchmark: sum of integer roots using f64
+fn integer_roots_float(inputs: &[(u64, u32)]) -> IntegerRootsResult {
+    let start = Instant::now();
+    let mut total = 0.0;
+    for &(value, n) in inputs {
+        total += nth_root_float(value as f64, n);
+    }
+    IntegerRootsResult {
+        duration: start.elapsed(),
+        value: total,
+    }
+}
+
+/// Benchmark: sum of integer roots using Computable (binary search)
+fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResult {
+    let start = Instant::now();
+
+    let terms: Vec<Computable> = inputs
+        .iter()
+        .map(|&(value, n)| nth_root_computable(value, n))
+        .collect();
+
+    let total = balanced_sum(terms);
+    let bounds = total.bounds().expect("bounds should succeed");
+
+    IntegerRootsComputableResult {
+        duration: start.elapsed(),
+        midpoint: midpoint(&bounds),
+        width: bounds.width().clone(),
+    }
+}
+
 fn main() {
+    // Limit threads to avoid a bug with too many threads
+    ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build_global()
+        .ok(); // Ignore error if already initialized
     let mut rng = StdRng::seed_from_u64(7);
 
     let complex_inputs: Vec<(f64, f64, f64, f64)> = (0..COMPLEX_SAMPLE_COUNT)
@@ -240,4 +347,39 @@ fn main() {
     println!("  sum with base minus base (computable): {}", computable_minus_base);
     println!("  float precision loss: {}", float_base_error);
     println!("  computable precision loss: {}", computable_base_error);
+
+    // === Integer Roots Benchmark ===
+    // Generate inputs: (value, root_degree) pairs
+    // Use various values and root degrees (2=sqrt, 3=cbrt, 4=4th root, etc.)
+    let integer_roots_inputs: Vec<(u64, u32)> = (0..INTEGER_ROOTS_SAMPLE_COUNT)
+        .map(|i| {
+            let value = rng.gen_range(2..1000) as u64;
+            let n = (i % 5) as u32 + 2; // roots from 2 to 6
+            (value, n)
+        })
+        .collect();
+
+    let integer_roots_float_result = integer_roots_float(&integer_roots_inputs);
+    let integer_roots_computable_result = integer_roots_computable(&integer_roots_inputs);
+
+    let integer_roots_error = {
+        let float_as_binary = binary_from_f64(integer_roots_float_result.value);
+        let diff = float_as_binary.sub(&integer_roots_computable_result.midpoint);
+        diff.magnitude()
+    };
+
+    let integer_roots_slowdown = integer_roots_computable_result.duration.as_secs_f64()
+        / integer_roots_float_result.duration.as_secs_f64();
+
+    println!();
+    println!("== Integer roots (binary search) benchmark ==");
+    println!("samples: {INTEGER_ROOTS_SAMPLE_COUNT}");
+    println!("root degrees: 2 (sqrt), 3 (cbrt), 4, 5, 6");
+    println!("float time:      {:?}", integer_roots_float_result.duration);
+    println!("computable time: {:?}", integer_roots_computable_result.duration);
+    println!("slowdown factor: {:.2}x", integer_roots_slowdown);
+    println!("float value:         {}", binary_from_f64(integer_roots_float_result.value));
+    println!("computable midpoint: {}", integer_roots_computable_result.midpoint);
+    println!("computable width: {}", integer_roots_computable_result.width);
+    println!("abs(float - midpoint): {}", integer_roots_error);
 }

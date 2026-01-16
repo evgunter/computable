@@ -14,11 +14,13 @@ The `--release` flag is important for accurate performance measurements.
 
 ## What's Measured
 
-The benchmark suite includes two scenarios:
+The benchmark suite includes three scenarios:
 
 1. **Complex expression benchmark** - Evaluates 5,000 complex arithmetic expressions involving multiple operations (addition, multiplication, subtraction) to compare computational overhead and accuracy.
 
 2. **Summation (catastrophic) benchmark** - Demonstrates catastrophic cancellation by summing 200,000 small values to a large base value, highlighting Computable's ability to track error bounds.
+
+3. **Integer roots (binary search) benchmark** - Computes 1,000 integer roots (square root, cube root, 4th/5th/6th roots) using binary search bisection, summing them together. This demonstrates Computable's ability to represent irrational numbers with arbitrary precision through refinement.
 
 ## Output
 
