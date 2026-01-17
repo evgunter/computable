@@ -456,6 +456,8 @@ impl NodeOp for MulOp {
     }
 }
 
+// TODO: make it so that the state of the precision calculation is reused in
+// successive refinements instead of needing to be recalculated every time
 struct InvOp {
     inner: Arc<Node>,
     precision_bits: RwLock<BigInt>,
