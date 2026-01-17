@@ -12,68 +12,16 @@
     clippy::unwrap_used
 )]
 
-use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::{Condvar, Mutex, RwLock};
-use rayon::{ThreadPool, ThreadPoolBuilder};
-
-// Thread-local flag to track when we're inside a refinement worker.
-// During refinement, rayon workers are blocked on channel recv() calls,
-// so using rayon::join() would deadlock. This flag enables conditional
-// parallelization: parallel outside refinement, sequential inside.
-thread_local! {
-    static IN_REFINEMENT_WORKER: Cell<bool> = const { Cell::new(false) };
-}
-
-/// RAII guard that sets IN_REFINEMENT_WORKER to true for the current scope.
-struct RefinementWorkerGuard;
-
-impl RefinementWorkerGuard {
-    fn enter() -> Self {
-        IN_REFINEMENT_WORKER.set(true);
-        Self
-    }
-}
-
-impl Drop for RefinementWorkerGuard {
-    fn drop(&mut self) {
-        IN_REFINEMENT_WORKER.set(false);
-    }
-}
-
-/// Returns true if the current thread is inside a refinement worker context.
-fn is_in_refinement_worker() -> bool {
-    IN_REFINEMENT_WORKER.get()
-}
-
-/// Executes two closures, potentially in parallel if safe to do so.
-///
-/// During refinement, rayon workers are blocked on channel recv() calls,
-/// so using rayon::join() would deadlock. This function detects that context
-/// and falls back to sequential execution when necessary.
-fn parallel_or_sequential<A, B, RA, RB>(op_a: A, op_b: B) -> (RA, RB)
-where
-    A: FnOnce() -> RA + Send,
-    B: FnOnce() -> RB + Send,
-    RA: Send,
-    RB: Send,
-{
-    if is_in_refinement_worker() {
-        // Sequential fallback: we're in a refinement worker, rayon pool is saturated
-        (op_a(), op_b())
-    } else {
-        // Safe to parallelize: we're either on the main thread or in a context
-        // where rayon workers aren't blocked
-        rayon::join(op_a, op_b)
-    }
-}
 
 mod binary;
 mod concurrency;
@@ -98,7 +46,6 @@ pub enum ComputableError {
     ExcludedValueUnreachable,
     RefinementChannelClosed,
     MaxRefinementIterations { max: usize },
-    ThreadPoolUnavailable,
     Binary(BinaryError),
 }
 
@@ -116,7 +63,6 @@ impl fmt::Display for ComputableError {
             Self::MaxRefinementIterations { max } => {
                 write!(f, "maximum refinement iterations ({max}) reached")
             }
-            Self::ThreadPoolUnavailable => write!(f, "thread pool unavailable"),
             Self::Binary(err) => write!(f, "{err}"),
         }
     }
@@ -442,12 +388,8 @@ struct AddOp {
 
 impl NodeOp for AddOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let (left_result, right_result) = parallel_or_sequential(
-            || self.left.get_bounds(),
-            || self.right.get_bounds(),
-        );
-        let left_bounds = left_result?;
-        let right_bounds = right_result?;
+        let left_bounds = self.left.get_bounds()?;
+        let right_bounds = self.right.get_bounds()?;
         let lower = left_bounds.small().add_lower(right_bounds.small());
         let upper = left_bounds.large().add_upper(&right_bounds.large());
         Bounds::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
@@ -473,12 +415,8 @@ struct MulOp {
 
 impl NodeOp for MulOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let (left_result, right_result) = parallel_or_sequential(
-            || self.left.get_bounds(),
-            || self.right.get_bounds(),
-        );
-        let left_bounds = left_result?;
-        let right_bounds = right_result?;
+        let left_bounds = self.left.get_bounds()?;
+        let right_bounds = self.right.get_bounds()?;
         let left_lower = left_bounds.small();
         let left_upper = left_bounds.large();
         let right_lower = right_bounds.small();
@@ -695,9 +633,8 @@ impl RefinementGraph {
         &self,
         epsilon: &Binary,
     ) -> Result<Bounds, ComputableError> {
-        let pool = refinement_pool()?;
         let mut outcome = None;
-        pool.scope(|scope| {
+        thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
             let mut refiners = Vec::new();
             let mut iterations = 0usize;
@@ -809,14 +746,14 @@ struct NodeUpdate {
     bounds: Bounds,
 }
 
-fn spawn_refiner(
-    scope: &rayon::Scope<'_>,
+fn spawn_refiner<'scope, 'env>(
+    scope: &'scope thread::Scope<'scope, 'env>,
     node: Arc<Node>,
     stop: Arc<StopFlag>,
     updates: Sender<Result<NodeUpdate, ComputableError>>,
 ) -> RefinerHandle {
     let (command_tx, command_rx) = unbounded();
-    scope.spawn(move |_| {
+    scope.spawn(move || {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             refiner_loop(node, stop, command_rx, updates)
         }));
@@ -833,11 +770,6 @@ fn refiner_loop(
     commands: Receiver<RefineCommand>,
     updates: Sender<Result<NodeUpdate, ComputableError>>,
 ) -> Result<(), ComputableError> {
-    // Mark this thread as a refinement worker. This prevents deadlock by ensuring
-    // that bounds computations in this thread don't try to use rayon::join(),
-    // since rayon workers are blocked waiting on channel recv() calls.
-    let _guard = RefinementWorkerGuard::enter();
-
     while !stop.is_stopped() {
         match commands.recv() {
             Ok(RefineCommand::Step) => match node.refine_step() {
@@ -877,19 +809,6 @@ fn refiner_loop(
         }
     }
     Ok(())
-}
-
-static REFINEMENT_POOL: OnceLock<Result<ThreadPool, ComputableError>> = OnceLock::new();
-
-fn refinement_pool() -> Result<&'static ThreadPool, ComputableError> {
-    match REFINEMENT_POOL.get_or_init(|| {
-        ThreadPoolBuilder::new()
-            .build()
-            .map_err(|_| ComputableError::ThreadPoolUnavailable)
-    }) {
-        Ok(pool) => Ok(pool),
-        Err(error) => Err(error.clone()),
-    }
 }
 
 #[cfg(debug_assertions)]
