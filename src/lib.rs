@@ -20,7 +20,7 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{Signed, Zero};
 use parking_lot::{Condvar, Mutex, RwLock};
 
 mod binary;
@@ -461,6 +461,10 @@ struct InvOp {
     precision_bits: RwLock<BigInt>,
 }
 
+/// Initial precision bits to start with for inv refinement.
+/// Starting at a reasonable value avoids unnecessary early iterations.
+const INV_INITIAL_PRECISION_BITS: i64 = 4;
+
 impl NodeOp for InvOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let existing = self.inner.get_bounds()?;
@@ -469,7 +473,13 @@ impl NodeOp for InvOp {
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
         let mut precision = self.precision_bits.write();
-        *precision += BigInt::one();
+        // Double precision each step for O(log n) convergence instead of O(n).
+        // If precision is 0, start with initial value to bootstrap.
+        if precision.is_zero() {
+            *precision = BigInt::from(INV_INITIAL_PRECISION_BITS);
+        } else {
+            *precision *= 2;
+        }
         Ok(true)
     }
 
@@ -878,6 +888,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use num_traits::One;
     use std::sync::{Arc, Barrier};
     use std::thread;
 
