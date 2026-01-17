@@ -20,7 +20,7 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Zero};
 use parking_lot::{Condvar, Mutex, RwLock};
 
 mod binary;
@@ -201,9 +201,9 @@ impl Computable {
 
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         &self,
-        epsilon: Binary,
+        epsilon: UBinary,
     ) -> Result<Bounds, ComputableError> {
-        if !epsilon.mantissa().is_positive() {
+        if epsilon.mantissa().is_zero() {
             return Err(ComputableError::NonpositiveEpsilon);
         }
 
@@ -237,7 +237,7 @@ impl Computable {
         }
     }
 
-    pub fn refine_to_default(&self, epsilon: Binary) -> Result<Bounds, ComputableError> {
+    pub fn refine_to_default(&self, epsilon: UBinary) -> Result<Bounds, ComputableError> {
         self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(epsilon)
     }
 
@@ -1169,7 +1169,7 @@ impl RefinementGraph {
 
     fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         &self,
-        epsilon: &Binary,
+        epsilon: &UBinary,
     ) -> Result<Bounds, ComputableError> {
         let mut outcome = None;
         thread::scope(|scope| {
@@ -1402,12 +1402,12 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
         .map_err(|_| ComputableError::InvalidBoundsOrder)
 }
 
-/// Compares bounds width (UXBinary) against epsilon (Binary).
+/// Compares bounds width (UXBinary) against epsilon (UBinary).
 /// Returns true if width <= epsilon.
-fn bounds_width_leq(bounds: &Bounds, epsilon: &Binary) -> bool {
+fn bounds_width_leq(bounds: &Bounds, epsilon: &UBinary) -> bool {
     match bounds.width() {
         UXBinary::PosInf => false,
-        UXBinary::Finite(uwidth) => uwidth.to_binary() <= *epsilon,
+        UXBinary::Finite(uwidth) => *uwidth <= *epsilon,
     }
 }
 
@@ -1416,6 +1416,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use num_bigint::BigUint;
     use std::sync::{Arc, Barrier};
     use std::thread;
 
@@ -1427,6 +1428,10 @@ mod tests {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
     }
 
+    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
+        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
+    }
+
     fn xbin(mantissa: i64, exponent: i64) -> XBinary {
         XBinary::Finite(bin(mantissa, exponent))
     }
@@ -1436,15 +1441,6 @@ mod tests {
             XBinary::Finite(value) => value.clone(),
             XBinary::NegInf | XBinary::PosInf => {
                 panic!("expected finite extended binary")
-            }
-        }
-    }
-
-    fn unwrap_finite_uxbinary(input: &UXBinary) -> Binary {
-        match input {
-            UXBinary::Finite(value) => value.to_binary(),
-            UXBinary::PosInf => {
-                panic!("expected finite unsigned extended binary")
             }
         }
     }
@@ -1502,15 +1498,24 @@ mod tests {
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        epsilon: &Binary,
+        epsilon: &UBinary,
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
-        let width = unwrap_finite_uxbinary(bounds.width());
+        let width = unwrap_finite_ubinary(bounds.width());
         let upper = unwrap_finite(&upper_xb);
 
         assert!(lower <= *expected && *expected <= upper);
-        assert!(&width <= epsilon);
+        assert!(width <= *epsilon);
+    }
+
+    fn unwrap_finite_ubinary(input: &UXBinary) -> UBinary {
+        match input {
+            UXBinary::Finite(value) => value.clone(),
+            UXBinary::PosInf => {
+                panic!("expected finite unsigned extended binary")
+            }
+        }
     }
 
     fn assert_width_nonnegative(bounds: &Bounds) {
@@ -1519,18 +1524,12 @@ mod tests {
 
     // --- tests for different results of refinement (mostly errors) ---
 
-    #[test]
-    fn computable_refine_to_rejects_negative_epsilon() {
-        let computable = interval_midpoint_computable(0, 2);
-        let epsilon = bin(-1, 0);
-        let result = computable.refine_to_default(epsilon);
-        assert!(matches!(result, Err(ComputableError::NonpositiveEpsilon)));
-    }
+    // Note: negative epsilon is now impossible at the type level since we use UBinary
 
     #[test]
     fn computable_refine_to_rejects_zero_epsilon() {
         let computable = interval_midpoint_computable(0, 2);
-        let epsilon = bin(0, 0);
+        let epsilon = ubin(0, 0);
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(result, Err(ComputableError::NonpositiveEpsilon)));
     }
@@ -1538,13 +1537,13 @@ mod tests {
     #[test]
     fn computable_refine_to_returns_refined_state() {
         let computable = interval_midpoint_computable(0, 2);
-        let epsilon = bin(1, -1);
+        let epsilon = ubin(1, -1);
         let bounds = computable
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
         let expected = xbin(1, 0);
         let upper = bounds.large();
-        let width = unwrap_finite_uxbinary(bounds.width());
+        let width = unwrap_finite_ubinary(bounds.width());
 
         assert!(bounds.small() <= &expected && &expected <= &upper);
         assert!(width < epsilon);
@@ -1564,7 +1563,7 @@ mod tests {
             |inner_state| Ok(interval_bounds(inner_state)),
             |inner_state| inner_state,
         );
-        let epsilon = bin(1, -2);
+        let epsilon = ubin(1, -2);
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(result, Err(ComputableError::StateUnchanged)));
     }
@@ -1581,7 +1580,7 @@ mod tests {
             },
             |state| state + 1,
         );
-        let epsilon = bin(1, -1);
+        let epsilon = ubin(1, -1);
         let result = computable.refine_to::<5>(epsilon);
         assert!(matches!(
             result,
@@ -1598,7 +1597,7 @@ mod tests {
             |inner_state| Ok(interval_bounds(inner_state)),
             interval_refine_strict,
         );
-        let epsilon = bin(1, -1);
+        let epsilon = ubin(1, -1);
         let bounds = computable
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -1623,7 +1622,7 @@ mod tests {
                 )
             },
         );
-        let epsilon = bin(1, -2);
+        let epsilon = ubin(1, -2);
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(result, Err(ComputableError::BoundsWorsened)));
     }
@@ -1673,7 +1672,7 @@ mod tests {
     fn computable_inv_bounds_for_positive_interval() {
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
-        let epsilon = bin(1, -8);
+        let epsilon = ubin(1, -8);
         let bounds = inv
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -1747,7 +1746,7 @@ mod tests {
         let sqrt2 = sqrt_computable(2);
         let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
 
-        let epsilon = bin(1, -12);
+        let epsilon = ubin(1, -12);
         let bounds = expr
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -1759,7 +1758,7 @@ mod tests {
         let expected_binary = XBinary::from_f64(expected)
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
-        let eps_binary = epsilon;
+        let eps_binary = epsilon.to_binary();
 
         let lower_plus = lower.add(&eps_binary);
         let upper_minus = upper.sub(&eps_binary);
@@ -1773,7 +1772,7 @@ mod tests {
         let shared = sqrt_computable(2);
         let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
 
-        let epsilon = bin(1, -12);
+        let epsilon = ubin(1, -12);
         let bounds = expr
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -1785,7 +1784,7 @@ mod tests {
         let expected_binary = XBinary::from_f64(expected)
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
-        let eps_binary = epsilon;
+        let eps_binary = epsilon.to_binary();
 
         let lower_plus = lower.add(&eps_binary);
         let upper_minus = upper.sub(&eps_binary);
@@ -1800,7 +1799,7 @@ mod tests {
     fn computable_refine_shared_clone_updates_original() {
         let original = sqrt_computable(2);
         let cloned = original.clone();
-        let epsilon = bin(1, -12);
+        let epsilon = ubin(1, -12);
 
         let _ = cloned
             .refine_to_default(epsilon.clone())
@@ -1823,7 +1822,7 @@ mod tests {
             |_| panic!("refiner panic"),
         );
 
-        let epsilon = bin(1, -4);
+        let epsilon = ubin(1, -4);
         let result = computable.refine_to::<2>(epsilon);
         assert!(matches!(
             result,
@@ -1854,7 +1853,7 @@ mod tests {
             |state| state + 1,
         );
         let expr = left + right;
-        let epsilon = bin(1, -4);
+        let epsilon = ubin(1, -4);
         let result = expr.refine_to::<2>(epsilon);
         assert!(matches!(
             result,
@@ -1871,7 +1870,7 @@ mod tests {
             |state| Bounds::new(state.small().clone(), xbin(2, 0)),
         );
         let expr = stable + faulty;
-        let epsilon = bin(1, -4);
+        let epsilon = ubin(1, -4);
         let result = expr.refine_to::<3>(epsilon);
         assert!(matches!(result, Err(ComputableError::BoundsWorsened)));
     }
@@ -1888,7 +1887,7 @@ mod tests {
             },
             |state| state + 1,
         ));
-        let epsilon = bin(1, -6);
+        let epsilon = ubin(1, -6);
         let reader = Arc::clone(&computable);
         let handle = thread::spawn(move || {
             for _ in 0..8 {
@@ -1929,7 +1928,7 @@ mod tests {
         };
 
         let expr = slow_refiner() + slow_refiner() + slow_refiner() + slow_refiner();
-        let epsilon = bin(1, -6);
+        let epsilon = ubin(1, -6);
 
         let start = Instant::now();
         let result = expr.refine_to::<1>(epsilon);
@@ -1956,7 +1955,7 @@ mod tests {
         let base_expression =
             (sqrt2.clone() + sqrt2.clone()) * (Computable::constant(bin(1, 0)) + sqrt2.clone());
         let expression = Arc::new(base_expression);
-        let epsilon = bin(1, -10);
+        let epsilon = ubin(1, -10);
         // Coordinate multiple threads calling refine_to on the same computable.
         let barrier = Arc::new(Barrier::new(4));
 
@@ -2017,7 +2016,7 @@ mod tests {
         );
 
         let shared = Arc::new(computable);
-        let epsilon = bin(1, -6);
+        let epsilon = ubin(1, -6);
         let barrier = Arc::new(Barrier::new(3));
 
         let mut handles = Vec::new();
@@ -2051,7 +2050,7 @@ mod tests {
     fn concurrent_bounds_reads_during_refinement() {
         let base_value = interval_midpoint_computable(0, 4);
         let shared_value = Arc::new(base_value);
-        let epsilon = bin(1, -8);
+        let epsilon = ubin(1, -8);
         // Reader thread repeatedly calls bounds while refinement is running.
         let barrier = Arc::new(Barrier::new(2));
 
@@ -2082,7 +2081,7 @@ mod tests {
     fn computable_sin_of_zero() {
         let zero = Computable::constant(bin(0, 0));
         let sin_zero = zero.sin();
-        let epsilon = bin(1, -8);
+        let epsilon = ubin(1, -8);
         let bounds = sin_zero
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -2098,7 +2097,7 @@ mod tests {
         // We approximate it as 3217/2048 ~= 1.5708...
         let pi_over_2 = Computable::constant(bin(3217, -11));
         let sin_pi_2 = pi_over_2.sin();
-        let epsilon = bin(1, -6);
+        let epsilon = ubin(1, -6);
         let bounds = sin_pi_2
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -2122,7 +2121,7 @@ mod tests {
         // We approximate it as 6434/2048 ~= 3.1416...
         let pi_approx = Computable::constant(bin(6434, -11));
         let sin_pi = pi_approx.sin();
-        let epsilon = bin(1, -6);
+        let epsilon = ubin(1, -6);
         let bounds = sin_pi
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -2143,7 +2142,7 @@ mod tests {
         // -pi/2 ~= -1.5707963...
         let neg_pi_over_2 = Computable::constant(bin(-3217, -11));
         let sin_neg_pi_2 = neg_pi_over_2.sin();
-        let epsilon = bin(1, -6);
+        let epsilon = ubin(1, -6);
         let bounds = sin_neg_pi_2
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -2183,7 +2182,7 @@ mod tests {
         // For small x, sin(x) ~= x
         let small = Computable::constant(bin(1, -4)); // 1/16 = 0.0625
         let sin_small = small.sin();
-        let epsilon = bin(1, -8);
+        let epsilon = ubin(1, -8);
         let bounds = sin_small
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
@@ -2246,7 +2245,7 @@ mod tests {
         let two = Computable::constant(bin(2, 0));
         let expr = sin_x.clone() * two; // 2 * sin(1)
 
-        let epsilon = bin(1, -8);
+        let epsilon = ubin(1, -8);
         let bounds = expr
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
