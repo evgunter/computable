@@ -475,8 +475,10 @@ impl NodeOp for InvOp {
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
         let mut precision = self.precision_bits.write();
-        // Double precision each step for O(log n) convergence instead of O(n).
+        // Double precision each step for O(log n) convergence.
         // If precision is 0, start with initial value to bootstrap.
+        // Once the TODO above is implemented (reusing precision calculation state),
+        // this should be changed back to linear increment to avoid recomputation.
         if precision.is_zero() {
             *precision = BigInt::from(INV_INITIAL_PRECISION_BITS);
         } else {
