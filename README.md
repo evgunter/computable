@@ -84,7 +84,7 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$
 - computable numbers are backed by `Binary` numbers, which are represented by $(m, e)$ where $m$ and $e$ are integers; the number represented is $m * 2^e$
 - the integers themselves are represented with `BigInt`
 - we also use "extended" binary numbers (`XBinary`), i.e. the above but also including $-\infty$ and $+\infty$
-- it is also frequently useful to represent only nonnegative binary numbers; for this we have a separate type `UBinary` which is represented in the same way except that $m \geq 0$ (or internally, $m$ is a `BigUint`). similarly, there are `PosXBinary` and `UXBinary` types. (the width of bounds are `UXBinary`)
+- it is also frequently useful to represent only nonnegative binary numbers; for this we have a separate type `UBinary` which is represented in the same way except that $m \geq 0$ (or internally, $m$ is a `BigUint`). similarly, there is a `UXBinary` type (which is used to represent the width of bounds.)
 
 # norms
 
