@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::env;
 use std::time::{Duration, Instant};
 
 use computable::{Binary, Bounds, Computable, UXBinary, XBinary};
@@ -5,6 +7,9 @@ use num_bigint::BigInt;
 use num_traits::One;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+
+/// Available benchmark names
+const BENCHMARK_NAMES: &[&str] = &["complex", "summation", "integer-roots"];
 
 const COMPLEX_SAMPLE_COUNT: usize = 5_000;
 const SUMMATION_SAMPLE_COUNT: usize = 200_000;
@@ -248,9 +253,58 @@ fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResu
     }
 }
 
-fn main() {
-    let mut rng = StdRng::seed_from_u64(7);
+fn print_usage() {
+    println!("Usage: benchmarks [OPTIONS] [BENCHMARK...]");
+    println!();
+    println!("Run performance benchmarks for Computable arithmetic.");
+    println!();
+    println!("Options:");
+    println!("  --help, -h       Show this help message");
+    println!("  --list, -l       List available benchmarks");
+    println!();
+    println!("Arguments:");
+    println!("  BENCHMARK        Benchmark(s) to run, by name or index (0-based)");
+    println!("                   If no benchmarks specified, runs all benchmarks.");
+    println!();
+    println!("Examples:");
+    println!("  benchmarks                      # Run all benchmarks");
+    println!("  benchmarks complex              # Run only 'complex' benchmark");
+    println!("  benchmarks 0 2                  # Run benchmarks 0 and 2");
+    println!("  benchmarks summation complex    # Run 'summation' and 'complex'");
+}
 
+fn print_benchmark_list() {
+    println!("Available benchmarks:");
+    for (i, name) in BENCHMARK_NAMES.iter().enumerate() {
+        println!("  {}: {}", i, name);
+    }
+}
+
+fn parse_benchmark_selection(args: &[String]) -> HashSet<usize> {
+    let mut selected = HashSet::new();
+    
+    for arg in args {
+        // Try parsing as index first
+        if let Ok(index) = arg.parse::<usize>() {
+            if index < BENCHMARK_NAMES.len() {
+                selected.insert(index);
+            } else {
+                eprintln!("Warning: benchmark index {} out of range (0-{})", index, BENCHMARK_NAMES.len() - 1);
+            }
+        } else {
+            // Try matching by name
+            if let Some(index) = BENCHMARK_NAMES.iter().position(|&name| name == arg) {
+                selected.insert(index);
+            } else {
+                eprintln!("Warning: unknown benchmark '{}'", arg);
+            }
+        }
+    }
+    
+    selected
+}
+
+fn run_complex_benchmark(rng: &mut StdRng) {
     let complex_inputs: Vec<(f64, f64, f64, f64)> = (0..COMPLEX_SAMPLE_COUNT)
         .map(|_| {
             (
@@ -262,14 +316,6 @@ fn main() {
         })
         .collect();
 
-    let summation_inputs: Vec<f64> = (0..SUMMATION_SAMPLE_COUNT)
-        .map(|_| rng.gen_range(-1.0e-6..1.0e-6))
-        .collect();
-    let summation_inputs_computable: Vec<Computable> = summation_inputs
-        .iter()
-        .map(|&v| Computable::constant(binary_from_f64(v)))
-        .collect();
-
     let complex_float_result = complex_float(&complex_inputs);
     let complex_computable_result = complex_computable(&complex_inputs);
     let complex_error = {
@@ -277,6 +323,29 @@ fn main() {
         let diff = float_as_binary.sub(&complex_computable_result.midpoint);
         diff.magnitude()
     };
+
+    let complex_slowdown = complex_computable_result.duration.as_secs_f64()
+        / complex_float_result.duration.as_secs_f64();
+
+    println!("== Complex expression benchmark ==");
+    println!("samples: {COMPLEX_SAMPLE_COUNT}");
+    println!("float time:      {:?}", complex_float_result.duration);
+    println!("computable time: {:?}", complex_computable_result.duration);
+    println!("slowdown factor: {:.2}x", complex_slowdown);
+    println!("float value:         {}", binary_from_f64(complex_float_result.value));
+    println!("computable midpoint: {}", complex_computable_result.midpoint);
+    println!("computable width: {}", complex_computable_result.width);
+    println!("abs(float - midpoint): {}", complex_error);
+}
+
+fn run_summation_benchmark(rng: &mut StdRng) {
+    let summation_inputs: Vec<f64> = (0..SUMMATION_SAMPLE_COUNT)
+        .map(|_| rng.gen_range(-1.0e-6..1.0e-6))
+        .collect();
+    let summation_inputs_computable: Vec<Computable> = summation_inputs
+        .iter()
+        .map(|&v| Computable::constant(binary_from_f64(v)))
+        .collect();
 
     let summation_base = 2_i64.pow(30) as f64;
     let summation_float_result = summation_float(summation_base, &summation_inputs);
@@ -310,21 +379,9 @@ fn main() {
         diff.magnitude()
     };
 
-    let complex_slowdown = complex_computable_result.duration.as_secs_f64()
-        / complex_float_result.duration.as_secs_f64();
     let summation_slowdown = summation_computable_result.duration.as_secs_f64()
         / summation_float_result.duration.as_secs_f64();
 
-    println!("== Complex expression benchmark ==");
-    println!("samples: {COMPLEX_SAMPLE_COUNT}");
-    println!("float time:      {:?}", complex_float_result.duration);
-    println!("computable time: {:?}", complex_computable_result.duration);
-    println!("slowdown factor: {:.2}x", complex_slowdown);
-    println!("float value:         {}", binary_from_f64(complex_float_result.value));
-    println!("computable midpoint: {}", complex_computable_result.midpoint);
-    println!("computable width: {}", complex_computable_result.width);
-    println!("abs(float - midpoint): {}", complex_error);
-    println!();
     println!("== Summation (catastrophic) benchmark ==");
     println!("samples: {SUMMATION_SAMPLE_COUNT}");
     println!("base value: {}", binary_from_f64(summation_base));
@@ -344,8 +401,9 @@ fn main() {
     println!("  sum with base minus base (computable): {}", computable_minus_base);
     println!("  float precision loss: {}", float_base_error);
     println!("  computable precision loss: {}", computable_base_error);
+}
 
-    // === Integer Roots Benchmark ===
+fn run_integer_roots_benchmark(rng: &mut StdRng) {
     // Generate inputs: (value, root_degree) pairs
     // Use various values and root degrees (2=sqrt, 3=cbrt, 4=4th root, etc.)
     let integer_roots_inputs: Vec<(u64, u32)> = (0..INTEGER_ROOTS_SAMPLE_COUNT)
@@ -368,7 +426,6 @@ fn main() {
     let integer_roots_slowdown = integer_roots_computable_result.duration.as_secs_f64()
         / integer_roots_float_result.duration.as_secs_f64();
 
-    println!();
     println!("== Integer roots (binary search) benchmark ==");
     println!("samples: {INTEGER_ROOTS_SAMPLE_COUNT}");
     println!("epsilon: 1");
@@ -380,4 +437,59 @@ fn main() {
     println!("computable midpoint: {}", integer_roots_computable_result.midpoint);
     println!("computable width: {}", integer_roots_computable_result.width);
     println!("abs(float - midpoint): {}", integer_roots_error);
+}
+
+fn main() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    
+    // Handle help and list options
+    for arg in &args {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                print_usage();
+                return;
+            }
+            "--list" | "-l" => {
+                print_benchmark_list();
+                return;
+            }
+            _ => {}
+        }
+    }
+    
+    // Filter out options and parse benchmark selection
+    let benchmark_args: Vec<String> = args.into_iter()
+        .filter(|arg| !arg.starts_with('-'))
+        .collect();
+    
+    let selected = if benchmark_args.is_empty() {
+        // Run all benchmarks if none specified
+        (0..BENCHMARK_NAMES.len()).collect()
+    } else {
+        parse_benchmark_selection(&benchmark_args)
+    };
+    
+    if selected.is_empty() {
+        eprintln!("No valid benchmarks selected. Use --list to see available benchmarks.");
+        return;
+    }
+    
+    let mut rng = StdRng::seed_from_u64(7);
+    let mut first = true;
+    
+    for i in 0..BENCHMARK_NAMES.len() {
+        if selected.contains(&i) {
+            if !first {
+                println!();
+            }
+            first = false;
+            
+            match i {
+                0 => run_complex_benchmark(&mut rng),
+                1 => run_summation_benchmark(&mut rng),
+                2 => run_integer_roots_benchmark(&mut rng),
+                _ => unreachable!(),
+            }
+        }
+    }
 }

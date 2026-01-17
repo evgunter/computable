@@ -12,6 +12,26 @@ cargo run --features benchmarks --bin benchmarks --release
 
 The `--release` flag is important for accurate performance measurements.
 
+### Selecting Specific Benchmarks
+
+You can run specific benchmarks by name or index:
+
+```bash
+# List available benchmarks
+cargo run --features benchmarks --bin benchmarks --release -- --list
+
+# Run specific benchmarks by name
+cargo run --features benchmarks --bin benchmarks --release -- complex summation
+
+# Run specific benchmarks by index (0-based)
+cargo run --features benchmarks --bin benchmarks --release -- 0 1
+
+# Show help
+cargo run --features benchmarks --bin benchmarks --release -- --help
+```
+
+This is useful for skipping benchmarks that may hang due to known issues (e.g., the integer-roots benchmark may hit a threadpool deadlock bug).
+
 ## What's Measured
 
 The benchmark suite includes three scenarios:
