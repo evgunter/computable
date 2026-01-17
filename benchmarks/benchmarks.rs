@@ -5,7 +5,6 @@ use num_bigint::BigInt;
 use num_traits::One;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use rayon::ThreadPoolBuilder;
 
 const COMPLEX_SAMPLE_COUNT: usize = 5_000;
 const SUMMATION_SAMPLE_COUNT: usize = 200_000;
@@ -250,12 +249,6 @@ fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResu
 }
 
 fn main() {
-    // Limit threads to avoid a bug with too many threads
-    // Using 1 thread to work around concurrency issues
-    ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build_global()
-        .ok(); // Ignore error if already initialized
     let mut rng = StdRng::seed_from_u64(7);
 
     let complex_inputs: Vec<(f64, f64, f64, f64)> = (0..COMPLEX_SAMPLE_COUNT)
