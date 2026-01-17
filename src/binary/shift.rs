@@ -21,6 +21,10 @@ use num_traits::Zero;
 /// # Note
 /// Extremely large shifts will still attempt to allocate enormous values;
 /// this just keeps each individual shift within primitive bounds.
+///
+/// TODO: Find a solution for extreme exponents causing memory issues. Options include:
+/// detecting and erroring on exponents beyond a threshold, lazy/symbolic representation,
+/// or capping precision in some contexts.
 pub(crate) fn shift_mantissa_chunked<M>(mantissa: &M, shift: &BigUint, chunk_limit: &BigUint) -> M
 where
     M: Clone + ShlAssign<usize>,

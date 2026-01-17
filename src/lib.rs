@@ -465,6 +465,11 @@ impl NodeOp for MulOp {
     }
 }
 
+// TODO: Improve inv() precision strategy. Currently precision_bits starts at 0 and
+// increments by 1 on each refine_step. This is simple but potentially inefficient:
+// - For a given epsilon, we don't know how many bits are needed upfront
+// - Each step recomputes the reciprocal from scratch at the new precision
+// Consider: adaptive precision based on current bounds width, or Newton-Raphson iteration.
 struct InvOp {
     inner: Arc<Node>,
     precision_bits: RwLock<BigInt>,
@@ -1022,6 +1027,11 @@ impl NodeOp for SinOp {
 
 /// Node in the computation graph. The op stores structure/state; the cache stores
 /// the last bounds computed for this node.
+///
+/// NOTE: The bounds_cache is not automatically invalidated when children are refined.
+/// Updates are explicitly propagated via apply_update during refinement. If get_bounds()
+/// is called between refinement steps (outside of refine_to), it may return stale cached
+/// values. Consider whether this is acceptable for your use case.
 struct Node {
     id: usize,
     op: Arc<dyn NodeOp>,
@@ -1167,6 +1177,22 @@ impl RefinementGraph {
         Ok(graph)
     }
 
+    // TODO: The README describes an async/event-driven refinement model where:
+    // - Branches refine continuously and publish updates
+    // - Other nodes "subscribe" to updates and recompute live
+    // - Multiplication "receives refinements of its left branch and is listening for refinements of b"
+    //
+    // However, this implementation uses SYNCHRONOUS LOCK-STEP refinement:
+    // 1. Send Step command to ALL refiners
+    // 2. Wait for ALL refiners to complete one step
+    // 3. Collect and propagate ALL updates
+    // 4. Check if precision met
+    // 5. Repeat
+    //
+    // There is no subscription/listener pattern - all refiners do exactly one step in lockstep.
+    // The README's detailed example (sqrt(a + ab)) describes behavior that doesn't match this
+    // implementation. Either the README should be updated to reflect the actual synchronous
+    // model, or the implementation should be changed to the async model described.
     fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         &self,
         epsilon: &UBinary,
