@@ -115,13 +115,30 @@ impl XBinary {
     }
 
     /// Subtraction of extended binary numbers.
+    ///
+    /// # Panics
+    /// Panics if the result is mathematically indeterminate (infinity - infinity).
+    /// Use `try_sub` for a fallible version.
     pub fn sub(&self, other: &Self) -> Self {
+        match self.try_sub(other) {
+            Ok(result) => result,
+            Err(XBinaryError::IndeterminateForm) => {
+                panic!("indeterminate form: {self} - {other} is undefined")
+            }
+            Err(e) => panic!("unexpected error in XBinary::sub: {e}"),
+        }
+    }
+
+    /// Fallible subtraction of extended binary numbers.
+    ///
+    /// Returns an error for indeterminate forms like infinity - infinity.
+    pub fn try_sub(&self, other: &Self) -> Result<Self, XBinaryError> {
         use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
-            (PosInf, PosInf) | (NegInf, NegInf) => Finite(Binary::zero()),
-            (PosInf, _) | (Finite(_), NegInf) => PosInf,
-            (NegInf, _) | (Finite(_), PosInf) => NegInf,
-            (Finite(lhs), Finite(rhs)) => Finite(lhs.sub(rhs)),
+            (PosInf, PosInf) | (NegInf, NegInf) => Err(XBinaryError::IndeterminateForm),
+            (PosInf, _) | (Finite(_), NegInf) => Ok(PosInf),
+            (NegInf, _) | (Finite(_), PosInf) => Ok(NegInf),
+            (Finite(lhs), Finite(rhs)) => Ok(Finite(lhs.sub(rhs))),
         }
     }
 
@@ -282,9 +299,32 @@ mod tests {
     }
 
     #[test]
-    fn xbinary_sub_same_infinity_is_zero() {
-        assert_eq!(XBinary::PosInf - XBinary::PosInf, XBinary::zero());
-        assert_eq!(XBinary::NegInf - XBinary::NegInf, XBinary::zero());
+    fn xbinary_sub_same_infinity_is_indeterminate() {
+        use crate::binary::XBinaryError;
+        assert_eq!(
+            XBinary::PosInf.try_sub(&XBinary::PosInf),
+            Err(XBinaryError::IndeterminateForm)
+        );
+        assert_eq!(
+            XBinary::NegInf.try_sub(&XBinary::NegInf),
+            Err(XBinaryError::IndeterminateForm)
+        );
+    }
+
+    #[test]
+    fn xbinary_sub_finite_works() {
+        let one = xbin(1, 0);
+        let two = xbin(1, 1);
+        assert_eq!(two - one, xbin(1, 0));
+    }
+
+    #[test]
+    fn xbinary_sub_infinity_finite_works() {
+        let one = xbin(1, 0);
+        assert_eq!(XBinary::PosInf - one.clone(), XBinary::PosInf);
+        assert_eq!(XBinary::NegInf - one.clone(), XBinary::NegInf);
+        assert_eq!(one.clone() - XBinary::PosInf, XBinary::NegInf);
+        assert_eq!(one - XBinary::NegInf, XBinary::PosInf);
     }
 
     #[test]

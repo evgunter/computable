@@ -11,6 +11,7 @@ use num_traits::Zero;
 
 use crate::ordered_pair::{AbsDistance, AddWidth, SubWidth, Unsigned};
 
+use super::binary_impl::Binary;
 use super::error::BinaryError;
 use super::ubinary::UBinary;
 use super::xbinary::XBinary;
@@ -190,7 +191,20 @@ impl AddWidth<XBinary, UXBinary> for XBinary {
 
 impl SubWidth<XBinary, UXBinary> for XBinary {
     fn sub_width(self, rhs: UXBinary) -> Self {
-        self - XBinary::from(rhs)
+        use XBinary::{Finite, NegInf, PosInf};
+        use UXBinary::{Finite as UFinite, PosInf as UPosInf};
+        match (self, rhs) {
+            // Subtracting finite width from finite value
+            (Finite(x), UFinite(w)) => Finite(Binary::sub(&x, &w.to_binary())),
+            // Subtracting finite width from infinity preserves infinity
+            (PosInf, UFinite(_)) => PosInf,
+            (NegInf, UFinite(_)) => NegInf,
+            // Subtracting infinite width: PosInf - PosInf and Finite - PosInf are indeterminate/NegInf
+            // For SubWidth semantics (shrinking interval), treat as going to negative bound
+            (PosInf, UPosInf) => NegInf, // shrinking from +inf by infinite width
+            (Finite(_), UPosInf) => NegInf,
+            (NegInf, UPosInf) => NegInf,
+        }
     }
 }
 

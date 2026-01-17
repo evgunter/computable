@@ -33,6 +33,8 @@ impl std::error::Error for BinaryError {}
 pub enum XBinaryError {
     /// Cannot convert NaN to XBinary.
     Nan,
+    /// Indeterminate form (e.g., infinity - infinity).
+    IndeterminateForm,
     /// An underlying binary error occurred.
     Binary(BinaryError),
 }
@@ -41,6 +43,7 @@ impl fmt::Display for XBinaryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Nan => write!(f, "cannot convert NaN to XBinary"),
+            Self::IndeterminateForm => write!(f, "indeterminate form (e.g., infinity - infinity)"),
             Self::Binary(err) => write!(f, "{err}"),
         }
     }
@@ -73,6 +76,10 @@ mod tests {
     #[test]
     fn xbinary_error_display() {
         assert_eq!(XBinaryError::Nan.to_string(), "cannot convert NaN to XBinary");
+        assert_eq!(
+            XBinaryError::IndeterminateForm.to_string(),
+            "indeterminate form (e.g., infinity - infinity)"
+        );
         assert_eq!(
             XBinaryError::Binary(BinaryError::ReciprocalOverflow).to_string(),
             "exponent overflow during reciprocal"
