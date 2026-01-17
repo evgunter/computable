@@ -478,7 +478,8 @@ impl NodeOp for InvOp {
         // Double precision each step for O(log n) convergence.
         // If precision is 0, start with initial value to bootstrap.
         // Once the TODO above is implemented (reusing precision calculation state),
-        // this should be changed back to linear increment to avoid recomputation.
+        // this should be changed back to linear increment to avoid unnecessary
+        // computation to higher precision than requested.
         if precision.is_zero() {
             *precision = BigInt::from(INV_INITIAL_PRECISION_BITS);
         } else {
