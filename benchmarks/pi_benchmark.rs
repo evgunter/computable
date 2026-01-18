@@ -35,6 +35,7 @@ fn midpoint(bounds: &Bounds) -> Binary {
     sum.mul(&half)
 }
 
+// TODO: remove this and exclusively convert f64 to Binary for comparisons
 fn binary_to_f64_approx(b: &Binary) -> f64 {
     // Rough approximation for display purposes only
     let mantissa_f64 = b.mantissa().to_string().parse::<f64>().unwrap_or(0.0);
@@ -73,6 +74,7 @@ fn benchmark_pi_refinement() {
         }
 
         let avg_duration = total_duration / TIMING_ITERATIONS;
+        // TODO: can we avoid using unwrap?
         let bounds = final_bounds.unwrap();
 
         let lower = finite_binary(bounds.small());

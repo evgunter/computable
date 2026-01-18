@@ -29,6 +29,7 @@ struct IntegerRootsComputableResult {
 /// Returns a Computable that refines by bisection.
 fn nth_root_computable(value: u64, n: u32) -> Computable {
     let value_binary = Binary::new(BigInt::from(value), BigInt::from(0));
+    // TODO: see if we can take the input as NonZeroU32 directly so we don't need to unwrap
     Computable::constant(value_binary).nth_root(NonZeroU32::new(n).unwrap())
 }
 
