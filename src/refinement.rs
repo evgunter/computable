@@ -281,12 +281,10 @@ mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use crate::binary::{Binary, XBinary};
+    use crate::binary::XBinary;
     use crate::computable::Computable;
     use crate::error::ComputableError;
-    use crate::test_utils::{bin, ubin, xbin, unwrap_finite};
-    use num_bigint::BigInt;
-    use num_traits::One;
+    use crate::test_utils::{bin, ubin, xbin, unwrap_finite, interval_midpoint_computable, midpoint_between, interval_refine};
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
@@ -297,32 +295,9 @@ mod tests {
         state.clone()
     }
 
-    fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
-        let mid_sum = unwrap_finite(lower).add(&unwrap_finite(upper));
-        let exponent = mid_sum.exponent() - BigInt::one();
-        Binary::new(mid_sum.mantissa().clone(), exponent)
-    }
-
-    fn interval_refine(state: IntervalState) -> IntervalState {
-        let midpoint = midpoint_between(state.small(), &state.large());
-        Bounds::new(
-            XBinary::Finite(midpoint.clone()),
-            XBinary::Finite(midpoint),
-        )
-    }
-
     fn interval_refine_strict(state: IntervalState) -> IntervalState {
         let midpoint = midpoint_between(state.small(), &state.large());
         Bounds::new(state.small().clone(), XBinary::Finite(midpoint))
-    }
-
-    fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
-        let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
-        Computable::new(
-            interval_state,
-            |inner_state| Ok(interval_bounds(inner_state)),
-            interval_refine,
-        )
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {

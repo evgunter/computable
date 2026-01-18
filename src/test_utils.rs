@@ -67,3 +67,45 @@ pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
         }
     }
 }
+
+use crate::binary::Bounds;
+use crate::computable::Computable;
+use num_traits::One;
+
+/// Computes the midpoint between two finite XBinary values.
+///
+/// # Panics
+/// Panics if either input is infinite.
+pub fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
+    let mid_sum = unwrap_finite(lower).add(&unwrap_finite(upper));
+    let exponent = mid_sum.exponent() - BigInt::one();
+    Binary::new(mid_sum.mantissa().clone(), exponent)
+}
+
+/// Refines bounds by collapsing them to their midpoint.
+pub fn interval_refine(state: Bounds) -> Bounds {
+    let midpoint = midpoint_between(state.small(), &state.large());
+    Bounds::new(
+        XBinary::Finite(midpoint.clone()),
+        XBinary::Finite(midpoint),
+    )
+}
+
+/// Creates a Computable that represents an interval [lower, upper] and refines to its midpoint.
+///
+/// This is useful for testing operations on Computables with interval arithmetic,
+/// where we want to verify how operations combine and propagate bounds.
+///
+/// # Examples
+/// ```ignore
+/// let interval = interval_midpoint_computable(1, 3); // [1, 3], refines to midpoint 2
+/// let bounds = interval.bounds().expect("bounds should succeed");
+/// ```
+pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
+    let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
+    Computable::new(
+        interval_state,
+        |inner_state| Ok(inner_state.clone()),
+        interval_refine,
+    )
+}

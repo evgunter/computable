@@ -113,41 +113,8 @@ impl NodeOp for MulOp {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use crate::binary::{Binary, XBinary};
-    use crate::computable::Computable;
     use crate::binary::Bounds;
-    use crate::test_utils::xbin;
-    use num_bigint::BigInt;
-    use num_traits::One;
-
-    fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
-        fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
-            let unwrap = |input: &XBinary| -> Binary {
-                match input {
-                    XBinary::Finite(value) => value.clone(),
-                    _ => panic!("expected finite"),
-                }
-            };
-            let mid_sum = unwrap(lower).add(&unwrap(upper));
-            let exponent = mid_sum.exponent() - BigInt::one();
-            Binary::new(mid_sum.mantissa().clone(), exponent)
-        }
-
-        fn interval_refine(state: Bounds) -> Bounds {
-            let midpoint = midpoint_between(state.small(), &state.large());
-            Bounds::new(
-                XBinary::Finite(midpoint.clone()),
-                XBinary::Finite(midpoint),
-            )
-        }
-
-        let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
-        Computable::new(
-            interval_state,
-            |inner_state| Ok(inner_state.clone()),
-            interval_refine,
-        )
-    }
+    use crate::test_utils::{xbin, interval_midpoint_computable};
 
     #[test]
     fn add_combines_bounds() {
