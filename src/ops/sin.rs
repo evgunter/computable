@@ -373,8 +373,9 @@ fn reduce_to_half_pi_range_interval(
         // that doesn't contain pi/2
 
         // Conservative: compute sin at both adjusted endpoints and take min
-        let (sin_at_lo, _) = compute_sin_bounds_for_point(&reduced.lo, 15);
-        let (sin_at_hi, _) = compute_sin_bounds_for_point(&reduced.hi, 15);
+        // Use interval-based pi for proper error tracking
+        let (sin_at_lo, _) = compute_sin_bounds_for_point_with_pi(&reduced.lo, 15, pi, half_pi);
+        let (sin_at_hi, _) = compute_sin_bounds_for_point_with_pi(&reduced.hi, 15, pi, half_pi);
         let sin_min = if sin_at_lo < sin_at_hi {
             sin_at_lo
         } else {
@@ -388,8 +389,8 @@ fn reduce_to_half_pi_range_interval(
     // reduced.lo < neg_half_pi.hi AND reduced.hi > neg_half_pi.lo
     if reduced.lo < neg_half_pi.hi && reduced.hi > neg_half_pi.lo {
         // The interval contains -pi/2 where sin = -1
-        let (_, sin_at_lo) = compute_sin_bounds_for_point(&reduced.lo, 15);
-        let (_, sin_at_hi) = compute_sin_bounds_for_point(&reduced.hi, 15);
+        let (_, sin_at_lo) = compute_sin_bounds_for_point_with_pi(&reduced.lo, 15, pi, half_pi);
+        let (_, sin_at_hi) = compute_sin_bounds_for_point_with_pi(&reduced.hi, 15, pi, half_pi);
         let sin_max = if sin_at_lo > sin_at_hi {
             sin_at_lo
         } else {
@@ -413,9 +414,9 @@ fn reduce_to_half_pi_range_interval(
         return ReductionResult::ContainsBoth;
     }
 
-    // Otherwise compute bounds at endpoints
-    let (sin_lo_1, sin_hi_1) = compute_sin_bounds_for_point(&reduced.lo, 15);
-    let (sin_lo_2, sin_hi_2) = compute_sin_bounds_for_point(&reduced.hi, 15);
+    // Otherwise compute bounds at endpoints using interval-based pi
+    let (sin_lo_1, sin_hi_1) = compute_sin_bounds_for_point_with_pi(&reduced.lo, 15, pi, half_pi);
+    let (sin_lo_2, sin_hi_2) = compute_sin_bounds_for_point_with_pi(&reduced.hi, 15, pi, half_pi);
 
     let overall_lo = if sin_lo_1 < sin_lo_2 {
         sin_lo_1
@@ -434,38 +435,45 @@ fn reduce_to_half_pi_range_interval(
     }
 }
 
-/// Computes sin bounds for a point (with Taylor series).
-fn compute_sin_bounds_for_point(x: &Binary, n: usize) -> (Binary, Binary) {
-    // Range reduce to [-pi/2, pi/2] using a simple approximation
-    // This is for helper computations, not the main bounds
-    let pi_approx = Binary::new(
-        BigInt::parse_bytes(b"7244019458077122843", 10).unwrap_or_else(|| BigInt::from(3)),
-        BigInt::from(-61),
-    );
-    let two_pi_approx = Binary::new(pi_approx.mantissa().clone(), pi_approx.exponent() + BigInt::one());
-    let half_pi_approx = Binary::new(pi_approx.mantissa().clone(), pi_approx.exponent() - BigInt::one());
+/// Computes sin bounds for a point using interval-based pi for provably correct bounds.
+///
+/// This function uses the same structure as the original but with interval-based pi
+/// for proper error tracking. The point x is assumed to already be reduced to
+/// approximately [-pi, pi].
+fn compute_sin_bounds_for_point_with_pi(
+    x: &Binary,
+    n: usize,
+    pi: &Interval,
+    half_pi: &Interval,
+) -> (Binary, Binary) {
+    // TODO: it's suspicious that this uses midpoints rather than bounds
+    // Use interval midpoints for comparisons (same approach as original but with
+    // interval-based pi instead of hardcoded constant)
+    let half_pi_mid = half_pi.midpoint();
+    let neg_half_pi_mid = half_pi_mid.neg();
 
-    let mut reduced = x.clone();
-    let neg_half_pi = half_pi_approx.neg();
+    // For the transformation, we use the full interval to get proper bounds
+    let x_interval = Interval::point(x.clone());
 
-    // Reduce to [-pi, pi]
-    if reduced > pi_approx || reduced < pi_approx.neg() {
-        let k = compute_reduction_factor(&reduced, &two_pi_approx);
-        let k_two_pi = multiply_by_integer(&two_pi_approx, &k);
-        reduced = reduced.sub(&k_two_pi);
-    }
-
-    // Reduce to [-pi/2, pi/2]
+    // Check which region x is in and transform accordingly
     let mut sign_flip = false;
-    if reduced > half_pi_approx {
-        reduced = pi_approx.sub(&reduced);
-    } else if reduced < neg_half_pi {
-        reduced = pi_approx.add(&reduced);
-        sign_flip = true;
-    }
 
-    let truncated = truncate_precision(&reduced, 64);
-    let (sin_lo, sin_hi) = taylor_sin_bounds(&truncated, n);
+    let reduced_interval = if x > &half_pi_mid {
+        // x is in (pi/2, pi], transform: sin(x) = sin(pi - x)
+        // Using interval: [pi_lo - x, pi_hi - x]
+        pi.sub(&x_interval)
+    } else if x < &neg_half_pi_mid {
+        // x is in [-pi, -pi/2), transform: sin(x) = -sin(pi + x)
+        // Using interval: [pi_lo + x, pi_hi + x]
+        sign_flip = true;
+        pi.add(&x_interval)
+    } else {
+        // x is in [-pi/2, pi/2], use directly as point interval
+        x_interval
+    };
+
+    // Compute sin on the (potentially interval) reduced value
+    let (sin_lo, sin_hi) = compute_sin_on_monotonic_interval(&reduced_interval, n);
 
     if sign_flip {
         (sin_hi.neg(), sin_lo.neg())
@@ -474,13 +482,24 @@ fn compute_sin_bounds_for_point(x: &Binary, n: usize) -> (Binary, Binary) {
     }
 }
 
+
 /// Computes k = round(x / period).
 fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
-    let precision_bits = 64i64;
     let mx = x.mantissa();
     let ex = x.exponent();
     let mp = period.mantissa();
     let ep = period.exponent();
+
+    // We need to compute: k = (mx * 2^ex) / (mp * 2^ep) = (mx / mp) * 2^(ex - ep)
+    //
+    // To avoid losing precision, we shift mx up by enough bits so that
+    // mx << shift_bits > mp, ensuring a non-zero quotient.
+    // The shift should be at least mp.bits() - mx.bits() + some_precision.
+    let mx_bits = mx.magnitude().bits() as i64;
+    let mp_bits = mp.magnitude().bits() as i64;
+
+    // Shift by enough bits to get a meaningful quotient, plus extra precision for rounding
+    let precision_bits = (mp_bits - mx_bits + 64).max(64);
 
     let shifted_mx = mx << precision_bits as usize;
     let quotient = &shifted_mx / mp;
@@ -504,12 +523,6 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
         }
     }
 }
-
-/// Multiplies a Binary by a BigInt integer.
-fn multiply_by_integer(b: &Binary, k: &BigInt) -> Binary {
-    Binary::new(b.mantissa() * k, b.exponent().clone())
-}
-
 /// Truncates a Binary to at most `precision_bits` of mantissa.
 fn truncate_precision(x: &Binary, precision_bits: usize) -> Binary {
     let mantissa = x.mantissa();

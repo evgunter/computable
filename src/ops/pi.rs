@@ -30,6 +30,7 @@ const INITIAL_PI_TERMS: usize = 10;
 ///
 /// Uses Machin's formula: pi/4 = 4*arctan(1/5) - arctan(1/239)
 ///
+/// TODO: why is this ignored as a doctest?
 /// # Example
 /// ```ignore
 /// let pi_val = pi();
