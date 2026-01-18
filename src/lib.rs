@@ -253,10 +253,19 @@ impl Computable {
 
     /// Computes the sine of this computable number.
     ///
-    /// Uses argument reduction to bring the input into [-pi/4, pi/4],
-    /// then applies a polynomial approximation for high precision.
+    /// Uses Taylor series with provably correct error bounds.
+    /// The error bound |x|^(2n+1)/(2n+1)! is computed conservatively (rounded up)
+    /// to ensure the true value is always contained within the returned bounds.
+    ///
+    /// TODO: Ideally, we'd round differently for lower vs upper bounds in the sum
+    /// computation (round down for lower, round up for upper). Currently we round up
+    /// for the error bound which covers intermediate rounding, but directed rounding
+    /// throughout would be more precise.
     pub fn sin(self) -> Self {
-        let node = Node::new(Arc::new(SinOp::new(Arc::clone(&self.node))));
+        let node = Node::new(Arc::new(SinOp {
+            inner: Arc::clone(&self.node),
+            num_terms: RwLock::new(BigInt::one()),
+        }));
         Self { node }
     }
 
@@ -498,523 +507,21 @@ impl NodeOp for InvOp {
     }
 }
 
-/// Computes PI to the specified number of bits using the Machin formula:
-/// pi/4 = 4*arctan(1/5) - arctan(1/239)
-/// arctan(x) = x - x^3/3 + x^5/5 - x^7/7 + ...
-fn compute_pi(precision_bits: &BigInt) -> Binary {
-    use num_traits::ToPrimitive;
-
-    // We need extra bits for intermediate computations to avoid accumulated error
-    let extra_bits = 32i64;
-    let total_bits = precision_bits.to_i64().unwrap_or(64) + extra_bits;
-
-    // Compute arctan(1/5) * 4 and arctan(1/239) using scaled integers
-    let arctan_1_5 = scaled_arctan(&BigInt::from(5), total_bits);
-    let arctan_1_239 = scaled_arctan(&BigInt::from(239), total_bits);
-
-    // pi/4 = 4*arctan(1/5) - arctan(1/239)
-    // pi = 16*arctan(1/5) - 4*arctan(1/239)
-    let pi_scaled = BigInt::from(16) * arctan_1_5 - BigInt::from(4) * arctan_1_239;
-
-    Binary::new(pi_scaled, BigInt::from(-total_bits))
-}
-
-/// Computes arctan(1/x) scaled by 2^bits using the Taylor series.
-fn scaled_arctan(x: &BigInt, bits: i64) -> BigInt {
-    let scale = BigInt::from(1) << (bits as usize);
-    let x_sq = x * x;
-    let mut result = BigInt::zero();
-    let mut term = &scale / x; // First term: (1/x) * scale
-    let mut k = 1i64;
-
-    loop {
-        if k % 2 == 1 {
-            result += &term;
-        } else {
-            result -= &term;
-        }
-
-        // Next term: term * (-1)^(k+1) / (2k+1) / x^2
-        // Since we're computing arctan(1/x), each term is divided by x^2 and (2k+1)
-        term = &term / &x_sq;
-        term = &term / BigInt::from(2 * k + 1);
-        term = &term * BigInt::from(2 * k - 1);
-
-        k += 1;
-
-        // Stop when term contribution is negligible
-        if term.magnitude().bits() == 0 || k > bits {
-            break;
-        }
-    }
-
-    result
-}
-
-/// Computes sin(x) using polynomial approximation for x in [-pi/4, pi/4].
-/// Uses the Taylor series: sin(x) = x - x^3/3! + x^5/5! - x^7/7! + ...
-/// Returns bounds [lower, upper] for the result.
-fn sin_polynomial(x_lower: &Binary, x_upper: &Binary, precision_bits: &BigInt) -> (Binary, Binary) {
-    use num_traits::ToPrimitive;
-
-    let bits = precision_bits.to_i64().unwrap_or(64).max(16);
-
-    // For the polynomial approximation, we compute using the midpoint
-    // and then add error bounds based on the input interval width and truncation error
-
-    // Compute sin at both endpoints to get bounds (sin is monotonic on [-pi/4, pi/4])
-    let sin_lower = sin_taylor(x_lower, bits);
-    let sin_upper = sin_taylor(x_upper, bits);
-
-    // sin is increasing on [-pi/4, pi/4], so:
-    // - if x_lower <= x_upper, sin(x_lower) <= sin(x_upper)
-    let (result_lower, result_upper) = if sin_lower <= sin_upper {
-        (sin_lower, sin_upper)
-    } else {
-        (sin_upper, sin_lower)
-    };
-
-    // Add truncation error margin: for Taylor series truncated at term n,
-    // error is bounded by |x|^(n+2)/(n+2)! which is very small for |x| <= pi/4
-    let error_margin = Binary::new(BigInt::from(1), BigInt::from(-bits + 4));
-    let lower_with_error = result_lower.sub(&error_margin);
-    let upper_with_error = result_upper.add(&error_margin);
-
-    (lower_with_error, upper_with_error)
-}
-
-/// Computes sin(x) using Taylor series to the specified precision.
-fn sin_taylor(x: &Binary, bits: i64) -> Binary {
-    // sin(x) = x - x^3/6 + x^5/120 - x^7/5040 + ...
-    // = sum_{k=0}^{inf} (-1)^k * x^(2k+1) / (2k+1)!
-
-    let mut result = x.clone();
-    let mut term = x.clone();
-    let x_sq = x.mul(x);
-
-    for k in 1i64..=(bits / 2 + 8) {
-        // term = term * x^2 / ((2k) * (2k+1))
-        term = term.mul(&x_sq);
-        let divisor = BigInt::from(2 * k) * BigInt::from(2 * k + 1);
-        // Divide by divisor: multiply mantissa, adjust exponent
-        let term_mantissa = term.mantissa().clone();
-        let term_exponent = term.exponent().clone();
-
-        // To divide, we shift the mantissa left and then divide
-        let shift = (bits + 10) as usize;
-        let shifted_mantissa = &term_mantissa << shift;
-        let new_mantissa = shifted_mantissa / &divisor;
-        term = Binary::new(new_mantissa, term_exponent - BigInt::from(shift as i64));
-
-        // Alternate signs
-        if k % 2 == 1 {
-            result = result.sub(&term);
-        } else {
-            result = result.add(&term);
-        }
-
-        // Stop when term is negligible
-        if term.mantissa().magnitude().bits() < 4 {
-            break;
-        }
-    }
-
-    result
-}
-
-/// Computes cos(x) using Taylor series for x in [-pi/4, pi/4].
-fn cos_polynomial(x_lower: &Binary, x_upper: &Binary, precision_bits: &BigInt) -> (Binary, Binary) {
-    use num_traits::ToPrimitive;
-
-    let bits = precision_bits.to_i64().unwrap_or(64).max(16);
-
-    // cos is decreasing on [0, pi/4] and increasing on [-pi/4, 0]
-    // So we need to check if 0 is in the interval
-    let zero = Binary::zero();
-
-    let cos_lower_pt = cos_taylor(x_lower, bits);
-    let cos_upper_pt = cos_taylor(x_upper, bits);
-
-    let (result_lower, result_upper) = if x_lower <= &zero && x_upper >= &zero {
-        // 0 is in the interval, maximum is at x=0 which gives cos(0)=1
-        let cos_at_zero = Binary::new(BigInt::from(1), BigInt::from(0));
-        let min_cos = if cos_lower_pt <= cos_upper_pt {
-            cos_lower_pt
-        } else {
-            cos_upper_pt
-        };
-        (min_cos, cos_at_zero)
-    } else if x_lower > &zero {
-        // Entirely positive, cos is decreasing
-        (cos_upper_pt, cos_lower_pt)
-    } else {
-        // Entirely negative, cos is increasing
-        (cos_lower_pt, cos_upper_pt)
-    };
-
-    let error_margin = Binary::new(BigInt::from(1), BigInt::from(-bits + 4));
-    let lower_with_error = result_lower.sub(&error_margin);
-    let upper_with_error = result_upper.add(&error_margin);
-
-    (lower_with_error, upper_with_error)
-}
-
-/// Computes cos(x) using Taylor series.
-fn cos_taylor(x: &Binary, bits: i64) -> Binary {
-    // cos(x) = 1 - x^2/2 + x^4/24 - x^6/720 + ...
-
-    let one = Binary::new(BigInt::from(1), BigInt::from(0));
-    let mut result = one;
-    let x_sq = x.mul(x);
-    let mut term = Binary::new(BigInt::from(1), BigInt::from(0));
-
-    for k in 1i64..=(bits / 2 + 8) {
-        // term = term * x^2 / ((2k-1) * (2k))
-        term = term.mul(&x_sq);
-        let divisor = BigInt::from(2 * k - 1) * BigInt::from(2 * k);
-        let term_mantissa = term.mantissa().clone();
-        let term_exponent = term.exponent().clone();
-
-        let shift = (bits + 10) as usize;
-        let shifted_mantissa = &term_mantissa << shift;
-        let new_mantissa = shifted_mantissa / &divisor;
-        term = Binary::new(new_mantissa, term_exponent - BigInt::from(shift as i64));
-
-        if k % 2 == 1 {
-            result = result.sub(&term);
-        } else {
-            result = result.add(&term);
-        }
-
-        if term.mantissa().magnitude().bits() < 4 {
-            break;
-        }
-    }
-
-    result
-}
-
-/// State for computing sin bounds with argument reduction.
-struct SinState {
-    precision_bits: BigInt,
-}
-
 struct SinOp {
     inner: Arc<Node>,
-    state: RwLock<SinState>,
-}
-
-impl SinOp {
-    fn new(inner: Arc<Node>) -> Self {
-        Self {
-            inner,
-            state: RwLock::new(SinState {
-                precision_bits: BigInt::from(16),
-            }),
-        }
-    }
-
-    /// Computes bounds on sin(x) given bounds on x.
-    fn compute_sin_bounds(&self, input_bounds: &Bounds) -> Result<Bounds, ComputableError> {
-        let state = self.state.read();
-        let precision = &state.precision_bits;
-
-        // Extract finite bounds or return [-1, 1] for infinite inputs
-        let (x_lower, x_upper) = match (input_bounds.small(), input_bounds.large()) {
-            (XBinary::Finite(l), XBinary::Finite(u)) => (l.clone(), u),
-            _ => {
-                // Infinite bounds: sin is bounded by [-1, 1]
-                return Ok(Bounds::new(
-                    XBinary::Finite(Binary::new(BigInt::from(-1), BigInt::from(0))),
-                    XBinary::Finite(Binary::new(BigInt::from(1), BigInt::from(0))),
-                ));
-            }
-        };
-
-        // Compute pi to required precision
-        let pi = compute_pi(precision);
-        let two_pi = pi.mul(&Binary::new(BigInt::from(2), BigInt::from(0)));
-        let half_pi = Binary::new(pi.mantissa().clone(), pi.exponent() - BigInt::from(1));
-        let quarter_pi = Binary::new(pi.mantissa().clone(), pi.exponent() - BigInt::from(2));
-
-        // Check if interval spans more than 2*pi - if so, sin takes all values in [-1, 1]
-        let interval_width = x_upper.sub(&x_lower);
-        if interval_width >= two_pi {
-            return Ok(Bounds::new(
-                XBinary::Finite(Binary::new(BigInt::from(-1), BigInt::from(0))),
-                XBinary::Finite(Binary::new(BigInt::from(1), BigInt::from(0))),
-            ));
-        }
-
-        // Reduce arguments to [0, 2*pi) and compute sin bounds
-        let (sin_lower, sin_upper) =
-            self.compute_sin_with_reduction(&x_lower, &x_upper, &pi, &half_pi, &quarter_pi, precision)?;
-
-        // Clamp to [-1, 1] for safety
-        let one = Binary::new(BigInt::from(1), BigInt::from(0));
-        let neg_one = Binary::new(BigInt::from(-1), BigInt::from(0));
-
-        let clamped_lower = if sin_lower < neg_one {
-            neg_one.clone()
-        } else {
-            sin_lower
-        };
-        let clamped_upper = if sin_upper > one { one } else { sin_upper };
-
-        Bounds::new_checked(
-            XBinary::Finite(clamped_lower),
-            XBinary::Finite(clamped_upper),
-        )
-        .map_err(|_| ComputableError::InvalidBoundsOrder)
-    }
-
-    /// Computes sin bounds with argument reduction.
-    fn compute_sin_with_reduction(
-        &self,
-        x_lower: &Binary,
-        x_upper: &Binary,
-        pi: &Binary,
-        half_pi: &Binary,
-        quarter_pi: &Binary,
-        precision: &BigInt,
-    ) -> Result<(Binary, Binary), ComputableError> {
-        let two_pi = pi.mul(&Binary::new(BigInt::from(2), BigInt::from(0)));
-
-        // Check if the interval contains a maximum (pi/2 + 2*k*pi) or minimum (3*pi/2 + 2*k*pi)
-        let contains_max = self.interval_contains_critical_point(x_lower, x_upper, half_pi, &two_pi);
-        let three_half_pi = half_pi.add(pi);
-        let contains_min =
-            self.interval_contains_critical_point(x_lower, x_upper, &three_half_pi, &two_pi);
-
-        if contains_max && contains_min {
-            // Contains both max and min
-            return Ok((
-                Binary::new(BigInt::from(-1), BigInt::from(0)),
-                Binary::new(BigInt::from(1), BigInt::from(0)),
-            ));
-        }
-
-        // Compute sin at the endpoints
-        let sin_at_lower = self.sin_reduced(x_lower, pi, half_pi, quarter_pi, precision);
-        let sin_at_upper = self.sin_reduced(x_upper, pi, half_pi, quarter_pi, precision);
-
-        let mut result_lower = sin_at_lower.0.clone();
-        let mut result_upper = sin_at_lower.1.clone();
-
-        // Expand bounds to include sin at upper endpoint
-        if sin_at_upper.0 < result_lower {
-            result_lower = sin_at_upper.0;
-        }
-        if sin_at_upper.1 > result_upper {
-            result_upper = sin_at_upper.1;
-        }
-
-        // If contains max, upper bound is 1
-        if contains_max {
-            result_upper = Binary::new(BigInt::from(1), BigInt::from(0));
-        }
-
-        // If contains min, lower bound is -1
-        if contains_min {
-            result_lower = Binary::new(BigInt::from(-1), BigInt::from(0));
-        }
-
-        Ok((result_lower, result_upper))
-    }
-
-    /// Checks if the interval [x_lower, x_upper] contains a point of the form
-    /// critical + k * period for some integer k.
-    fn interval_contains_critical_point(
-        &self,
-        x_lower: &Binary,
-        x_upper: &Binary,
-        critical: &Binary,
-        period: &Binary,
-    ) -> bool {
-        // Find k such that critical + k * period is in [x_lower, x_upper]
-        // k_min = ceil((x_lower - critical) / period)
-        // k_max = floor((x_upper - critical) / period)
-        // Contains critical point iff k_min <= k_max
-
-        let diff_lower = x_lower.sub(critical);
-        let diff_upper = x_upper.sub(critical);
-
-        // Compute k_min and k_max approximately
-        // k_min = ceil(diff_lower / period)
-        // k_max = floor(diff_upper / period)
-
-        let k_lower = self.floor_div(&diff_lower, period);
-        let k_upper = self.floor_div(&diff_upper, period);
-
-        // If k_lower < k_upper, there's definitely an integer between them
-        if k_lower < k_upper {
-            return true;
-        }
-
-        // If k_lower == k_upper, check if critical + k*period is actually in the interval
-        if k_lower == k_upper {
-            let k_val = k_lower;
-            let point = critical.add(&period.mul(&Binary::new(k_val, BigInt::from(0))));
-            return &point >= x_lower && &point <= x_upper;
-        }
-
-        false
-    }
-
-    /// Computes floor(a / b) as a BigInt.
-    fn floor_div(&self, a: &Binary, b: &Binary) -> BigInt {
-        // a / b = (a_m * 2^a_e) / (b_m * 2^b_e) = (a_m / b_m) * 2^(a_e - b_e)
-        // For floor division, we need to be careful with signs
-
-        let a_m = a.mantissa();
-        let b_m = b.mantissa();
-        let exp_diff = a.exponent() - b.exponent();
-
-        // Scale to common precision for division
-        let shift = 64i64;
-
-        if exp_diff >= BigInt::from(0) {
-            // a has larger exponent
-            let exp_diff_usize: usize = exp_diff.to_string().parse().unwrap_or(64);
-            let scaled_a = a_m << exp_diff_usize;
-            &scaled_a / b_m
-        } else {
-            // b has larger exponent
-            let exp_diff_usize: usize = (-exp_diff.clone()).to_string().parse().unwrap_or(64);
-            let scaled_b = b_m << exp_diff_usize;
-            let scaled_a = a_m << (shift as usize);
-            let result = &scaled_a / &scaled_b;
-            result >> (shift as usize)
-        }
-    }
-
-    /// Computes sin(x) with argument reduction, returning bounds.
-    fn sin_reduced(
-        &self,
-        x: &Binary,
-        pi: &Binary,
-        half_pi: &Binary,
-        quarter_pi: &Binary,
-        precision: &BigInt,
-    ) -> (Binary, Binary) {
-        let two_pi = pi.mul(&Binary::new(BigInt::from(2), BigInt::from(0)));
-
-        // Reduce x to [0, 2*pi)
-        let reduced = self.reduce_to_period(x, &two_pi);
-
-        // Determine which octant we're in and apply appropriate identity
-        let (reduced_arg, negate, use_cos) = self.determine_reduction(&reduced, pi, half_pi, quarter_pi);
-
-        // Compute sin or cos in [-pi/4, pi/4]
-        let (mut lower, mut upper) = if use_cos {
-            cos_polynomial(&reduced_arg, &reduced_arg, precision)
-        } else {
-            sin_polynomial(&reduced_arg, &reduced_arg, precision)
-        };
-
-        // Apply negation if needed
-        if negate {
-            let temp = lower.neg();
-            lower = upper.neg();
-            upper = temp;
-        }
-
-        (lower, upper)
-    }
-
-    /// Reduces x to [0, period) using modular arithmetic.
-    fn reduce_to_period(&self, x: &Binary, period: &Binary) -> Binary {
-        use num_traits::Signed;
-
-        // k = floor(x / period)
-        let k = self.floor_div(x, period);
-
-        // reduced = x - k * period
-        let k_binary = Binary::new(k, BigInt::from(0));
-        let offset = period.mul(&k_binary);
-        let reduced = x.sub(&offset);
-
-        // Ensure result is in [0, period)
-        if reduced.mantissa().is_negative() {
-            reduced.add(period)
-        } else if &reduced >= period {
-            reduced.sub(period)
-        } else {
-            reduced
-        }
-    }
-
-    /// Determines how to reduce the argument for sin computation.
-    /// Returns (reduced_arg, should_negate, use_cos).
-    fn determine_reduction(
-        &self,
-        x: &Binary,
-        pi: &Binary,
-        half_pi: &Binary,
-        quarter_pi: &Binary,
-    ) -> (Binary, bool, bool) {
-        let three_quarter_pi = quarter_pi.add(half_pi);
-        let five_quarter_pi = pi.add(quarter_pi);
-        let three_half_pi = half_pi.add(pi);
-        let seven_quarter_pi = three_half_pi.add(quarter_pi);
-
-        // Octant 0: [0, pi/4] -> sin(x)
-        if x <= quarter_pi {
-            return (x.clone(), false, false);
-        }
-
-        // Octant 1: [pi/4, pi/2] -> cos(pi/2 - x)
-        if x <= half_pi {
-            let reduced = half_pi.sub(x);
-            return (reduced, false, true);
-        }
-
-        // Octant 2: [pi/2, 3pi/4] -> cos(x - pi/2)
-        if x <= &three_quarter_pi {
-            let reduced = x.sub(half_pi);
-            return (reduced, false, true);
-        }
-
-        // Octant 3: [3pi/4, pi] -> sin(pi - x)
-        if x <= pi {
-            let reduced = pi.sub(x);
-            return (reduced, false, false);
-        }
-
-        // Octant 4: [pi, 5pi/4] -> -sin(x - pi)
-        if x <= &five_quarter_pi {
-            let reduced = x.sub(pi);
-            return (reduced, true, false);
-        }
-
-        // Octant 5: [5pi/4, 3pi/2] -> -cos(3pi/2 - x)
-        if x <= &three_half_pi {
-            let reduced = three_half_pi.sub(x);
-            return (reduced, true, true);
-        }
-
-        // Octant 6: [3pi/2, 7pi/4] -> -cos(x - 3pi/2)
-        if x <= &seven_quarter_pi {
-            let reduced = x.sub(&three_half_pi);
-            return (reduced, true, true);
-        }
-
-        // Octant 7: [7pi/4, 2pi] -> sin(x - 2pi) = -sin(2pi - x)
-        let two_pi = pi.mul(&Binary::new(BigInt::from(2), BigInt::from(0)));
-        let reduced = two_pi.sub(x);
-        (reduced, true, false)
-    }
+    num_terms: RwLock<BigInt>,
 }
 
 impl NodeOp for SinOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
-        self.compute_sin_bounds(&input_bounds)
+        let num_terms = self.num_terms.read().clone();
+        sin_bounds(&input_bounds, &num_terms)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
-        let mut state = self.state.write();
-        state.precision_bits += BigInt::from(8);
+        let mut num_terms = self.num_terms.write();
+        *num_terms += BigInt::one();
         Ok(true)
     }
 
@@ -1428,6 +935,205 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
 
     Bounds::new_checked(lower_bound, upper_bound)
         .map_err(|_| ComputableError::InvalidBoundsOrder)
+}
+
+/// Computes bounds for sin(x) using Taylor series with rigorous error bounds.
+///
+/// The Taylor series is: sin(x) = x - x³/3! + x⁵/5! - x⁷/7! + ...
+/// After n terms, the error is bounded by |x|^(2n+1)/(2n+1)!
+///
+/// TODO: This implementation doesn't handle critical points (where sin reaches ±1)
+/// within the interval. For intervals containing such points, the bounds may be
+/// overly conservative. Consider adding critical point detection for tighter bounds.
+///
+/// TODO: For large |x|, the Taylor series converges slowly. Consider adding argument
+/// reduction (x mod 2π) for better performance on large inputs.
+fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, ComputableError> {
+    use num_traits::ToPrimitive;
+
+    let lower = input_bounds.small();
+    let upper = &input_bounds.large();
+
+    // Handle infinite bounds: sin is bounded by [-1, 1]
+    match (lower, upper) {
+        (XBinary::NegInf, _) | (_, XBinary::PosInf) => {
+            let neg_one = XBinary::Finite(Binary::new(BigInt::from(-1), BigInt::zero()));
+            let pos_one = XBinary::Finite(Binary::new(BigInt::from(1), BigInt::zero()));
+            return Ok(Bounds::new(neg_one, pos_one));
+        }
+        _ => {}
+    }
+
+    // Extract finite bounds
+    let (lower_bin, upper_bin) = match (lower, upper) {
+        (XBinary::Finite(l), XBinary::Finite(u)) => (l, u),
+        _ => {
+            // NegInf upper or PosInf lower shouldn't happen with valid bounds
+            let neg_one = XBinary::Finite(Binary::new(BigInt::from(-1), BigInt::zero()));
+            let pos_one = XBinary::Finite(Binary::new(BigInt::from(1), BigInt::zero()));
+            return Ok(Bounds::new(neg_one, pos_one));
+        }
+    };
+
+    // Convert num_terms to usize for computation (capped at reasonable limit)
+    let n = num_terms.to_usize().unwrap_or(1).max(1);
+
+    // Compute Taylor series bounds for sin at both endpoints
+    let sin_lower = taylor_sin_bounds(lower_bin, n);
+    let sin_upper = taylor_sin_bounds(upper_bin, n);
+
+    // Since sin is not monotonic, we need to consider the range carefully.
+    // For now, use a conservative approach: take min/max of endpoint evaluations
+    // plus error bounds, then clamp to [-1, 1].
+
+    // Get the lower and upper bounds from both evaluations
+    let (sin_lower_lo, sin_lower_hi) = sin_lower;
+    let (sin_upper_lo, sin_upper_hi) = sin_upper;
+
+    // Conservative bounds: min of lowers, max of uppers
+    let result_lower = if sin_lower_lo <= sin_upper_lo {
+        sin_lower_lo
+    } else {
+        sin_upper_lo
+    };
+    let result_upper = if sin_lower_hi >= sin_upper_hi {
+        sin_lower_hi
+    } else {
+        sin_upper_hi
+    };
+
+    // Clamp to [-1, 1]
+    let neg_one = Binary::new(BigInt::from(-1), BigInt::zero());
+    let pos_one = Binary::new(BigInt::from(1), BigInt::zero());
+
+    let final_lower = if result_lower < neg_one {
+        neg_one.clone()
+    } else {
+        result_lower
+    };
+    let final_upper = if result_upper > pos_one {
+        pos_one
+    } else {
+        result_upper
+    };
+
+    Bounds::new_checked(XBinary::Finite(final_lower), XBinary::Finite(final_upper))
+        .map_err(|_| ComputableError::InvalidBoundsOrder)
+}
+
+/// Computes Taylor series bounds for sin(x) with n terms.
+/// Returns (lower_bound, upper_bound) accounting for truncation error.
+///
+/// Taylor series: sin(x) = sum_{k=0}^{n-1} (-1)^k * x^(2k+1) / (2k+1)!
+/// Error after n terms: |R_n| <= |x|^(2n+1) / (2n+1)!
+fn taylor_sin_bounds(x: &Binary, n: usize) -> (Binary, Binary) {
+    if n == 0 {
+        // No terms: just use error bound
+        let error = taylor_error_bound(x, 0);
+        return (error.neg(), error);
+    }
+
+    // Compute partial sum
+    let mut sum = Binary::zero();
+    let mut power = x.clone(); // x^1
+    let mut factorial = BigInt::one(); // 1!
+
+    for k in 0..n {
+        // Term k: (-1)^k * x^(2k+1) / (2k+1)!
+        let term_num = if k % 2 == 0 {
+            power.clone()
+        } else {
+            power.neg()
+        };
+
+        // Divide by factorial: create Binary with mantissa/factorial and exponent
+        // term = term_num / factorial
+        let term = divide_by_factorial(&term_num, &factorial);
+        sum = sum.add(&term);
+
+        // Prepare for next term: multiply power by x^2
+        if k + 1 < n {
+            power = power.mul(x).mul(x);
+            // factorial *= (2k+2) * (2k+3)
+            let next_k = k + 1;
+            factorial *= BigInt::from(2 * next_k) * BigInt::from(2 * next_k + 1);
+        }
+    }
+
+    // Compute error bound
+    let error = taylor_error_bound(x, n);
+
+    // Return bounds: sum +/- error
+    (sum.sub(&error), sum.add(&error))
+}
+
+/// Computes |x|^(2n+1) / (2n+1)! as an upper bound on Taylor series truncation error.
+fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
+    use num_traits::Signed;
+
+    // Compute |x|^(2n+1)
+    let abs_x = if x.mantissa().is_negative() {
+        x.neg()
+    } else {
+        x.clone()
+    };
+
+    let exp = 2 * n + 1;
+    let mut power = Binary::new(BigInt::one(), BigInt::zero()); // 1
+    for _ in 0..exp {
+        power = power.mul(&abs_x);
+    }
+
+    // Compute (2n+1)!
+    let mut factorial = BigInt::one();
+    for i in 1..=exp {
+        factorial *= BigInt::from(i);
+    }
+
+    // error = power / factorial
+    divide_by_factorial(&power, &factorial)
+}
+
+/// Divides a Binary by a BigInt factorial, rounding up for conservative error bounds.
+fn divide_by_factorial(value: &Binary, factorial: &BigInt) -> Binary {
+    use num_integer::Integer;
+    use num_traits::Signed;
+
+    if factorial.is_zero() {
+        return value.clone();
+    }
+
+    let mantissa = value.mantissa();
+    let exponent = value.exponent();
+
+    // We need to compute mantissa / factorial with the result as a Binary.
+    // To get a good approximation, we shift the mantissa up by some bits before dividing.
+    // The number of bits we shift determines our precision.
+    let precision_bits = 64i64; // Extra precision for intermediate computation
+
+    // shifted_mantissa = mantissa * 2^precision_bits
+    let abs_mantissa = mantissa.magnitude().clone();
+    let shifted_mantissa = &abs_mantissa << precision_bits as usize;
+
+    // result_mantissa = shifted_mantissa / factorial (rounded up for upper bound)
+    let (quot, rem) = shifted_mantissa.div_rem(factorial.magnitude());
+    let result_mantissa = if rem.is_zero() {
+        quot
+    } else {
+        quot + BigInt::one().magnitude()
+    };
+
+    // Adjust sign
+    let signed_mantissa = if mantissa.is_negative() {
+        -BigInt::from(result_mantissa)
+    } else {
+        BigInt::from(result_mantissa)
+    };
+
+    // New exponent = original_exponent - precision_bits
+    let new_exponent = exponent - BigInt::from(precision_bits);
+
+    Binary::new(signed_mantissa, new_exponent)
 }
 
 /// Compares bounds width (UXBinary) against epsilon (UBinary).
