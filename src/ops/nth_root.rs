@@ -44,8 +44,14 @@ pub struct NthRootOp {
     /// The root degree (n in x^(1/n)).
     pub degree: u32,
     /// Current bisection state: tracks the interval for the root.
-    /// None until first refinement step initializes it from input bounds.
-    /// Each refinement step halves this interval.
+    /// 
+    /// This is `None` until the first refinement step, which initializes it from
+    /// the input bounds. We use `Option` because initialization requires calling
+    /// `inner.get_bounds()` which can fail, but node construction (via `nth_root()`)
+    /// is not supposed to be fallible. By deferring initialization to the first
+    /// `refine_step()` call, we can propagate errors through the normal Result path.
+    /// 
+    /// Each refinement step halves this interval via bisection.
     pub bisection_state: RwLock<Option<BisectionState>>,
 }
 
