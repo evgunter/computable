@@ -50,11 +50,11 @@ impl NodeOp for PowOp {
             compute_odd_power_bounds(lower, upper, self.exponent)
         };
 
-        // TODO: InvalidBoundsOrder should be mathematically impossible here since we
-        // carefully compute lower/upper based on monotonicity properties. We should
-        // try to use the type system to constrain this so the error case is unrepresentable.
-        Bounds::new_checked(result_lower, result_upper)
-            .map_err(|_| ComputableError::InvalidBoundsOrder)
+        // TODO: Investigate if the type system can constrain this so that invalid bounds
+        // ordering is unrepresentable. This case should be mathematically impossible since
+        // we carefully compute lower/upper based on monotonicity properties of power functions.
+        Ok(Bounds::new_checked(result_lower, result_upper)
+            .unwrap_or_else(|_| unreachable!("pow bounds ordering is invalid despite monotonicity-based computation")))
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {

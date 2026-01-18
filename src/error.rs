@@ -1,14 +1,18 @@
 //! Error types for computable operations.
 //!
-//! TODO: Standardize how we handle mathematically impossible cases throughout the
-//! codebase. Options include:
-//! - `debug_assert!(false, ...)` - only panics in debug builds, silent in release
-//! - `panic!(...)` - always panics
-//! - `unreachable!()` - semantically clearer but same as panic
-//! - Return an error variant (e.g., `ComputableError::InternalError`)
+//! # Handling Mathematically Impossible Cases
 //!
-//! Currently we use `debug_assert!` in some places (e.g., impossible bounds ordering
-//! in nth_root), but this should be consistent across the codebase.
+//! The codebase uses the following conventions for cases that should be mathematically
+//! impossible given the invariants of the types involved:
+//!
+//! - **`unreachable!(...)`**: Use for cases that are truly impossible given the current
+//!   type invariants. Always include a TODO comment about investigating whether the type
+//!   system could prevent the case from being representable in the first place.
+//!
+//! - **`debug_assert!(false, ...)`**: Use for cases that are currently unexpected but
+//!   might become valid in the future (e.g., extended real number support). Include a
+//!   comment explaining why the case is currently unexpected and under what circumstances
+//!   it might become valid.
 
 use crate::binary::BinaryError;
 use std::fmt;
