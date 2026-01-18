@@ -246,7 +246,7 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
 
     // TODO(correctness): Capping at 256 bits may not provide sufficient pi precision for very
     // large inputs or high-precision requirements. Should either remove the cap or make it
-    // scale with input magnitude. Severity: Low-Medium.
+    // scale with input magnitude.
     precision.clamp(64, 256)
 }
 
@@ -269,7 +269,7 @@ fn reduce_to_pi_range_interval(
     // TODO(correctness): For extremely large inputs where |x| >> 2^10 * 2*pi, ten iterations
     // may not be enough. The fallback "return what we have" could return an interval outside
     // [-pi, pi]. Should compute k analytically instead of iterating, or increase limit.
-    // Severity: Low - would require astronomically large inputs to trigger.
+    // TODO: should use the thing with refine_to_default rather than a custom loop with custom max iterations
     for _ in 0..10 {
         // Check if already in range: [-pi_lo, pi_lo] is the "safe" inner range
         // We use inner bounds to be conservative
@@ -280,6 +280,7 @@ fn reduce_to_pi_range_interval(
         // Also check with outer bounds - if we're definitely out of range
         let neg_pi_hi = pi.hi.neg();
         if current.lo >= neg_pi_hi && current.hi <= pi.hi {
+            // TODO: this comment is sus, what's up with this
             // We're in the outer range [-pi_hi, pi_hi], close enough
             return current;
         }
@@ -537,7 +538,7 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
 /// For negative values, truncation rounds toward zero (making the value larger), which could
 /// cause the lower bound of sin to be too high. Should either: (1) add truncation error to
 /// the result interval, (2) use directed rounding (floor for lower, ceil for upper), or
-/// (3) use full precision. Severity: Medium.
+/// (3) use full precision.
 fn truncate_precision(x: &Binary, precision_bits: usize) -> Binary {
     let mantissa = x.mantissa();
     let exponent = x.exponent();
@@ -564,6 +565,8 @@ fn truncate_precision(x: &Binary, precision_bits: usize) -> Binary {
 fn compute_sin_on_monotonic_interval(interval: &Interval, n: usize) -> (Binary, Binary) {
     // sin is monotonic increasing on [-pi/2, pi/2]
     // So: sin([a, b]) = [sin(a)_lo, sin(b)_hi]
+
+    // TODO: this precision truncation is very suspicious!
 
     let truncated_lo = truncate_precision(&interval.lo, 64);
     let truncated_hi = truncate_precision(&interval.hi, 64);
