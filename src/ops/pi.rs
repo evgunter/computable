@@ -65,6 +65,9 @@ pub fn pi_bounds_at_precision(precision_bits: u64) -> (Binary, Binary) {
     // log2(5) ~= 2.32, so: n > (precision_bits + 4) / 4.64 - 0.5
     //
     // We use a conservative estimate with some margin:
+    // TODO(correctness): Using f64 for this calculation is not rigorous for a "provably correct"
+    // library. Should use integer arithmetic with conservative bounds instead.
+    // Severity: Low - the formula is conservative, so unlikely to cause actual issues.
     let num_terms = ((precision_bits as f64 + 10.0) / 4.0).ceil() as usize;
     let num_terms = num_terms.max(5); // At least 5 terms for reasonable accuracy
 
@@ -219,6 +222,11 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
     // Result = (2^precision / denominator) * 2^(-precision)
     //
     // Use high precision for intermediate computation
+    // TODO(correctness): Fixed 128-bit precision caps the achievable accuracy. If more than ~128
+    // bits of pi precision are needed, the rounding errors in this fixed-precision division could
+    // accumulate beyond what the error bound accounts for. Should make precision adaptive based
+    // on the requested output precision.
+    // Severity: Medium - affects extreme precision use cases (>100 bits).
     let precision_bits: u64 = 128;
 
     let numerator = BigInt::one() << precision_bits as usize;
