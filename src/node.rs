@@ -120,7 +120,10 @@ impl<T: BaseNode + ?Sized> BoundsAccess for T {
 }
 
 /// Node operator for composed computables.
-/// TODO: enable user-defined composed nodes (e.g. sine) via this trait.
+///
+/// This trait is currently internal. Operations like `SinOp`, `InvOp`, and `NthRootOp`
+/// implement this trait to provide custom refinement logic beyond simple arithmetic.
+// TODO: Consider exposing this trait publicly to allow user-defined composed nodes.
 pub trait NodeOp: Send + Sync {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError>;
     fn refine_step(&self) -> Result<bool, ComputableError>;
