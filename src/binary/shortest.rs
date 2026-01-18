@@ -7,48 +7,36 @@ use num_traits::{One, Signed, Zero};
 use crate::ordered_pair::Bounds;
 
 use super::shift;
-use super::{Binary, XBinary};
+use super::{Binary, UXBinary, XBinary};
 
 /// Returns a binary value inside the bounds with the shortest normalized mantissa.
 pub fn shortest_binary_in_bounds(bounds: &Bounds) -> Option<Binary> {
+    match shortest_xbinary_in_bounds(bounds) {
+        XBinary::Finite(value) => Some(value),
+        XBinary::NegInf | XBinary::PosInf => None,
+    }
+}
+
+/// Returns an XBinary value inside the bounds with the shortest normalized mantissa.
+pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
     let lower = bounds.small();
     let upper = bounds.large();
-    let zero = XBinary::zero();
+    let lower_mag = signed_magnitude(lower);
+    let upper_mag = signed_magnitude(&upper);
 
-    if lower <= &zero && &zero <= &upper {
-        return Some(Binary::zero());
-    }
-
-    match (lower, &upper) {
-        (XBinary::Finite(lower), XBinary::Finite(upper)) => {
-            if lower.mantissa().is_positive() {
-                shortest_binary_in_positive_interval(lower, upper)
-            } else if upper.mantissa().is_negative() {
-                let lower_pos = upper.neg();
-                let upper_pos = lower.neg();
-                shortest_binary_in_positive_interval(&lower_pos, &upper_pos)
-                    .map(|value| value.neg())
-            } else {
-                None
-            }
+    match (lower_mag.sign, upper_mag.sign) {
+        (Sign::Negative, Sign::Positive)
+        | (Sign::Negative, Sign::Zero)
+        | (Sign::Zero, Sign::Positive)
+        | (Sign::Zero, Sign::Zero) => XBinary::zero(),
+        (Sign::Positive, Sign::Positive) => shortest_positive_bounds(&lower_mag, &upper_mag),
+        (Sign::Negative, Sign::Negative) => shortest_negative_bounds(lower, &lower_mag, &upper_mag),
+        (Sign::Positive, Sign::Zero)
+        | (Sign::Zero, Sign::Negative)
+        | (Sign::Positive, Sign::Negative) => {
+            debug_assert!(false, "bounds are not ordered");
+            lower.clone()
         }
-        (XBinary::Finite(lower), XBinary::PosInf) => {
-            if lower.mantissa().is_positive() {
-                shortest_power_of_two_at_least(lower)
-            } else {
-                None
-            }
-        }
-        (XBinary::NegInf, XBinary::Finite(upper)) => {
-            if upper.mantissa().is_negative() {
-                shortest_power_of_two_at_most(upper)
-            } else {
-                None
-            }
-        }
-        (XBinary::NegInf, XBinary::PosInf) => Some(Binary::zero()),
-        (XBinary::PosInf, XBinary::PosInf) | (XBinary::NegInf, XBinary::NegInf) => None,
-        _ => None,
     }
 }
 
@@ -71,11 +59,13 @@ fn shortest_binary_in_positive_interval(lower: &Binary, upper: &Binary) -> Optio
     let max_pow2 = max_power_of_two_divisor(&lower_int, &upper_int);
     let mut mantissa = div_ceil_pow2(&lower_int, max_pow2);
     let mantissa_max = div_floor_pow2(&upper_int, max_pow2);
+    // TODO: prove by construction that mantissa <= mantissa_max when max_pow2 is maximal.
     if mantissa > mantissa_max {
         return None;
     }
     if mantissa.is_even() {
         mantissa += 1;
+        // TODO: prove the odd adjustment cannot exceed mantissa_max when max_pow2 is maximal.
         if mantissa > mantissa_max {
             return None;
         }
@@ -175,6 +165,108 @@ fn shift_left_bigint(value: &BigInt, shift: &BigUint) -> BigInt {
     shift::shift_mantissa_chunked::<BigInt>(value, shift, &chunk_limit)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sign {
+    Negative,
+    Zero,
+    Positive,
+}
+
+#[derive(Clone, Debug)]
+struct SignedMagnitude {
+    sign: Sign,
+    magnitude: UXBinary,
+}
+
+fn signed_magnitude(value: &XBinary) -> SignedMagnitude {
+    match value {
+        XBinary::NegInf => SignedMagnitude {
+            sign: Sign::Negative,
+            magnitude: UXBinary::PosInf,
+        },
+        XBinary::PosInf => SignedMagnitude {
+            sign: Sign::Positive,
+            magnitude: UXBinary::PosInf,
+        },
+        XBinary::Finite(binary) => {
+            if binary.mantissa().is_zero() {
+                SignedMagnitude {
+                    sign: Sign::Zero,
+                    magnitude: UXBinary::zero(),
+                }
+            } else if binary.mantissa().is_positive() {
+                SignedMagnitude {
+                    sign: Sign::Positive,
+                    magnitude: UXBinary::Finite(binary.magnitude()),
+                }
+            } else {
+                SignedMagnitude {
+                    sign: Sign::Negative,
+                    magnitude: UXBinary::Finite(binary.magnitude()),
+                }
+            }
+        }
+    }
+}
+
+fn shortest_positive_bounds(lower_mag: &SignedMagnitude, upper_mag: &SignedMagnitude) -> XBinary {
+    match (&lower_mag.magnitude, &upper_mag.magnitude) {
+        (UXBinary::PosInf, _) => XBinary::PosInf,
+        (UXBinary::Finite(lower_mag), UXBinary::PosInf) => {
+            let lower_binary = lower_mag.to_binary();
+            shortest_power_of_two_at_least(&lower_binary)
+                .map(XBinary::Finite)
+                .unwrap_or_else(|| {
+                    debug_assert!(false, "positive lower bound unexpectedly non-positive");
+                    XBinary::Finite(lower_binary)
+                })
+        }
+        (UXBinary::Finite(lower_mag), UXBinary::Finite(upper_mag)) => {
+            let lower_binary = lower_mag.to_binary();
+            let upper_binary = upper_mag.to_binary();
+            shortest_binary_in_positive_interval(&lower_binary, &upper_binary)
+                .map(XBinary::Finite)
+                .unwrap_or_else(|| {
+                    debug_assert!(false, "positive interval had no valid odd mantissa");
+                    XBinary::Finite(lower_binary)
+                })
+        }
+    }
+}
+
+fn shortest_negative_bounds(
+    lower: &XBinary,
+    lower_mag: &SignedMagnitude,
+    upper_mag: &SignedMagnitude,
+) -> XBinary {
+    match (&lower_mag.magnitude, &upper_mag.magnitude) {
+        (UXBinary::PosInf, UXBinary::PosInf) => XBinary::NegInf,
+        (UXBinary::PosInf, UXBinary::Finite(upper_mag)) => {
+            let upper_binary = upper_mag.to_binary().neg();
+            shortest_power_of_two_at_most(&upper_binary)
+                .map(XBinary::Finite)
+                .unwrap_or_else(|| {
+                    debug_assert!(false, "negative upper bound unexpectedly non-negative");
+                    XBinary::Finite(upper_binary)
+                })
+        }
+        (UXBinary::Finite(lower_mag), UXBinary::Finite(upper_mag)) => {
+            let lower_binary = lower_mag.to_binary();
+            let upper_binary = upper_mag.to_binary();
+            shortest_binary_in_positive_interval(&upper_binary, &lower_binary)
+                .map(|value| XBinary::Finite(value.neg()))
+                .unwrap_or_else(|| {
+                    debug_assert!(false, "negative interval had no valid odd mantissa");
+                    XBinary::Finite(upper_binary.neg())
+                })
+        }
+        (UXBinary::Finite(_), UXBinary::PosInf) => {
+            debug_assert!(false, "negative bounds are not ordered");
+            lower.clone()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -217,5 +309,23 @@ mod tests {
         let bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
         let shortest = shortest_binary_in_bounds(&bounds).expect("shortest should exist");
         assert_eq!(shortest, bin(1, 1));
+    }
+
+    #[test]
+    fn shortest_xbinary_handles_infinite_bounds() {
+        let bounds = Bounds::new(XBinary::Finite(bin(1, 0)), XBinary::PosInf);
+        assert_eq!(
+            shortest_xbinary_in_bounds(&bounds),
+            XBinary::Finite(bin(1, 0))
+        );
+
+        let bounds = Bounds::new(XBinary::Finite(bin(-3, -1)), XBinary::Finite(bin(-1, 0)));
+        assert_eq!(
+            shortest_xbinary_in_bounds(&bounds),
+            XBinary::Finite(bin(-1, 0))
+        );
+
+        let bounds = Bounds::new(XBinary::PosInf, XBinary::PosInf);
+        assert_eq!(shortest_xbinary_in_bounds(&bounds), XBinary::PosInf);
     }
 }

@@ -28,7 +28,8 @@ mod concurrency;
 mod ordered_pair;
 
 pub use binary::{
-    shortest_binary_in_bounds, Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError,
+    shortest_binary_in_bounds, shortest_xbinary_in_bounds, Binary, BinaryError, UBinary, UXBinary,
+    XBinary, XBinaryError,
 };
 use binary::{reciprocal_rounded_abs_extended, ReciprocalRounding};
 use concurrency::StopFlag;
