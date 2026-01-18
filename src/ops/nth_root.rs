@@ -12,6 +12,12 @@
 //! other operations that use bisection (e.g., finding roots of monotonic functions).
 //! The helper could take: initial bounds, a comparison function, and produce a
 //! Computable that refines via bisection.
+//!
+//! TODO: Contra the README, even-degree roots of inputs that overlap with negative
+//! numbers (but aren't completely negative) currently just return (0, ∞) bounds
+//! instead of returning a recoverable error that would trigger refinement of the
+//! input until the bounds are fully non-negative. This should be fixed to match
+//! the behavior described in the README for sqrt.
 
 use std::sync::Arc;
 
