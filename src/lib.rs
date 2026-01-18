@@ -951,24 +951,13 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
 fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, ComputableError> {
     use num_traits::ToPrimitive;
 
+    // Extract finite bounds, or return [-1, 1] for any infinite bounds
     let lower = input_bounds.small();
-    let upper = &input_bounds.large();
-
-    // Handle infinite bounds: sin is bounded by [-1, 1]
-    match (lower, upper) {
-        (XBinary::NegInf, _) | (_, XBinary::PosInf) => {
-            let neg_one = XBinary::Finite(Binary::new(BigInt::from(-1), BigInt::zero()));
-            let pos_one = XBinary::Finite(Binary::new(BigInt::from(1), BigInt::zero()));
-            return Ok(Bounds::new(neg_one, pos_one));
-        }
-        _ => {}
-    }
-
-    // Extract finite bounds
-    let (lower_bin, upper_bin) = match (lower, upper) {
+    let upper = input_bounds.large();
+    let (lower_bin, upper_bin) = match (lower, &upper) {
         (XBinary::Finite(l), XBinary::Finite(u)) => (l, u),
         _ => {
-            // NegInf upper or PosInf lower shouldn't happen with valid bounds
+            // Any infinite bound means sin could take any value in [-1, 1]
             let neg_one = XBinary::Finite(Binary::new(BigInt::from(-1), BigInt::zero()));
             let pos_one = XBinary::Finite(Binary::new(BigInt::from(1), BigInt::zero()));
             return Ok(Bounds::new(neg_one, pos_one));
