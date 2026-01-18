@@ -471,24 +471,30 @@ mod tests {
         // We check against a known approximation
         let (pi_lo, pi_hi) = compute_pi_bounds(20);
 
-        // Convert to f64 for rough comparison
-        // pi_lo and pi_hi should bracket 3.14159265...
-        // TODO: fix this by converting the f64 approximation of pi to Binary and then comparing
-        // We can't easily convert Binary to f64, but we can check the bounds are ordered
         assert!(pi_lo < pi_hi, "lower bound should be less than upper bound");
+
+        // Use exactly representable rational approximations of pi for verification.
+        // pi > 201/64 = 3.140625 and pi < 101/32 = 3.15625
+        let pi_lower_check = bin(201, -6); // 201/64 = 3.140625, less than pi
+        let pi_upper_check = bin(101, -5); // 101/32 = 3.15625, greater than pi
+
+        // Our computed lower bound should be greater than our lower check
+        // (meaning our lower bound is tighter than 201/64)
+        assert!(
+            pi_lo > pi_lower_check,
+            "pi_lo should be > 201/64 = 3.140625"
+        );
+        // Our computed upper bound should be less than our upper check
+        // (meaning our upper bound is tighter than 101/32)
+        assert!(
+            pi_hi < pi_upper_check,
+            "pi_hi should be < 101/32 = 3.15625"
+        );
 
         // Check that the interval is reasonably tight (width < 1)
         let width = pi_hi.sub(&pi_lo);
         let one = bin(1, 0);
         assert!(width < one, "pi bounds should be tighter than width 1");
-
-        // Check bounds bracket approximately 3.14
-        // 3 < pi_lo should NOT hold (pi_lo should be > 3)
-        // Actually, let's check: pi_lo > 3 and pi_hi < 4
-        let three = bin(3, 0);
-        let four = bin(4, 0);
-        assert!(pi_lo > three, "pi lower bound should be > 3");
-        assert!(pi_hi < four, "pi upper bound should be < 4");
     }
 
     #[test]
@@ -516,12 +522,20 @@ mod tests {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 
-         // TODO: improve this by converting the f64 approximation of pi to Binary and then comparing
-        // Check basic sanity
-        let three = bin(3, 0);
-        let four = bin(4, 0);
-        assert!(lower > three);
-        assert!(upper < four);
+        // Use exactly representable rational approximations of pi for verification.
+        // pi > 201/64 = 3.140625 and pi < 101/32 = 3.15625
+        let pi_lower_check = bin(201, -6); // 201/64 = 3.140625, less than pi
+        let pi_upper_check = bin(101, -5); // 101/32 = 3.15625, greater than pi
+
+        // Verify our bounds are tighter than these reference values
+        assert!(
+            lower > pi_lower_check,
+            "lower bound should be > 201/64 = 3.140625"
+        );
+        assert!(
+            upper < pi_upper_check,
+            "upper bound should be < 101/32 = 3.15625"
+        );
 
         // Check width is within epsilon
         let width = upper.sub(&lower);
