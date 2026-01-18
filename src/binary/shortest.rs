@@ -9,6 +9,12 @@ use crate::ordered_pair::Bounds;
 use super::shift;
 use super::{Binary, UBinary, UXBinary, XBinary};
 
+// TODO: use these functions to make binary-search-based refinement not need to represent intervals that have so many bits of precision
+// TODO: use similar functions to make other refinement strategies not need to represent intervals that have so many bits of precision
+// by loosening bounds (this will require something other than plain shortest_xbinary_in_bounds since the loosened bounds would obviously not
+// lie within the original bounds; but perhaps lower bound - width/4 and upper bound + width/4 would be reasonable?
+// or even something that uses epsilon rather than just width?)
+
 /// Returns an XBinary value inside the bounds with the shortest normalized mantissa.
 pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
     // NOTE: Bounds stores lower + width with UXBinary, so intervals like (-inf, -1]
