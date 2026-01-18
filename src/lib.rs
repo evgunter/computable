@@ -27,7 +27,9 @@ mod binary;
 mod concurrency;
 mod ordered_pair;
 
-pub use binary::{Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError};
+pub use binary::{
+    shortest_binary_in_bounds, Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError,
+};
 use binary::{reciprocal_rounded_abs_extended, ReciprocalRounding};
 use concurrency::StopFlag;
 pub use ordered_pair::{Bounds, Interval, IntervalError};
