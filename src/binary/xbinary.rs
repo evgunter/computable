@@ -114,21 +114,6 @@ impl XBinary {
         }
     }
 
-    /// Subtraction of extended binary numbers.
-    ///
-    /// # Panics
-    /// Panics if the result is mathematically indeterminate (infinity - infinity).
-    /// Use `try_sub` for a fallible version.
-    pub fn sub(&self, other: &Self) -> Self {
-        match self.try_sub(other) {
-            Ok(result) => result,
-            Err(XBinaryError::IndeterminateForm) => {
-                panic!("indeterminate form: {self} - {other} is undefined")
-            }
-            Err(e) => panic!("unexpected error in XBinary::sub: {e}"),
-        }
-    }
-
     /// Fallible subtraction of extended binary numbers.
     ///
     /// Returns an error for indeterminate forms like infinity - infinity.
@@ -179,10 +164,10 @@ impl Add for XBinary {
 }
 
 impl Sub for XBinary {
-    type Output = Self;
+    type Output = Result<Self, XBinaryError>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        XBinary::sub(&self, &rhs)
+        XBinary::try_sub(&self, &rhs)
     }
 }
 
@@ -315,16 +300,16 @@ mod tests {
     fn xbinary_sub_finite_works() {
         let one = xbin(1, 0);
         let two = xbin(1, 1);
-        assert_eq!(two - one, xbin(1, 0));
+        assert_eq!(two - one, Ok(xbin(1, 0)));
     }
 
     #[test]
     fn xbinary_sub_infinity_finite_works() {
         let one = xbin(1, 0);
-        assert_eq!(XBinary::PosInf - one.clone(), XBinary::PosInf);
-        assert_eq!(XBinary::NegInf - one.clone(), XBinary::NegInf);
-        assert_eq!(one.clone() - XBinary::PosInf, XBinary::NegInf);
-        assert_eq!(one - XBinary::NegInf, XBinary::PosInf);
+        assert_eq!(XBinary::PosInf - one.clone(), Ok(XBinary::PosInf));
+        assert_eq!(XBinary::NegInf - one.clone(), Ok(XBinary::NegInf));
+        assert_eq!(one.clone() - XBinary::PosInf, Ok(XBinary::NegInf));
+        assert_eq!(one - XBinary::NegInf, Ok(XBinary::PosInf));
     }
 
     #[test]

@@ -53,7 +53,7 @@ pub use xbinary::XBinary;
 // BigInt/BigUint trait implementations for ordered_pair compatibility
 use num_bigint::{BigInt, BigUint};
 
-use crate::ordered_pair::{AbsDistance, AddWidth, SubWidth, Unsigned};
+use crate::ordered_pair::{AbsDistance, AddWidth, Unsigned};
 
 impl Unsigned for BigUint {}
 
@@ -66,12 +66,6 @@ impl AbsDistance<BigInt, BigUint> for BigInt {
 impl AddWidth<BigInt, BigUint> for BigInt {
     fn add_width(self, width: BigUint) -> Self {
         self + BigInt::from(width)
-    }
-}
-
-impl SubWidth<BigInt, BigUint> for BigInt {
-    fn sub_width(self, width: BigUint) -> Self {
-        self - BigInt::from(width)
     }
 }
 

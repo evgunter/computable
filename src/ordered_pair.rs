@@ -6,10 +6,6 @@ pub trait AddWidth<T, W> {
     fn add_width(self, width: W) -> T;
 }
 
-pub trait SubWidth<T, W> {
-    fn sub_width(self, width: W) -> T;
-}
-
 pub trait Unsigned {}
 
 /// TODO: require that `width` is positive.
@@ -17,7 +13,7 @@ pub trait Unsigned {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interval<T, W>
 where
-    T: AddWidth<T, W> + SubWidth<T, W>,
+    T: AddWidth<T, W>,
     W: Unsigned + PartialOrd,
 {
     lower: T,
@@ -45,7 +41,7 @@ pub trait AbsDistance<T, W> {
 
 impl<T, W> Interval<T, W>
 where
-    T: Ord + AddWidth<T, W> + SubWidth<T, W> + Clone + AbsDistance<T, W>,
+    T: Ord + AddWidth<T, W> + Clone + AbsDistance<T, W>,
     W: Clone + PartialOrd + Unsigned,
 {
     pub fn new(a: T, b: T) -> Self {
