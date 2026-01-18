@@ -4,9 +4,8 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 
-use crate::ordered_pair::Bounds;
-
 use super::shift;
+use super::Bounds;
 use super::{Binary, UBinary, UXBinary, XBinary};
 
 // TODO: use these functions to make binary-search-based refinement not need to represent intervals that have so many bits of precision

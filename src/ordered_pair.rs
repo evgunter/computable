@@ -1,7 +1,5 @@
 use std::fmt;
 
-use crate::binary::{UXBinary, XBinary};
-
 pub trait AddWidth<T, W> {
     fn add_width(self, width: W) -> T;
 }
@@ -74,9 +72,3 @@ where
     }
 }
 
-/// Bounds on a computable number: lower and upper bounds as XBinary values.
-/// The width is stored as UXBinary to guarantee non-negativity through the type system.
-///
-/// This type enforces the invariant from the formalism that bounds widths are
-/// always nonnegative (elements of D_inf where the value is >= 0).
-pub type Bounds = Interval<XBinary, UXBinary>;

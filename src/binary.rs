@@ -55,7 +55,14 @@ pub use xbinary::XBinary;
 // BigInt/BigUint trait implementations for ordered_pair compatibility
 use num_bigint::{BigInt, BigUint};
 
-use crate::ordered_pair::{AbsDistance, AddWidth, Unsigned};
+use crate::ordered_pair::{AbsDistance, AddWidth, Interval, Unsigned};
+
+/// Bounds on a computable number: lower and upper bounds as XBinary values.
+/// The width is stored as UXBinary to guarantee non-negativity through the type system.
+///
+/// This type enforces the invariant from the formalism that bounds widths are
+/// always nonnegative (elements of D_inf where the value is >= 0).
+pub type Bounds = Interval<XBinary, UXBinary>;
 
 impl Unsigned for BigUint {}
 
@@ -78,7 +85,6 @@ mod integration_tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use crate::ordered_pair::Bounds;
     use num_bigint::BigInt;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
