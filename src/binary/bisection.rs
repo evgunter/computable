@@ -8,15 +8,18 @@
 //! # Example
 //!
 //! ```ignore
-//! use computable::binary::{Binary, bisection::{BisectionComparison, bisection_step}};
+//! use computable::binary::{Binary, FiniteBounds, bisection::{BisectionComparison, bisection_step}};
+//! use num_traits::Zero;
 //!
 //! // Find sqrt(4) in the interval [0, 4]
-//! let mut lower = Binary::new(0.into(), 0.into());
-//! let mut upper = Binary::new(4.into(), 0.into());
+//! let mut bounds = FiniteBounds::new(
+//!     Binary::new(0.into(), 0.into()),
+//!     Binary::new(4.into(), 0.into()),
+//! );
 //! let target = Binary::new(4.into(), 0.into());
 //!
 //! for _ in 0..20 {
-//!     let result = bisection_step(lower.clone(), upper.clone(), |mid| {
+//!     bounds = bisection_step(bounds, |mid| {
 //!         let mid_sq = mid.mul(mid);
 //!         match mid_sq.cmp(&target) {
 //!             std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -24,19 +27,17 @@
 //!             std::cmp::Ordering::Greater => BisectionComparison::Below,
 //!         }
 //!     });
-//!     lower = result.lower;
-//!     upper = result.upper;
-//!     if result.exact {
-//!         break;
+//!     if bounds.width().is_zero() {
+//!         break; // Found exact match
 //!     }
 //! }
-//! // lower and upper now bracket sqrt(4) = 2
+//! // bounds now contains sqrt(4) = 2
 //! ```
 
 use num_bigint::BigInt;
 use num_traits::One;
 
-use super::Binary;
+use super::{Binary, FiniteBounds};
 
 /// Result of comparing a test value against the target in a binary search.
 ///
@@ -63,17 +64,6 @@ pub enum BisectionComparison {
     Exact,
 }
 
-/// Result of a single bisection step.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BisectionStepResult {
-    /// The new lower bound after the step.
-    pub lower: Binary,
-    /// The new upper bound after the step.
-    pub upper: Binary,
-    /// Whether an exact match was found at the midpoint.
-    pub exact: bool,
-}
-
 /// Computes the midpoint of two Binary numbers.
 ///
 /// The midpoint is calculated as (lower + upper) / 2.
@@ -86,20 +76,20 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
 /// Performs a single step of binary search between bounds.
 ///
 /// This function:
-/// 1. Computes the midpoint of `lower` and `upper`
+/// 1. Computes the midpoint of the bounds
 /// 2. Calls the comparison function with the midpoint
 /// 3. Returns new bounds based on the comparison result
 ///
 /// # Arguments
 ///
-/// * `lower` - The current lower bound
-/// * `upper` - The current upper bound
+/// * `bounds` - The current bounds interval
 /// * `compare` - A function that compares the midpoint to the target value
 ///   and returns whether the target is above, below, or exactly at the midpoint
 ///
 /// # Returns
 ///
-/// A `BisectionStepResult` containing the new bounds and whether an exact match was found.
+/// New [`FiniteBounds`] after the bisection step. If an exact match was found,
+/// the bounds will have zero width (i.e., `bounds.width().is_zero()` is true).
 ///
 /// # Behavior
 ///
@@ -108,79 +98,62 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
 /// - If `compare` returns `Below`: the target is below the midpoint, so
 ///   the new interval is [lower, midpoint]
 /// - If `compare` returns `Exact`: the midpoint is exactly the target,
-///   so both bounds are set to the midpoint and `exact` is `true`
-pub fn bisection_step<F>(lower: Binary, upper: Binary, compare: F) -> BisectionStepResult
+///   so both bounds are set to the midpoint (width becomes zero)
+pub fn bisection_step<F>(bounds: FiniteBounds, compare: F) -> FiniteBounds
 where
     F: FnOnce(&Binary) -> BisectionComparison,
 {
+    let lower = bounds.small().clone();
+    let upper = bounds.large();
     let mid = midpoint(&lower, &upper);
+
     match compare(&mid) {
-        BisectionComparison::Above => BisectionStepResult {
-            lower: mid,
-            upper,
-            exact: false,
-        },
-        BisectionComparison::Below => BisectionStepResult {
-            lower,
-            upper: mid,
-            exact: false,
-        },
-        BisectionComparison::Exact => BisectionStepResult {
-            lower: mid.clone(),
-            upper: mid,
-            exact: true,
-        },
+        BisectionComparison::Above => FiniteBounds::new(mid, upper),
+        BisectionComparison::Below => FiniteBounds::new(lower, mid),
+        BisectionComparison::Exact => FiniteBounds::new(mid.clone(), mid),
     }
 }
 
 /// Performs multiple steps of binary search, refining until a condition is met.
 ///
 /// This function repeatedly applies `bisection_step` until either:
-/// - An exact match is found
+/// - An exact match is found (bounds width becomes zero)
 /// - The maximum number of iterations is reached
-/// - The interval width is small enough (determined by the caller checking bounds)
 ///
 /// # Arguments
 ///
-/// * `lower` - The initial lower bound
-/// * `upper` - The initial upper bound
+/// * `bounds` - The initial bounds interval
 /// * `max_iterations` - Maximum number of bisection steps to perform
 /// * `compare` - A function that compares the midpoint to the target value
 ///
 /// # Returns
 ///
-/// A `BisectionStepResult` containing the final bounds and whether an exact match was found.
+/// The final [`FiniteBounds`] after refinement. Check `bounds.width().is_zero()`
+/// to determine if an exact match was found.
 pub fn bisection_refine<F>(
-    mut lower: Binary,
-    mut upper: Binary,
+    mut bounds: FiniteBounds,
     max_iterations: u32,
     mut compare: F,
-) -> BisectionStepResult
+) -> FiniteBounds
 where
     F: FnMut(&Binary) -> BisectionComparison,
 {
+    use num_traits::Zero;
+
     for _ in 0..max_iterations {
-        let result = bisection_step(lower, upper, &mut compare);
-        lower = result.lower;
-        upper = result.upper;
-        if result.exact {
-            return BisectionStepResult {
-                lower,
-                upper,
-                exact: true,
-            };
+        bounds = bisection_step(bounds, &mut compare);
+        if bounds.width().is_zero() {
+            break;
         }
     }
-    BisectionStepResult {
-        lower,
-        upper,
-        exact: false,
-    }
+    bounds
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
+
+    use num_traits::Zero;
 
     use super::*;
     use crate::test_utils::bin;
@@ -205,36 +178,39 @@ mod tests {
     fn bisection_step_above() {
         let lower = bin(0, 0);
         let upper = bin(4, 0);
-        let result = bisection_step(lower.clone(), upper.clone(), |_mid| {
+        let bounds = FiniteBounds::new(lower, upper.clone());
+        let result = bisection_step(bounds, |_mid| {
             // Pretend target is above the midpoint (2)
             BisectionComparison::Above
         });
-        assert_eq!(result.lower, bin(2, 0)); // midpoint becomes lower
-        assert_eq!(result.upper, upper);
-        assert!(!result.exact);
+        assert_eq!(result.small(), &bin(2, 0)); // midpoint becomes lower
+        assert_eq!(result.large(), upper);
+        assert!(!result.width().is_zero());
     }
 
     #[test]
     fn bisection_step_below() {
         let lower = bin(0, 0);
         let upper = bin(4, 0);
-        let result = bisection_step(lower.clone(), upper.clone(), |_mid| {
+        let bounds = FiniteBounds::new(lower.clone(), upper);
+        let result = bisection_step(bounds, |_mid| {
             // Pretend target is below the midpoint (2)
             BisectionComparison::Below
         });
-        assert_eq!(result.lower, lower);
-        assert_eq!(result.upper, bin(2, 0)); // midpoint becomes upper
-        assert!(!result.exact);
+        assert_eq!(result.small(), &lower);
+        assert_eq!(result.large(), bin(2, 0)); // midpoint becomes upper
+        assert!(!result.width().is_zero());
     }
 
     #[test]
     fn bisection_step_exact() {
         let lower = bin(0, 0);
         let upper = bin(4, 0);
-        let result = bisection_step(lower, upper, |_mid| BisectionComparison::Exact);
-        assert_eq!(result.lower, bin(2, 0));
-        assert_eq!(result.upper, bin(2, 0));
-        assert!(result.exact);
+        let bounds = FiniteBounds::new(lower, upper);
+        let result = bisection_step(bounds, |_mid| BisectionComparison::Exact);
+        assert_eq!(result.small(), &bin(2, 0));
+        assert_eq!(result.large(), bin(2, 0));
+        assert!(result.width().is_zero());
     }
 
     #[test]
@@ -244,8 +220,9 @@ mod tests {
         let lower = bin(0, 0);
         let upper = bin(4, 0);
         let target = bin(4, 0);
+        let bounds = FiniteBounds::new(lower, upper);
 
-        let result = bisection_refine(lower, upper, 50, |mid| {
+        let result = bisection_refine(bounds, 50, |mid| {
             let mid_sq = mid.mul(mid);
             match mid_sq.cmp(&target) {
                 std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -255,9 +232,9 @@ mod tests {
         });
 
         // Should find exact match for sqrt(4) = 2
-        assert!(result.exact);
-        assert_eq!(result.lower, bin(2, 0));
-        assert_eq!(result.upper, bin(2, 0));
+        assert!(result.width().is_zero());
+        assert_eq!(result.small(), &bin(2, 0));
+        assert_eq!(result.large(), bin(2, 0));
     }
 
     #[test]
@@ -267,8 +244,9 @@ mod tests {
         let lower = bin(1, 0);
         let upper = bin(2, 0);
         let target = bin(2, 0);
+        let bounds = FiniteBounds::new(lower.clone(), upper.clone());
 
-        let result = bisection_refine(lower.clone(), upper.clone(), 10, |mid| {
+        let result = bisection_refine(bounds, 10, |mid| {
             let mid_sq = mid.mul(mid);
             match mid_sq.cmp(&target) {
                 std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -278,29 +256,30 @@ mod tests {
         });
 
         // Should not find exact match (sqrt(2) is irrational)
-        assert!(!result.exact);
+        assert!(!result.width().is_zero());
 
         // Interval should have narrowed
-        assert!(result.lower > lower);
-        assert!(result.upper < upper);
+        assert!(result.small() > &lower);
+        assert!(result.large() < upper);
 
         // Bounds should still contain sqrt(2) ≈ 1.414
         let sqrt_2_approx = bin(1414, -10); // Rough approximation
-        assert!(result.lower <= sqrt_2_approx || result.upper >= sqrt_2_approx);
+        assert!(result.small() <= &sqrt_2_approx || result.large() >= sqrt_2_approx);
     }
 
     #[test]
     fn bisection_respects_max_iterations() {
         let lower = bin(0, 0);
         let upper = bin(1024, 0);
+        let bounds = FiniteBounds::new(lower, upper);
 
         // With 5 iterations, should halve the interval 5 times
         // Starting width: 1024, final width: 1024 / 2^5 = 32
-        let result = bisection_refine(lower, upper, 5, |_mid| BisectionComparison::Above);
+        let result = bisection_refine(bounds, 5, |_mid| BisectionComparison::Above);
 
         // After 5 iterations always going Above, we should have narrowed
         // Each step halves the interval, so final width = 1024/32 = 32
-        let width = result.upper.sub(&result.lower);
+        let width = result.large() - result.small().clone();
         assert_eq!(width, bin(32, 0));
     }
 }

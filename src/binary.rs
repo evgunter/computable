@@ -65,6 +65,13 @@ use crate::ordered_pair::{AbsDistance, AddWidth, Interval, Unsigned};
 /// always nonnegative (elements of D_inf where the value is >= 0).
 pub type Bounds = Interval<XBinary, UXBinary>;
 
+/// Finite bounds on a value: lower and upper bounds as Binary values.
+///
+/// Unlike [`Bounds`], this type guarantees that both bounds are finite
+/// (no infinities). This is useful for algorithms like bisection that
+/// require finite intervals.
+pub type FiniteBounds = Interval<Binary, UBinary>;
+
 impl Unsigned for BigUint {}
 
 impl AbsDistance<BigInt, BigUint> for BigInt {

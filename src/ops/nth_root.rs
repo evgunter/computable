@@ -26,7 +26,7 @@ use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::bisection::{midpoint, BisectionComparison, bisection_step};
-use crate::binary::{Binary, Bounds, XBinary};
+use crate::binary::{Binary, Bounds, FiniteBounds, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -105,7 +105,8 @@ impl NodeOp for NthRootOp {
                 // Perform one bisection step using the generic helper
                 let degree = self.degree.get();
                 let target = s.target.clone();
-                let result = bisection_step(s.lower.clone(), s.upper.clone(), |mid| {
+                let bounds = FiniteBounds::new(s.lower.clone(), s.upper.clone());
+                let result = bisection_step(bounds, |mid| {
                     let mid_pow = power(mid, degree);
                     match mid_pow.cmp(&target) {
                         std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -113,8 +114,8 @@ impl NodeOp for NthRootOp {
                         std::cmp::Ordering::Greater => BisectionComparison::Below,
                     }
                 });
-                s.lower = result.lower;
-                s.upper = result.upper;
+                s.lower = result.small().clone();
+                s.upper = result.large();
                 Ok(true)
             }
         }

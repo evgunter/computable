@@ -233,6 +233,25 @@ impl fmt::Display for Binary {
     }
 }
 
+impl crate::ordered_pair::AbsDistance<Binary, super::UBinary> for Binary {
+    /// Computes the absolute distance between two Binary values, returning a UBinary.
+    fn abs_distance(self, other: Self) -> super::UBinary {
+        use num_traits::Signed;
+        let diff = Binary::sub(&self, &other);
+        if diff.mantissa().is_negative() {
+            super::UBinary::try_from_binary(&diff.neg()).unwrap_or_else(|_| super::UBinary::zero())
+        } else {
+            super::UBinary::try_from_binary(&diff).unwrap_or_else(|_| super::UBinary::zero())
+        }
+    }
+}
+
+impl crate::ordered_pair::AddWidth<Binary, super::UBinary> for Binary {
+    fn add_width(self, width: super::UBinary) -> Self {
+        Binary::add(&self, &width.to_binary())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
