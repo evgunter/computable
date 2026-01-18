@@ -6,7 +6,6 @@ pub trait AddWidth<T, W> {
 
 pub trait Unsigned {}
 
-/// TODO: require that `width` is positive.
 /// Stores two values ordered so that `large >= small` using a lower bound and width.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interval<T, W>
