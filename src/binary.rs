@@ -34,7 +34,6 @@
 //! (unless the value is zero).
 
 mod binary_impl;
-pub mod bisection;
 mod display;
 mod error;
 mod reciprocal;

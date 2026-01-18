@@ -25,7 +25,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::bisection::{midpoint, BisectionComparison, bisection_step};
+use crate::binary_utils::bisection::{midpoint, BisectionComparison, bisection_step};
 use crate::binary::{Binary, Bounds, FiniteBounds, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};

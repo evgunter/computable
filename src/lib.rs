@@ -49,6 +49,7 @@
 
 // External modules (already exist)
 mod binary;
+pub mod binary_utils;
 mod concurrency;
 mod ordered_pair;
 
