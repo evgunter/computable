@@ -1037,7 +1037,7 @@ fn taylor_sin_bounds(x: &Binary, n: usize) -> (Binary, Binary) {
 
         // Divide by factorial: create Binary with mantissa/factorial and exponent
         // term = term_num / factorial
-        let term = divide_by_factorial(&term_num, &factorial);
+        let term = divide_by_factorial_upperbound(&term_num, &factorial);
         sum = sum.add(&term);
 
         // Prepare for next term: multiply power by x^2
@@ -1055,6 +1055,9 @@ fn taylor_sin_bounds(x: &Binary, n: usize) -> (Binary, Binary) {
     // Return bounds: sum +/- error
     (sum.sub(&error), sum.add(&error))
 }
+
+// TODO: probably it is better to refactor this and divide_by_factorial_upperbound
+// to use the computable paradigm allowing successive refinement
 
 /// Computes |x|^(2n+1) / (2n+1)! as an upper bound on Taylor series truncation error.
 fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
@@ -1080,11 +1083,11 @@ fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
     }
 
     // error = power / factorial
-    divide_by_factorial(&power, &factorial)
+    divide_by_factorial_upperbound(&power, &factorial)
 }
 
 /// Divides a Binary by a BigInt factorial, rounding up for conservative error bounds.
-fn divide_by_factorial(value: &Binary, factorial: &BigInt) -> Binary {
+fn divide_by_factorial_upperbound(value: &Binary, factorial: &BigInt) -> Binary {
     use num_integer::Integer;
     use num_traits::Signed;
 
@@ -1098,7 +1101,7 @@ fn divide_by_factorial(value: &Binary, factorial: &BigInt) -> Binary {
     // We need to compute mantissa / factorial with the result as a Binary.
     // To get a good approximation, we shift the mantissa up by some bits before dividing.
     // The number of bits we shift determines our precision.
-    let precision_bits = 64i64; // Extra precision for intermediate computation
+    let precision_bits = 64_u64; // Extra precision for intermediate computation
 
     // shifted_mantissa = mantissa * 2^precision_bits
     let abs_mantissa = mantissa.magnitude().clone();
