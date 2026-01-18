@@ -52,7 +52,7 @@ impl NodeOp for PowOp {
 
         // TODO: InvalidBoundsOrder should be mathematically impossible here since we
         // carefully compute lower/upper based on monotonicity properties. We should
-        // try to prove this formally or add a debug_assert to demonstrate it.
+        // try to use the type system to constrain this so the error case is unrepresentable.
         Bounds::new_checked(result_lower, result_upper)
             .map_err(|_| ComputableError::InvalidBoundsOrder)
     }
@@ -351,7 +351,7 @@ mod tests {
     fn pow_with_sqrt() {
         // sqrt(2)^2 should be approximately 2
         let two = Computable::constant(bin(2, 0));
-        let sqrt_two = two.nth_root(2);
+        let sqrt_two = two.nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"));
         let squared = sqrt_two.pow(2);
 
         let epsilon = ubin(1, -8);

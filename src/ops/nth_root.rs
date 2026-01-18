@@ -19,6 +19,7 @@
 //! input until the bounds are fully non-negative. This should be fixed to match
 //! the behavior described in the README for sqrt.
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
@@ -41,8 +42,8 @@ use crate::binary::Bounds;
 pub struct NthRootOp {
     /// The input node whose n-th root we're computing.
     pub inner: Arc<Node>,
-    /// The root degree (n in x^(1/n)).
-    pub degree: u32,
+    /// The root degree (n in x^(1/n)). Guaranteed to be >= 1 by the type system.
+    pub degree: NonZeroU32,
     /// Current bisection state: tracks the interval for the root.
     /// 
     /// This is `None` until the first refinement step, which initializes it from
@@ -77,7 +78,7 @@ impl NodeOp for NthRootOp {
         match &*state {
             None => {
                 // Return initial conservative bounds based on input
-                compute_initial_bounds(&input_bounds, self.degree)
+                compute_initial_bounds(&input_bounds, self.degree.get())
             }
             Some(s) => {
                 // Return current bisection interval
@@ -98,13 +99,13 @@ impl NodeOp for NthRootOp {
         match &mut *state {
             None => {
                 // Initialize the bisection state from input bounds
-                *state = Some(initialize_bisection_state(&input_bounds, self.degree)?);
+                *state = Some(initialize_bisection_state(&input_bounds, self.degree.get())?);
                 Ok(true)
             }
             Some(s) => {
                 // Perform one bisection step
                 let mid = midpoint(&s.lower, &s.upper);
-                let mid_pow = power(&mid, self.degree);
+                let mid_pow = power(&mid, self.degree.get());
                 
                 if mid_pow <= s.target {
                     s.lower = mid;
@@ -337,6 +338,11 @@ mod tests {
     use crate::computable::Computable;
     use crate::test_utils::{bin, ubin, unwrap_finite, unwrap_finite_uxbinary};
 
+    /// Helper to create NonZeroU32 from a literal in tests.
+    fn nz(n: u32) -> NonZeroU32 {
+        NonZeroU32::new(n).expect("test degree must be non-zero")
+    }
+
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
@@ -363,7 +369,7 @@ mod tests {
     fn sqrt_of_4() {
         // sqrt(4) = 2
         let four = Computable::constant(bin(4, 0));
-        let sqrt_four = four.nth_root(2);
+        let sqrt_four = four.nth_root(nz(2));
         let epsilon = ubin(1, -8);
         let bounds = sqrt_four
             .refine_to_default(epsilon.clone())
@@ -377,7 +383,7 @@ mod tests {
     fn sqrt_of_2() {
         // sqrt(2) ~= 1.414...
         let two = Computable::constant(bin(2, 0));
-        let sqrt_two = two.nth_root(2);
+        let sqrt_two = two.nth_root(nz(2));
         let epsilon = ubin(1, -8);
         let bounds = sqrt_two
             .refine_to_default(epsilon.clone())
@@ -395,7 +401,7 @@ mod tests {
     fn cbrt_of_8() {
         // cbrt(8) = 2
         let eight = Computable::constant(bin(8, 0));
-        let cbrt_eight = eight.nth_root(3);
+        let cbrt_eight = eight.nth_root(nz(3));
         let epsilon = ubin(1, -8);
         let bounds = cbrt_eight
             .refine_to_default(epsilon.clone())
@@ -409,7 +415,7 @@ mod tests {
     fn cbrt_of_negative_8() {
         // cbrt(-8) = -2
         let neg_eight = Computable::constant(bin(-8, 0));
-        let cbrt_neg_eight = neg_eight.nth_root(3);
+        let cbrt_neg_eight = neg_eight.nth_root(nz(3));
         let epsilon = ubin(1, -8);
         let bounds = cbrt_neg_eight
             .refine_to_default(epsilon.clone())
@@ -423,7 +429,7 @@ mod tests {
     fn fourth_root_of_16() {
         // 16^(1/4) = 2
         let sixteen = Computable::constant(bin(16, 0));
-        let fourth_root = sixteen.nth_root(4);
+        let fourth_root = sixteen.nth_root(nz(4));
         let epsilon = ubin(1, -8);
         let bounds = fourth_root
             .refine_to_default(epsilon.clone())
@@ -437,7 +443,7 @@ mod tests {
     fn sqrt_of_half() {
         // sqrt(0.5) ~= 0.707...
         let half = Computable::constant(bin(1, -1));
-        let sqrt_half = half.nth_root(2);
+        let sqrt_half = half.nth_root(nz(2));
         let epsilon = ubin(1, -8);
         let bounds = sqrt_half
             .refine_to_default(epsilon.clone())
@@ -454,8 +460,8 @@ mod tests {
     #[test]
     fn nth_root_in_expression() {
         // Test that nth_root works in expressions: sqrt(2) + cbrt(8) = sqrt(2) + 2
-        let sqrt_2 = Computable::constant(bin(2, 0)).nth_root(2);
-        let cbrt_8 = Computable::constant(bin(8, 0)).nth_root(3);
+        let sqrt_2 = Computable::constant(bin(2, 0)).nth_root(nz(2));
+        let cbrt_8 = Computable::constant(bin(8, 0)).nth_root(nz(3));
         let sum = sqrt_2 + cbrt_8;
 
         let epsilon = ubin(1, -8);
@@ -475,7 +481,7 @@ mod tests {
     fn sqrt_of_zero() {
         // sqrt(0) = 0
         let zero = Computable::constant(bin(0, 0));
-        let sqrt_zero = zero.nth_root(2);
+        let sqrt_zero = zero.nth_root(nz(2));
         let bounds = sqrt_zero.bounds().expect("bounds should succeed");
 
         let expected = bin(0, 0);
@@ -502,7 +508,7 @@ mod tests {
         // Test even root of a Computable with bounds overlapping zero: [-1, 4]
         // The sqrt should have bounds [0, upper] (since sqrt is only defined for non-negative)
         let interval = interval_computable(-1, 4);
-        let sqrt_interval = interval.nth_root(2);
+        let sqrt_interval = interval.nth_root(nz(2));
         let bounds = sqrt_interval.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
@@ -519,7 +525,7 @@ mod tests {
         // Test odd root of a Computable with bounds overlapping zero: [-8, 27]
         // cbrt(-8) = -2, cbrt(27) = 3, so output should be approximately [-2, 3]
         let interval = interval_computable(-8, 27);
-        let cbrt_interval = interval.nth_root(3);
+        let cbrt_interval = interval.nth_root(nz(3));
         let bounds = cbrt_interval.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
