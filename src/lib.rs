@@ -67,3 +67,4 @@ pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT
 pub use error::ComputableError;
 pub use binary::Bounds;
 pub use ordered_pair::{Interval, IntervalError};
+pub use ops::pi;
