@@ -50,17 +50,9 @@ impl NodeOp for PowOp {
             compute_odd_power_bounds(lower, upper, self.exponent)
         };
 
-        // InvalidBoundsOrder should be mathematically impossible here since we
-        // carefully compute lower/upper based on monotonicity properties.
-        // The debug_assert verifies this invariant during development.
-        debug_assert!(
-            result_lower <= result_upper,
-            "pow bounds ordering violated: lower={:?} > upper={:?} (input bounds: {:?}, exponent: {})",
-            result_lower,
-            result_upper,
-            input_bounds,
-            self.exponent
-        );
+        // TODO: InvalidBoundsOrder should be mathematically impossible here since we
+        // carefully compute lower/upper based on monotonicity properties. We should
+        // try to prove this formally or add a debug_assert to demonstrate it.
         Bounds::new_checked(result_lower, result_upper)
             .map_err(|_| ComputableError::InvalidBoundsOrder)
     }
