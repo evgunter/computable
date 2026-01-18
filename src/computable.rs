@@ -247,7 +247,6 @@ mod tests {
     use super::*;
     use crate::binary::UBinary;
     use num_bigint::BigUint;
-    use num_traits::One;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
@@ -255,10 +254,6 @@ mod tests {
 
     fn ubin(mantissa: u64, exponent: i64) -> UBinary {
         UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
     }
 
     fn unwrap_finite(input: &XBinary) -> Binary {
@@ -270,28 +265,8 @@ mod tests {
         }
     }
 
-    fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
-        let mid_sum = unwrap_finite(lower).add(&unwrap_finite(upper));
-        let exponent = mid_sum.exponent() - BigInt::one();
-        Binary::new(mid_sum.mantissa().clone(), exponent)
-    }
-
     fn sqrt_computable(value_int: u64) -> Computable {
-        let interval_state = Bounds::new(xbin(1, 0), xbin(value_int as i64, 0));
-        let bounds = |inner_state: &Bounds| Ok(inner_state.clone());
-        let refine = move |inner_state: Bounds| {
-            let mid = midpoint_between(inner_state.small(), &inner_state.large());
-            let mid_sq = mid.mul(&mid);
-            let value = bin(value_int as i64, 0);
-
-            if mid_sq <= value {
-                Bounds::new(XBinary::Finite(mid), inner_state.large().clone())
-            } else {
-                Bounds::new(inner_state.small().clone(), XBinary::Finite(mid))
-            }
-        };
-
-        Computable::new(interval_state, bounds, refine)
+        Computable::constant(bin(value_int as i64, 0)).nth_root(2)
     }
 
     #[test]
