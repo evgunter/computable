@@ -12,7 +12,7 @@ use std::sync::Arc;
 use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::error::ComputableError;
-use crate::ordered_pair::Bounds;
+use crate::binary::Bounds;
 
 /// Shared API for retrieving bounds with lazy computation.
 pub trait BoundsAccess {

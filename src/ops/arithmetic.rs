@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::ordered_pair::Bounds;
+use crate::binary::Bounds;
 
 /// Negation operation.
 pub struct NegOp {
@@ -115,7 +115,7 @@ mod tests {
 
     use crate::binary::{Binary, XBinary};
     use crate::computable::Computable;
-    use crate::ordered_pair::Bounds;
+    use crate::binary::Bounds;
     use num_bigint::BigInt;
     use num_traits::One;
 

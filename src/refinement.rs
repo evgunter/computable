@@ -28,7 +28,7 @@ use crate::binary::{UBinary, UXBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
-use crate::ordered_pair::Bounds;
+use crate::binary::Bounds;
 
 /// Command sent to a refiner thread.
 #[derive(Clone, Copy)]

@@ -13,7 +13,7 @@ use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, SinOp};
-use crate::ordered_pair::Bounds;
+use crate::binary::Bounds;
 use crate::refinement::{bounds_width_leq, RefinementGraph};
 
 use parking_lot::RwLock;

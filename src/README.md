@@ -7,67 +7,63 @@ This document describes the module organization and dependencies.
 Each module's internal dependencies (from `use crate::*`):
 
 ```
-computable.rs      → binary, error, node, ops, ordered_pair, refinement
-refinement.rs      → binary, concurrency, error, node, ordered_pair
-node.rs            → error, ordered_pair
-ops/arithmetic.rs  → error, node, ordered_pair
-ops/base.rs        → error, node, ordered_pair
-ops/inv.rs         → binary, error, node, ordered_pair
-ops/sin.rs         → binary, error, node, ordered_pair
-ordered_pair.rs    → binary
-error.rs           → binary
-concurrency.rs     → (none)
+computable.rs      → binary, error, node, ops, refinement
+refinement.rs      → binary, concurrency, error, node
+node.rs            → binary, error
+ops/arithmetic.rs  → binary, error, node
+ops/base.rs        → binary, error, node
+ops/inv.rs         → binary, error, node
+ops/sin.rs         → binary, error, node
+binary.rs          → ordered_pair
 binary/binary_impl → ordered_pair
 binary/ubinary     → ordered_pair
 binary/uxbinary    → ordered_pair
+error.rs           → binary
+ordered_pair.rs    → (none)
+concurrency.rs     → (none)
 ```
-
-Note: `binary ↔ ordered_pair` is a mutual dependency. This works in Rust
-because module resolution happens at the crate level.
 
 ### Visual Overview
 
+Arrows show direct dependencies (transitive edges omitted):
+
 ```
-                    ┌─────────────────────────────────────────┐
-                    │               lib.rs                    │
-                    │          (public API exports)           │
-                    └─────────────────────────────────────────┘
-                                       │
-       ┌───────────────┬───────────────┼───────────────┬──────────────┐
-       ▼               ▼               ▼               ▼              ▼
-  computable     ordered_pair ◄────► binary         error       concurrency
-       │               │               ▲               ▲              ▲
-       │               │    (mutual)   │               │              │
-       │               └───────────────┤               │              │
-       │                               │               │              │
-       ▼                               │               │              │
-  refinement ──────────────────────────┴───────────────┴──────────────┘
-       │
-       ▼
-     node ─────────────────────────────────────────────┐
-       │                                               │
-       ▼                                               ▼
-     ops/ ─────────────────────────────────────► error, ordered_pair
-       │
-       │ (inv.rs, sin.rs only)
-       ▼
-    binary
+        computable
+           / \
+          ▼   ▼
+   refinement  ops/
+      /  \      |
+     ▼    \     |
+concurrency \   |
+             \  |
+              ▼ ▼
+              node
+                |
+                ▼
+              error
+                |
+                ▼
+              binary
+                |
+                ▼
+           ordered_pair
 ```
 
 ### Dependency Matrix
 
 ```
                  binary  concurr  error  node  ops  ordered_pair  refinement
-computable.rs      ✓                ✓      ✓     ✓        ✓            ✓
-refinement.rs      ✓        ✓       ✓      ✓              ✓
-node.rs                             ✓                     ✓
-ops/arithmetic.rs                   ✓      ✓              ✓
-ops/base.rs                         ✓      ✓              ✓
-ops/inv.rs         ✓                ✓      ✓              ✓
-ops/sin.rs         ✓                ✓      ✓              ✓
-ordered_pair.rs    ✓
+computable.rs      ✓                ✓      ✓     ✓                    ✓
+refinement.rs      ✓        ✓       ✓      ✓
+node.rs            ✓                ✓
+ops/arithmetic.rs  ✓                ✓      ✓
+ops/base.rs        ✓                ✓      ✓
+ops/inv.rs         ✓                ✓      ✓
+ops/sin.rs         ✓                ✓      ✓
+binary/*                                                 ✓
 error.rs           ✓
-binary/*           ·                                      ✓ (mutual)
+ordered_pair.rs
+concurrency.rs
 ```
 
 ## Module Descriptions

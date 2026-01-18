@@ -9,7 +9,7 @@ use parking_lot::RwLock;
 use crate::binary::{reciprocal_rounded_abs_extended, ReciprocalRounding, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::ordered_pair::Bounds;
+use crate::binary::Bounds;
 
 /// Initial precision bits to start with for inv refinement.
 /// Starting at a reasonable value avoids unnecessary early iterations.
@@ -103,7 +103,7 @@ mod tests {
 
     use crate::binary::{Binary, UBinary, UXBinary, XBinary};
     use crate::computable::Computable;
-    use crate::ordered_pair::Bounds;
+    use crate::binary::Bounds;
     use num_bigint::{BigInt, BigUint};
     use num_traits::One;
 

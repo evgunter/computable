@@ -63,4 +63,5 @@ mod refinement;
 pub use binary::{Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError};
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
 pub use error::ComputableError;
-pub use ordered_pair::{Bounds, Interval, IntervalError};
+pub use binary::Bounds;
+pub use ordered_pair::{Interval, IntervalError};

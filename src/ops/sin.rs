@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::ordered_pair::Bounds;
+use crate::binary::Bounds;
 
 /// Sine operation with Taylor series refinement.
 pub struct SinOp {
