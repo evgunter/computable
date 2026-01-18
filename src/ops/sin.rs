@@ -244,7 +244,9 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
     // Take max, with reasonable bounds
     let precision = precision_for_branch.max(precision_for_answer);
 
-    // Ensure at least 64 bits, at most 256 bits (reasonable limits)
+    // TODO(correctness): Capping at 256 bits may not provide sufficient pi precision for very
+    // large inputs or high-precision requirements. Should either remove the cap or make it
+    // scale with input magnitude. Severity: Low-Medium.
     precision.clamp(64, 256)
 }
 
@@ -264,6 +266,10 @@ fn reduce_to_pi_range_interval(
     let mut current = input.clone();
 
     // Iterate reduction until we're in range (at most a few iterations needed)
+    // TODO(correctness): For extremely large inputs where |x| >> 2^10 * 2*pi, ten iterations
+    // may not be enough. The fallback "return what we have" could return an interval outside
+    // [-pi, pi]. Should compute k analytically instead of iterating, or increase limit.
+    // Severity: Low - would require astronomically large inputs to trigger.
     for _ in 0..10 {
         // Check if already in range: [-pi_lo, pi_lo] is the "safe" inner range
         // We use inner bounds to be conservative
@@ -523,7 +529,15 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
         }
     }
 }
+
 /// Truncates a Binary to at most `precision_bits` of mantissa.
+///
+/// TODO(correctness): Truncating discards precision without tracking the error. The truncation
+/// error is NOT added to the final bounds, which could make bounds slightly too tight.
+/// For negative values, truncation rounds toward zero (making the value larger), which could
+/// cause the lower bound of sin to be too high. Should either: (1) add truncation error to
+/// the result interval, (2) use directed rounding (floor for lower, ceil for upper), or
+/// (3) use full precision. Severity: Medium.
 fn truncate_precision(x: &Binary, precision_bits: usize) -> Binary {
     let mantissa = x.mantissa();
     let exponent = x.exponent();
