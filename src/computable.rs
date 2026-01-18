@@ -12,7 +12,7 @@ use num_traits::{One, Zero};
 use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
-use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, SinOp};
+use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PowOp, SinOp};
 use crate::binary::Bounds;
 use crate::refinement::{bounds_width_leq, RefinementGraph};
 
@@ -159,6 +159,34 @@ impl Computable {
             inner: Arc::clone(&self.node),
             degree,
             bisection_state: RwLock::new(None),
+        }));
+        Self { node }
+    }
+
+    /// Raises this computable number to an integer power.
+    ///
+    /// Computes x^n for positive integer exponents. This is more efficient than
+    /// repeated multiplication because it computes bounds directly using the
+    /// monotonicity properties of power functions.
+    ///
+    /// # Arguments
+    /// * `exponent` - The power to raise to (n in x^n). Must be >= 1.
+    ///
+    /// # Bounds Computation
+    /// - For odd exponents: x^n is monotonically increasing, so bounds are [lower^n, upper^n]
+    /// - For even exponents: x^n has a minimum at 0
+    ///   - If interval is non-negative: [lower^n, upper^n]
+    ///   - If interval is non-positive: [upper^n, lower^n]
+    ///   - If interval spans zero: [0, max(|lower|^n, |upper|^n)]
+    ///
+    /// # Examples
+    /// - `pow(2)` computes the square
+    /// - `pow(3)` computes the cube
+    pub fn pow(self, exponent: u32) -> Self {
+        assert!(exponent >= 1, "Exponent must be at least 1");
+        let node = Node::new(Arc::new(PowOp {
+            inner: Arc::clone(&self.node),
+            exponent,
         }));
         Self { node }
     }
