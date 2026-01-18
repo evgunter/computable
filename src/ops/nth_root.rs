@@ -129,13 +129,11 @@ fn compute_initial_bounds(input_bounds: &Bounds, degree: u32) -> Result<Bounds, 
     let (lower_bin, upper_bin) = match (lower, upper) {
         (XBinary::Finite(l), XBinary::Finite(u)) => (l, u),
         (XBinary::NegInf, _) | (_, XBinary::PosInf) => {
-            if is_even {
-                // Even root of potentially negative values or infinite range
-                return Ok(Bounds::new(XBinary::Finite(Binary::zero()), XBinary::PosInf));
+            return Ok(if is_even {
+                Bounds::new(XBinary::Finite(Binary::zero()), XBinary::PosInf)
             } else {
-                // Odd root: preserve sign behavior
-                return Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf));
-            }
+                Bounds::new(XBinary::NegInf, XBinary::PosInf)
+            });
         }
         // NegInf can only be lower bound, PosInf can only be upper bound,
         // so remaining cases like (Finite, NegInf) or (PosInf, Finite) are
@@ -146,55 +144,53 @@ fn compute_initial_bounds(input_bounds: &Bounds, degree: u32) -> Result<Bounds, 
         }
     };
     
-    // Check for negative values with even roots
-    if is_even && lower_bin.mantissa().is_negative() {
-        if upper_bin.mantissa().is_negative() || upper_bin.mantissa().is_zero() {
-            // Entirely negative: no real n-th root for even n
-            return Err(ComputableError::DomainError);
-        }
-        // Interval spans zero: root is in [0, root(upper)]
-        let upper_root_bound = compute_root_upper_bound(upper_bin, degree);
-        return Ok(Bounds::new(XBinary::Finite(Binary::zero()), XBinary::Finite(upper_root_bound)));
-    }
-    
-    // For odd roots of negative values, we negate and take the root.
-    // Note: cbrt(x) = -cbrt(|x|) for negative x, so:
+    // For odd roots of negative values: cbrt(x) = -cbrt(|x|), so:
     // - To get a LOWER bound on cbrt(x), we need an UPPER bound on cbrt(|x|), then negate
     // - To get an UPPER bound on cbrt(x), we need a LOWER bound on cbrt(|x|), then negate
-    if !is_even && lower_bin.mantissa().is_negative() {
-        // Handle mixed sign intervals
-        if upper_bin.mantissa().is_positive() {
+    
+    if lower_bin.mantissa().is_negative() {
+        // Lower bound is negative
+        let upper_is_positive = upper_bin.mantissa().is_positive();
+        
+        if is_even {
+            if !upper_is_positive {
+                // Entirely negative: no real n-th root for even n
+                return Err(ComputableError::DomainError);
+            }
+            // Interval spans zero: root is in [0, root(upper)]
+            let upper_root = compute_root_upper_bound(upper_bin, degree);
+            return Ok(Bounds::new(XBinary::Finite(Binary::zero()), XBinary::Finite(upper_root)));
+        }
+        
+        // Odd root of interval with negative lower bound
+        if upper_is_positive {
             // Interval spans zero
             let neg_lower = lower_bin.neg();
-            // lower_root_bound <= cbrt(lower) means we need upper_bound(cbrt(|lower|)).neg()
-            let lower_root_bound = compute_root_upper_bound(&neg_lower, degree).neg();
-            let upper_root_bound = compute_root_upper_bound(upper_bin, degree);
-            return Ok(Bounds::new(XBinary::Finite(lower_root_bound), XBinary::Finite(upper_root_bound)));
+            let lower_root = compute_root_upper_bound(&neg_lower, degree).neg();
+            let upper_root = compute_root_upper_bound(upper_bin, degree);
+            return Ok(Bounds::new(XBinary::Finite(lower_root), XBinary::Finite(upper_root)));
         }
+        
         // Entirely negative: both bounds are negative
+        // lower has larger magnitude than upper (more negative), so |lower| > |upper|
+        // and cbrt(lower) < cbrt(upper) (both negative)
         let neg_lower = lower_bin.neg();
         let neg_upper = upper_bin.neg();
-        // lower_root <= cbrt(lower) means upper_bound(cbrt(|lower|)).neg()
-        // but lower has larger magnitude than upper (more negative), so |lower| > |upper|
-        // and cbrt(lower) < cbrt(upper) (both negative)
-        // So lower_root uses neg_upper (smaller magnitude), upper_root uses neg_lower (larger magnitude)
         let lower_root = compute_root_lower_bound(&neg_upper, degree).neg();
         let upper_root = compute_root_upper_bound(&neg_lower, degree).neg();
         return Ok(Bounds::new(XBinary::Finite(lower_root), XBinary::Finite(upper_root)));
     }
     
-    // Both bounds are non-negative
-    let binary_zero = Binary::zero();
-    if lower_bin <= &binary_zero && upper_bin >= &binary_zero {
-        // Interval contains zero
-        let upper_root_bound = compute_root_upper_bound(upper_bin, degree);
-        return Ok(Bounds::new(XBinary::Finite(Binary::zero()), XBinary::Finite(upper_root_bound)));
+    // Lower bound is non-negative
+    if lower_bin.mantissa().is_zero() {
+        // Interval starts at zero
+        let upper_root = compute_root_upper_bound(upper_bin, degree);
+        return Ok(Bounds::new(XBinary::Finite(Binary::zero()), XBinary::Finite(upper_root)));
     }
     
-    // Entirely positive
+    // Entirely positive (lower > 0)
     let lower_root = compute_root_lower_bound(lower_bin, degree);
     let upper_root = compute_root_upper_bound(upper_bin, degree);
-    
     Ok(Bounds::new(XBinary::Finite(lower_root), XBinary::Finite(upper_root)))
 }
 
