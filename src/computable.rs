@@ -4,6 +4,7 @@
 //! It is backed by a computation graph where leaf nodes contain user-defined
 //! state and refinement logic, and interior nodes represent arithmetic operations.
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
@@ -143,19 +144,17 @@ impl Computable {
     /// correct bounds. For each refinement step, the interval is halved.
     ///
     /// # Arguments
-    /// * `degree` - The root degree (n in x^(1/n)). Must be >= 1.
+    /// * `degree` - The root degree (n in x^(1/n)). Must be >= 1, enforced by the type system.
     ///
     /// # Constraints
     /// - For even degrees (2, 4, 6, ...): requires non-negative input
     /// - For odd degrees (3, 5, 7, ...): supports all real inputs
     ///
     /// # Examples
-    /// - `nth_root(2)` computes the square root
-    /// - `nth_root(3)` computes the cube root
-    /// - `nth_root(4)` computes the fourth root
-    // TODO: Refactor to remove this assert in non-test code.
-    pub fn nth_root(self, degree: u32) -> Self {
-        assert!(degree >= 1, "Root degree must be at least 1");
+    /// - `nth_root(NonZeroU32::new(2).unwrap())` computes the square root
+    /// - `nth_root(NonZeroU32::new(3).unwrap())` computes the cube root
+    /// - `nth_root(NonZeroU32::new(4).unwrap())` computes the fourth root
+    pub fn nth_root(self, degree: NonZeroU32) -> Self {
         let node = Node::new(Arc::new(NthRootOp {
             inner: Arc::clone(&self.node),
             degree,
@@ -284,7 +283,8 @@ mod tests {
     use crate::test_utils::{bin, ubin, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        Computable::constant(bin(value_int as i64, 0)).nth_root(2)
+        Computable::constant(bin(value_int as i64, 0))
+            .nth_root(NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
     #[test]

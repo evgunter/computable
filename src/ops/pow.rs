@@ -351,7 +351,7 @@ mod tests {
     fn pow_with_sqrt() {
         // sqrt(2)^2 should be approximately 2
         let two = Computable::constant(bin(2, 0));
-        let sqrt_two = two.nth_root(2);
+        let sqrt_two = two.nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"));
         let squared = sqrt_two.pow(2);
 
         let epsilon = ubin(1, -8);

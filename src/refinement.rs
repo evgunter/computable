@@ -326,7 +326,8 @@ mod tests {
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        Computable::constant(bin(value_int as i64, 0)).nth_root(2)
+        Computable::constant(bin(value_int as i64, 0))
+            .nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
     fn assert_width_nonnegative(bounds: &Bounds) {
