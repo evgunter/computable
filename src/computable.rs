@@ -153,8 +153,7 @@ impl Computable {
     /// - `nth_root(2)` computes the square root
     /// - `nth_root(3)` computes the cube root
     /// - `nth_root(4)` computes the fourth root
-    // TODO: Refactor to remove this assert. Options include returning self for degree=0
-    // (since x^(1/0) is undefined, but we could define it as identity or error gracefully).
+    // TODO: Refactor to remove this assert in non-test code.
     pub fn nth_root(self, degree: u32) -> Self {
         assert!(degree >= 1, "Root degree must be at least 1");
         let node = Node::new(Arc::new(NthRootOp {
