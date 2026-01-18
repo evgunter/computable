@@ -123,13 +123,10 @@ impl Computable {
     /// Computes the sine of this computable number.
     ///
     /// Uses Taylor series with provably correct error bounds.
-    /// The error bound |x|^(2n+1)/(2n+1)! is computed conservatively (rounded up)
+    /// The implementation uses directed rounding throughout: the lower bound computation
+    /// rounds toward negative infinity and the upper bound rounds toward positive infinity.
+    /// The error bound |x|^(2n+1)/(2n+1)! is also computed conservatively (rounded up)
     /// to ensure the true value is always contained within the returned bounds.
-    ///
-    /// TODO: Ideally, we'd round differently for lower vs upper bounds in the sum
-    /// computation (round down for lower, round up for upper). Currently we round up
-    /// for the error bound which covers intermediate rounding, but directed rounding
-    /// throughout would be more precise.
     pub fn sin(self) -> Self {
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
