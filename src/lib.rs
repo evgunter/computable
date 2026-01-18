@@ -203,6 +203,8 @@ impl Computable {
         &self,
         epsilon: UBinary,
     ) -> Result<Bounds, ComputableError> {
+        // TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
+        // (e.g. as-is, sqrt(4) may never refine to a width of 0 because we just use binary search)
         if epsilon.mantissa().is_zero() {
             return Err(ComputableError::NonpositiveEpsilon);
         }
@@ -1528,14 +1530,14 @@ mod tests {
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
-        let width = unwrap_finite_ubinary(bounds.width());
+        let width = unwrap_finite_uxbinary(bounds.width());
         let upper = unwrap_finite(&upper_xb);
 
         assert!(lower <= *expected && *expected <= upper);
         assert!(width <= *epsilon);
     }
 
-    fn unwrap_finite_ubinary(input: &UXBinary) -> UBinary {
+    fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
         match input {
             UXBinary::Finite(value) => value.clone(),
             UXBinary::PosInf => {
@@ -1549,8 +1551,6 @@ mod tests {
     }
 
     // --- tests for different results of refinement (mostly errors) ---
-
-    // Note: negative epsilon is now impossible at the type level since we use UBinary
 
     #[test]
     fn computable_refine_to_rejects_zero_epsilon() {
@@ -1569,7 +1569,7 @@ mod tests {
             .expect("refine_to should succeed");
         let expected = xbin(1, 0);
         let upper = bounds.large();
-        let width = unwrap_finite_ubinary(bounds.width());
+        let width = unwrap_finite_uxbinary(bounds.width());
 
         assert!(bounds.small() <= &expected && &expected <= &upper);
         assert!(width < epsilon);

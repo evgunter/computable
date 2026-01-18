@@ -44,7 +44,7 @@ sadly, the implementation cannot exactly realize the formalism.
 - parallelism: if an expression being refined has multiple components that need to be refined separately, those sub-refinements run in parallel.
 
 ## threading model
-the implementation spawns one thread per refiner node (base computable numbers and `inv` operations) using `std::thread::scope`. there is no thread pool or work-stealing; threads are created per refinement call and cleaned up when refinement completes.
+the implementation spawns one thread per refiner node (base computable numbers and `inv` operations) using `std::thread::scope`. there is no thread pool or work-stealing; threads are created per refinement call and cleaned up when refinement completes. this may need to be modified to improve performance.
 
 ## design
 - i use the term 'composition' to refer to a computable number which contains multiple base computable numbers. for example, $\sqrt{a + ab}$ is a composition. $a + a$ is also considered a composition even though the constituent computable numbers are identical. (however, $2a$ is not a composition; it has only a single constituent to refine.)
