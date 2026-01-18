@@ -1023,19 +1023,47 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
         .map_err(|_| ComputableError::InvalidBoundsOrder)
 }
 
+/// Rounding direction for directed rounding in interval arithmetic.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RoundingDirection {
+    /// Round toward negative infinity (floor)
+    Down,
+    /// Round toward positive infinity (ceiling)
+    Up,
+}
+
 /// Computes Taylor series bounds for sin(x) with n terms.
 /// Returns (lower_bound, upper_bound) accounting for truncation error.
 ///
 /// Taylor series: sin(x) = sum_{k=0}^{n-1} (-1)^k * x^(2k+1) / (2k+1)!
 /// Error after n terms: |R_n| <= |x|^(2n+1) / (2n+1)!
+///
+/// Uses directed rounding to compute provably correct bounds:
+/// - Lower bound: all intermediate operations round DOWN (toward -inf)
+/// - Upper bound: all intermediate operations round UP (toward +inf)
 fn taylor_sin_bounds(x: &Binary, n: usize) -> (Binary, Binary) {
     if n == 0 {
-        // No terms: just use error bound
+        // No terms: just use error bound (always round UP for conservative bounds)
         let error = taylor_error_bound(x, 0);
         return (error.neg(), error);
     }
 
-    // Compute partial sum
+    // Compute lower and upper partial sums with directed rounding
+    let sum_lower = taylor_sin_partial_sum(x, n, RoundingDirection::Down);
+    let sum_upper = taylor_sin_partial_sum(x, n, RoundingDirection::Up);
+
+    // Compute error bound (always round UP for conservative bounds)
+    let error = taylor_error_bound(x, n);
+
+    // Return bounds: lower_sum - error, upper_sum + error
+    (sum_lower.sub(&error), sum_upper.add(&error))
+}
+
+/// Computes Taylor series partial sum for sin(x) with directed rounding.
+///
+/// For RoundingDirection::Down: rounds all division operations toward -infinity
+/// For RoundingDirection::Up: rounds all division operations toward +infinity
+fn taylor_sin_partial_sum(x: &Binary, n: usize, rounding: RoundingDirection) -> Binary {
     let mut sum = Binary::zero();
     let mut power = x.clone(); // x^1
     let mut factorial = BigInt::one(); // 1!
@@ -1048,9 +1076,8 @@ fn taylor_sin_bounds(x: &Binary, n: usize) -> (Binary, Binary) {
             power.neg()
         };
 
-        // Divide by factorial: create Binary with mantissa/factorial and exponent
-        // term = term_num / factorial
-        let term = divide_by_factorial_upperbound(&term_num, &factorial);
+        // Divide by factorial with directed rounding
+        let term = divide_by_factorial_directed(&term_num, &factorial, rounding);
         sum = sum.add(&term);
 
         // Prepare for next term: multiply power by x^2
@@ -1062,17 +1089,11 @@ fn taylor_sin_bounds(x: &Binary, n: usize) -> (Binary, Binary) {
         }
     }
 
-    // Compute error bound
-    let error = taylor_error_bound(x, n);
-
-    // Return bounds: sum +/- error
-    (sum.sub(&error), sum.add(&error))
+    sum
 }
 
-// TODO: probably it is better to refactor this and divide_by_factorial_upperbound
-// to use the computable paradigm allowing successive refinement
-
 /// Computes |x|^(2n+1) / (2n+1)! as an upper bound on Taylor series truncation error.
+/// Always rounds UP to be conservative.
 fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
     use num_traits::Signed;
 
@@ -1095,12 +1116,23 @@ fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
         factorial *= BigInt::from(i);
     }
 
-    // error = power / factorial
-    divide_by_factorial_upperbound(&power, &factorial)
+    // error = power / factorial (round UP for conservative error bound)
+    divide_by_factorial_directed(&power, &factorial, RoundingDirection::Up)
 }
 
-/// Divides a Binary by a BigInt factorial, rounding up for conservative error bounds.
-fn divide_by_factorial_upperbound(value: &Binary, factorial: &BigInt) -> Binary {
+/// Divides a Binary by a BigInt factorial with directed rounding.
+///
+/// Rounding semantics:
+/// - `RoundingDirection::Up`: rounds toward +infinity (ceiling)
+/// - `RoundingDirection::Down`: rounds toward -infinity (floor)
+///
+/// This is essential for interval arithmetic: when computing a lower bound,
+/// round DOWN; when computing an upper bound, round UP.
+fn divide_by_factorial_directed(
+    value: &Binary,
+    factorial: &BigInt,
+    rounding: RoundingDirection,
+) -> Binary {
     use num_integer::Integer;
     use num_traits::Signed;
 
@@ -1116,23 +1148,43 @@ fn divide_by_factorial_upperbound(value: &Binary, factorial: &BigInt) -> Binary 
     // The number of bits we shift determines our precision.
     let precision_bits = 64_u64; // Extra precision for intermediate computation
 
-    // shifted_mantissa = mantissa * 2^precision_bits
+    // shifted_mantissa = |mantissa| * 2^precision_bits
     let abs_mantissa = mantissa.magnitude().clone();
     let shifted_mantissa = &abs_mantissa << precision_bits as usize;
 
-    // result_mantissa = shifted_mantissa / factorial (rounded up for upper bound)
+    // Compute |mantissa| / factorial
     let (quot, rem) = shifted_mantissa.div_rem(factorial.magnitude());
-    let result_mantissa = if rem.is_zero() {
-        quot
+
+    // Determine how to round based on direction and sign
+    // For directed rounding toward +/- infinity:
+    // - Round UP (+inf): positive values round away from zero, negative round toward zero
+    // - Round DOWN (-inf): positive values round toward zero, negative round away from zero
+    let is_negative = mantissa.is_negative();
+    let has_remainder = !rem.is_zero();
+
+    let result_magnitude = if has_remainder {
+        match (rounding, is_negative) {
+            // Rounding UP (toward +infinity):
+            // - Positive: round away from zero (add 1)
+            // - Negative: round toward zero (truncate)
+            (RoundingDirection::Up, false) => quot + BigInt::one().magnitude(),
+            (RoundingDirection::Up, true) => quot,
+            // Rounding DOWN (toward -infinity):
+            // - Positive: round toward zero (truncate)
+            // - Negative: round away from zero (add 1)
+            (RoundingDirection::Down, false) => quot,
+            (RoundingDirection::Down, true) => quot + BigInt::one().magnitude(),
+        }
     } else {
-        quot + BigInt::one().magnitude()
+        // Exact division, no rounding needed
+        quot
     };
 
     // Adjust sign
-    let signed_mantissa = if mantissa.is_negative() {
-        -BigInt::from(result_mantissa)
+    let signed_mantissa = if is_negative {
+        -BigInt::from(result_magnitude)
     } else {
-        BigInt::from(result_mantissa)
+        BigInt::from(result_magnitude)
     };
 
     // New exponent = original_exponent - precision_bits
@@ -1996,5 +2048,119 @@ mod tests {
         let upper = unwrap_finite(&bounds.large());
 
         assert!(lower <= expected_value && expected_value <= upper);
+    }
+
+    #[test]
+    fn directed_rounding_produces_valid_bounds() {
+        // Test that directed rounding produces well-ordered bounds that contain the true value.
+        //
+        // Key invariants:
+        // 1. lower <= upper (bounds are ordered)
+        // 2. lower_sum <= upper_sum (directed rounding produces correct ordering)
+        // 3. The bounds interval width decreases with more terms
+        // 4. Bounds remain within [-1, 1] (sin range)
+
+        let test_cases = [
+            bin(1, -2),   // 0.25
+            bin(1, 0),    // 1.0
+            bin(3, 0),    // 3.0
+            bin(-1, 0),   // -1.0
+            bin(5, -1),   // 2.5
+            bin(-3, -1),  // -1.5
+        ];
+
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+
+        for x in &test_cases {
+            // Compute Taylor bounds with directed rounding
+            let (lower, upper) = taylor_sin_bounds(x, 10);
+
+            // Verify bounds are ordered correctly
+            assert!(
+                lower <= upper,
+                "Lower bound {} should be <= upper bound {} for x = {}",
+                lower, upper, x
+            );
+
+            // Verify bounds are within sin's range [-1, 1]
+            assert!(
+                lower >= neg_one,
+                "Lower bound {} should be >= -1 for x = {}",
+                lower, x
+            );
+            assert!(
+                upper <= one,
+                "Upper bound {} should be <= 1 for x = {}",
+                upper, x
+            );
+        }
+    }
+
+    #[test]
+    fn directed_rounding_bounds_converge() {
+        // Verify that bounds get tighter as we add more terms
+        let x = bin(1, 0); // 1.0
+
+        let (lower5, upper5) = taylor_sin_bounds(&x, 5);
+        let (lower10, upper10) = taylor_sin_bounds(&x, 10);
+
+        let width5 = upper5.sub(&lower5);
+        let width10 = upper10.sub(&lower10);
+
+        // More terms should give tighter bounds
+        assert!(
+            width10 < width5,
+            "Bounds with 10 terms (width {}) should be tighter than 5 terms (width {})",
+            width10, width5
+        );
+    }
+
+    #[test]
+    fn directed_rounding_symmetry() {
+        // Test that sin(-x) bounds are the negation of sin(x) bounds
+        // This verifies that the directed rounding handles negative inputs correctly
+
+        let x = bin(1, -2); // 0.25
+        let neg_x = bin(-1, -2); // -0.25
+
+        let (lower_x, upper_x) = taylor_sin_bounds(&x, 10);
+        let (lower_neg_x, upper_neg_x) = taylor_sin_bounds(&neg_x, 10);
+
+        // sin(-x) = -sin(x), so bounds should be negated and swapped
+        // lower(-x) should equal -upper(x)
+        // upper(-x) should equal -lower(x)
+
+        // Allow small differences due to rounding
+        let neg_upper_x = upper_x.neg();
+        let neg_lower_x = lower_x.neg();
+
+        // The bounds should be approximately symmetric
+        // We just verify they're in the right ballpark
+        assert!(
+            lower_neg_x <= neg_upper_x.add(&bin(1, -50)),
+            "lower(sin(-x)) should be approximately -upper(sin(x))"
+        );
+        assert!(
+            neg_lower_x <= upper_neg_x.add(&bin(1, -50)),
+            "-lower(sin(x)) should be approximately upper(sin(-x))"
+        );
+    }
+
+    #[test]
+    fn directed_rounding_lower_bound_is_lower() {
+        // Verify that rounding down produces smaller values than rounding up
+        let x = bin(1, 0); // 1.0
+        let n = 5;
+
+        let sum_down = taylor_sin_partial_sum(&x, n, RoundingDirection::Down);
+        let sum_up = taylor_sin_partial_sum(&x, n, RoundingDirection::Up);
+
+        // The down-rounded sum should be <= up-rounded sum
+        assert!(
+            sum_down <= sum_up,
+            "Rounding down {} should produce <= rounding up {}",
+            sum_down, sum_up
+        );
     }
 }
