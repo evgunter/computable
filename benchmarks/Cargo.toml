@@ -1,0 +1,15 @@
+[package]
+name = "computable-benchmarks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "benchmarks"
+path = "src/main.rs"
+
+[dependencies]
+computable = { path = ".." }
+num-bigint = "0.4"
+num-traits = "0.2"
+rand = "0.8"
