@@ -232,14 +232,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
-    }
+    use crate::test_utils::xbin;
 
     #[test]
     fn xbinary_from_f64_handles_special_values() {

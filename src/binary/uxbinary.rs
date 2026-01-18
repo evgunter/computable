@@ -202,20 +202,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use super::super::binary_impl::Binary;
-    use num_bigint::{BigInt, BigUint};
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
-    }
+    use crate::test_utils::{bin, ubin, xbin};
 
     #[test]
     fn uxbinary_zero_is_zero() {

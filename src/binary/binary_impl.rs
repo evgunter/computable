@@ -238,10 +238,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
+    use crate::test_utils::bin;
 
     #[test]
     fn binary_normalizes_even_mantissa() {

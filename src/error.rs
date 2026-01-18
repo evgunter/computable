@@ -9,10 +9,6 @@
 //!
 //! Currently we use `debug_assert!` in some places (e.g., impossible bounds ordering
 //! in nth_root), but this should be consistent across the codebase.
-//!
-//! TODO: Create a test utilities module (e.g., `src/test_utils.rs` with `#[cfg(test)]`)
-//! containing common helper functions like `bin`, `ubin`, `xbin`, `unwrap_finite`, etc.
-//! These are currently duplicated across multiple test modules.
 
 use crate::binary::BinaryError;
 use std::fmt;

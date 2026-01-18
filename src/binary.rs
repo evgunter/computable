@@ -85,15 +85,7 @@ mod integration_tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use num_bigint::BigInt;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
-    }
+    use crate::test_utils::{bin, xbin};
 
     #[test]
     fn bounds_reject_invalid_order() {
