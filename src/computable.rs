@@ -12,7 +12,7 @@ use num_traits::{One, Zero};
 use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
-use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, SinOp};
+use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, SinOp};
 use crate::binary::Bounds;
 use crate::refinement::{bounds_width_leq, RefinementGraph};
 
@@ -137,6 +137,32 @@ impl Computable {
         Self { node }
     }
 
+    /// Computes the n-th root of this computable number.
+    ///
+    /// Uses binary search (bisection) for guaranteed convergence with provably
+    /// correct bounds. For each refinement step, the interval is halved.
+    ///
+    /// # Arguments
+    /// * `degree` - The root degree (n in x^(1/n)). Must be >= 1.
+    ///
+    /// # Constraints
+    /// - For even degrees (2, 4, 6, ...): requires non-negative input
+    /// - For odd degrees (3, 5, 7, ...): supports all real inputs
+    ///
+    /// # Examples
+    /// - `nth_root(2)` computes the square root
+    /// - `nth_root(3)` computes the cube root
+    /// - `nth_root(4)` computes the fourth root
+    pub fn nth_root(self, degree: u32) -> Self {
+        assert!(degree >= 1, "Root degree must be at least 1");
+        let node = Node::new(Arc::new(NthRootOp {
+            inner: Arc::clone(&self.node),
+            degree,
+            bisection_state: RwLock::new(None),
+        }));
+        Self { node }
+    }
+
     /// Creates a constant computable with exact bounds.
     #[allow(clippy::type_complexity)]
     pub fn constant(value: Binary) -> Self {
@@ -220,7 +246,6 @@ mod tests {
     use super::*;
     use crate::binary::UBinary;
     use num_bigint::BigUint;
-    use num_traits::One;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
@@ -228,10 +253,6 @@ mod tests {
 
     fn ubin(mantissa: u64, exponent: i64) -> UBinary {
         UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
     }
 
     fn unwrap_finite(input: &XBinary) -> Binary {
@@ -243,28 +264,8 @@ mod tests {
         }
     }
 
-    fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
-        let mid_sum = unwrap_finite(lower).add(&unwrap_finite(upper));
-        let exponent = mid_sum.exponent() - BigInt::one();
-        Binary::new(mid_sum.mantissa().clone(), exponent)
-    }
-
     fn sqrt_computable(value_int: u64) -> Computable {
-        let interval_state = Bounds::new(xbin(1, 0), xbin(value_int as i64, 0));
-        let bounds = |inner_state: &Bounds| Ok(inner_state.clone());
-        let refine = move |inner_state: Bounds| {
-            let mid = midpoint_between(inner_state.small(), &inner_state.large());
-            let mid_sq = mid.mul(&mid);
-            let value = bin(value_int as i64, 0);
-
-            if mid_sq <= value {
-                Bounds::new(XBinary::Finite(mid), inner_state.large().clone())
-            } else {
-                Bounds::new(inner_state.small().clone(), XBinary::Finite(mid))
-            }
-        };
-
-        Computable::new(interval_state, bounds, refine)
+        Computable::constant(bin(value_int as i64, 0)).nth_root(2)
     }
 
     #[test]

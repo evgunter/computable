@@ -346,21 +346,7 @@ mod tests {
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        let interval_state = Bounds::new(xbin(1, 0), xbin(value_int as i64, 0));
-        let bounds = |inner_state: &IntervalState| Ok(inner_state.clone());
-        let refine = move |inner_state: IntervalState| {
-            let mid = midpoint_between(inner_state.small(), &inner_state.large());
-            let mid_sq = mid.mul(&mid);
-            let value = bin(value_int as i64, 0);
-
-            if mid_sq <= value {
-                Bounds::new(XBinary::Finite(mid), inner_state.large().clone())
-            } else {
-                Bounds::new(inner_state.small().clone(), XBinary::Finite(mid))
-            }
-        };
-
-        Computable::new(interval_state, bounds, refine)
+        Computable::constant(bin(value_int as i64, 0)).nth_root(2)
     }
 
     fn assert_width_nonnegative(bounds: &Bounds) {

@@ -153,51 +153,8 @@ fn balanced_sum(mut values: Vec<Computable>) -> Computable {
 /// Computes the n-th root of a value using binary search.
 /// Returns a Computable that refines by bisection.
 fn nth_root_computable(value: u64, n: u32) -> Computable {
-    // Initial bounds: [1, value] for roots of values >= 1
-    // For the n-th root of x, we know 1 <= x^(1/n) <= x for x >= 1
-    let upper_bound = if value > 1 { value as i64 } else { 1 };
-    let interval_state = Bounds::new(
-        XBinary::Finite(Binary::new(BigInt::one(), BigInt::from(0))),
-        XBinary::Finite(Binary::new(BigInt::from(upper_bound), BigInt::from(0))),
-    );
-
-    let bounds = |inner_state: &Bounds| -> Result<Bounds, computable::ComputableError> {
-        Ok(inner_state.clone())
-    };
-
-    let target = Binary::new(BigInt::from(value), BigInt::from(0));
-    let exponent = n;
-
-    let refine = move |inner_state: Bounds| -> Bounds {
-        let lower = match inner_state.small() {
-            XBinary::Finite(b) => b.clone(),
-            _ => panic!("expected finite lower bound"),
-        };
-        let upper = match inner_state.large() {
-            XBinary::Finite(b) => b.clone(),
-            _ => panic!("expected finite upper bound"),
-        };
-
-        // Compute midpoint: (lower + upper) / 2
-        let sum = lower.add(&upper);
-        let half = Binary::new(BigInt::one(), BigInt::from(-1));
-        let mid = sum.mul(&half);
-
-        // Compute mid^n
-        let mut mid_pow = mid.clone();
-        for _ in 1..exponent {
-            mid_pow = mid_pow.mul(&mid);
-        }
-
-        // Binary search: if mid^n <= target, search upper half; else search lower half
-        if mid_pow <= target {
-            Bounds::new(XBinary::Finite(mid), XBinary::Finite(upper))
-        } else {
-            Bounds::new(XBinary::Finite(lower), XBinary::Finite(mid))
-        }
-    };
-
-    Computable::new(interval_state, bounds, refine)
+    let value_binary = Binary::new(BigInt::from(value), BigInt::from(0));
+    Computable::constant(value_binary).nth_root(n)
 }
 
 /// Computes integer n-th root using f64 (for comparison).

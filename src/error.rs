@@ -1,4 +1,18 @@
 //! Error types for computable operations.
+//!
+//! TODO: Standardize how we handle mathematically impossible cases throughout the
+//! codebase. Options include:
+//! - `debug_assert!(false, ...)` - only panics in debug builds, silent in release
+//! - `panic!(...)` - always panics
+//! - `unreachable!()` - semantically clearer but same as panic
+//! - Return an error variant (e.g., `ComputableError::InternalError`)
+//!
+//! Currently we use `debug_assert!` in some places (e.g., impossible bounds ordering
+//! in nth_root), but this should be consistent across the codebase.
+//!
+//! TODO: Create a test utilities module (e.g., `src/test_utils.rs` with `#[cfg(test)]`)
+//! containing common helper functions like `bin`, `ubin`, `xbin`, `unwrap_finite`, etc.
+//! These are currently duplicated across multiple test modules.
 
 use crate::binary::BinaryError;
 use std::fmt;
@@ -22,6 +36,10 @@ pub enum ComputableError {
     MaxRefinementIterations { max: usize },
     /// Error from binary number operations.
     Binary(BinaryError),
+    /// Input is outside the domain of the operation (e.g., negative for even roots).
+    DomainError,
+    /// Input bounds are infinite where finite bounds are required.
+    InfiniteBounds,
 }
 
 impl fmt::Display for ComputableError {
@@ -39,6 +57,8 @@ impl fmt::Display for ComputableError {
                 write!(f, "maximum refinement iterations ({max}) reached")
             }
             Self::Binary(err) => write!(f, "{err}"),
+            Self::DomainError => write!(f, "input is outside the domain of the operation"),
+            Self::InfiniteBounds => write!(f, "input bounds are infinite where finite bounds are required"),
         }
     }
 }
