@@ -337,35 +337,9 @@ mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use crate::binary::{UBinary, UXBinary};
+    use crate::binary::UBinary;
     use crate::computable::Computable;
-    use num_bigint::BigUint;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn unwrap_finite(input: &XBinary) -> Binary {
-        match input {
-            XBinary::Finite(value) => value.clone(),
-            XBinary::NegInf | XBinary::PosInf => {
-                panic!("expected finite extended binary")
-            }
-        }
-    }
-
-    fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
-        match input {
-            UXBinary::Finite(value) => value.clone(),
-            UXBinary::PosInf => {
-                panic!("expected finite unsigned extended binary")
-            }
-        }
-    }
+    use crate::test_utils::{bin, ubin, unwrap_finite, unwrap_finite_uxbinary};
 
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,

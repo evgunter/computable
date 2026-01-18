@@ -59,6 +59,10 @@ mod node;
 mod ops;
 mod refinement;
 
+// Test utilities module (only compiled in test mode)
+#[cfg(test)]
+pub mod test_utils;
+
 // Re-export public API
 pub use binary::{
     shortest_xbinary_in_bounds, Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError,
