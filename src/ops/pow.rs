@@ -23,6 +23,10 @@ use crate::binary::Bounds;
 ///   - If interval is non-negative: [lower^n, upper^n]
 ///   - If interval is non-positive: [upper^n, lower^n]
 ///   - If interval spans zero: [0, max(|lower|^n, |upper|^n)]
+///
+/// # Note on 0^0
+/// The exponent is required to be >= 1, so the indeterminate form 0^0 is avoided
+/// entirely. For x^1 where x=0, the result is simply 0.
 pub struct PowOp {
     /// The input node to raise to a power.
     pub inner: Arc<Node>,
