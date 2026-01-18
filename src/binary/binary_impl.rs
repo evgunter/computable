@@ -235,25 +235,21 @@ impl fmt::Display for Binary {
 
 impl crate::ordered_pair::AbsDistance<Binary, super::UBinary> for Binary {
     /// Computes the absolute distance between two Binary values, returning a UBinary.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal conversion to UBinary fails. This should never happen
-    /// because we ensure the value is non-negative before conversion by taking the
-    /// absolute value of the difference.
-    #[allow(clippy::expect_used)]
+    // TODO: Investigate if the type system can prevent needing the unreachable! check below.
+    // After negation (if needed), the value is guaranteed non-negative, so try_from_binary
+    // should never fail. Ideally we'd have a type-level proof of this.
+    #[allow(clippy::unreachable)]
     fn abs_distance(self, other: Self) -> super::UBinary {
         use num_traits::Signed;
         let diff = Binary::sub(&self, &other);
-        // After negation (if needed), the value is guaranteed non-negative,
-        // so try_from_binary should never fail.
-        if diff.mantissa().is_negative() {
-            super::UBinary::try_from_binary(&diff.neg())
-                .expect("negated negative difference should be non-negative")
+        let non_negative = if diff.mantissa().is_negative() {
+            diff.neg()
         } else {
-            super::UBinary::try_from_binary(&diff)
-                .expect("non-negative difference should convert to UBinary")
-        }
+            diff
+        };
+        super::UBinary::try_from_binary(&non_negative).unwrap_or_else(|_| {
+            unreachable!("absolute value of difference should always be non-negative")
+        })
     }
 }
 
