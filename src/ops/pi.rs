@@ -30,14 +30,17 @@ const INITIAL_PI_TERMS: usize = 10;
 ///
 /// Uses Machin's formula: pi/4 = 4*arctan(1/5) - arctan(1/239)
 ///
-/// TODO: why is this ignored as a doctest?
-/// TODO: shouldn't demonstrate using `unwrap` since we don't want people to do that
 /// # Example
-/// ```ignore
+///
+/// ```
+/// use computable::{pi, UBinary};
+/// use num_bigint::{BigInt, BigUint};
+///
 /// let pi_val = pi();
 /// let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-50));
-/// let bounds = pi_val.refine_to_default(epsilon).unwrap();
+/// let bounds = pi_val.refine_to_default(epsilon)?;
 /// // bounds now contains pi to ~50 bits of precision
+/// # Ok::<(), computable::ComputableError>(())
 /// ```
 pub fn pi() -> Computable {
     let node = Node::new(Arc::new(PiOp {
