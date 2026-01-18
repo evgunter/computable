@@ -15,6 +15,8 @@ const COMPLEX_SAMPLE_COUNT: usize = 5_000;
 const SUMMATION_SAMPLE_COUNT: usize = 200_000;
 const INTEGER_ROOTS_SAMPLE_COUNT: usize = 1_000;
 
+// TODO: split this into multiple files
+
 #[derive(Debug)]
 struct BenchmarkResult {
     duration: Duration,
