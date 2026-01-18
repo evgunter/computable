@@ -110,3 +110,4 @@ for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \ma
 - everything is designed not to panic, and to instead return `Result`
 - we avoid interior mutability whenever possible
 - whenever possible, we use the type system to constrain the inputs to belong to a correct type, rather than checking that the inputs are valid and returning a `Result` type
+- for mathematically impossible cases that can't (yet) be prevented by the type system, use `unreachable!()` with a TODO about investigating type-system solutions. see `src/error.rs` for details.
