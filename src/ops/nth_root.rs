@@ -18,6 +18,12 @@
 //! instead of returning a recoverable error that would trigger refinement of the
 //! input until the bounds are fully non-negative. This should be fixed to match
 //! the behavior described in the README for sqrt.
+//!
+//! BLOCKED: This is blocked on refactoring the refinement system to use the
+//! async/event-driven model described in the README (see TODO in refinement.rs)
+//! rather than the current synchronous lock-step model. The recoverable error
+//! approach requires the ability for a node to request refinement of its input
+//! and receive updates, which the current synchronous model doesn't support.
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
