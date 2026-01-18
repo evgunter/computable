@@ -96,3 +96,113 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
 
     Bounds::new_checked(lower_bound, upper_bound).map_err(|_| ComputableError::InvalidBoundsOrder)
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use crate::binary::{Binary, UBinary, UXBinary, XBinary};
+    use crate::computable::Computable;
+    use crate::ordered_pair::Bounds;
+    use num_bigint::{BigInt, BigUint};
+    use num_traits::One;
+
+    fn bin(mantissa: i64, exponent: i64) -> Binary {
+        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
+    }
+
+    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
+        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
+    }
+
+    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
+        XBinary::Finite(bin(mantissa, exponent))
+    }
+
+    fn unwrap_finite(input: &XBinary) -> Binary {
+        match input {
+            XBinary::Finite(value) => value.clone(),
+            XBinary::NegInf | XBinary::PosInf => {
+                panic!("expected finite extended binary")
+            }
+        }
+    }
+
+    fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
+        match input {
+            UXBinary::Finite(value) => value.clone(),
+            UXBinary::PosInf => {
+                panic!("expected finite unsigned extended binary")
+            }
+        }
+    }
+
+    fn assert_bounds_compatible_with_expected(
+        bounds: &Bounds,
+        expected: &Binary,
+        epsilon: &UBinary,
+    ) {
+        let lower = unwrap_finite(bounds.small());
+        let upper_xb = bounds.large();
+        let width = unwrap_finite_uxbinary(bounds.width());
+        let upper = unwrap_finite(&upper_xb);
+
+        assert!(lower <= *expected && *expected <= upper);
+        assert!(width <= *epsilon);
+    }
+
+    fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
+        fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
+            let unwrap = |input: &XBinary| -> Binary {
+                match input {
+                    XBinary::Finite(value) => value.clone(),
+                    _ => panic!("expected finite"),
+                }
+            };
+            let mid_sum = unwrap(lower).add(&unwrap(upper));
+            let exponent = mid_sum.exponent() - BigInt::one();
+            Binary::new(mid_sum.mantissa().clone(), exponent)
+        }
+
+        fn interval_refine(state: Bounds) -> Bounds {
+            let midpoint = midpoint_between(state.small(), &state.large());
+            Bounds::new(
+                XBinary::Finite(midpoint.clone()),
+                XBinary::Finite(midpoint),
+            )
+        }
+
+        let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
+        Computable::new(
+            interval_state,
+            |inner_state| Ok(inner_state.clone()),
+            interval_refine,
+        )
+    }
+
+    #[test]
+    fn inv_allows_infinite_bounds() {
+        let value = interval_midpoint_computable(-1, 1);
+        let inv = value.inv();
+        let bounds = inv.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            Bounds::new(XBinary::NegInf, XBinary::PosInf)
+        );
+    }
+
+    #[test]
+    fn inv_bounds_for_positive_interval() {
+        let value = interval_midpoint_computable(2, 4);
+        let inv = value.inv();
+        let epsilon = ubin(1, -8);
+        let bounds = inv
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed");
+        let expected_binary = XBinary::from_f64(1.0 / 3.0)
+            .expect("expected value should convert to extended binary");
+        let expected_value = unwrap_finite(&expected_binary);
+
+        assert_bounds_compatible_with_expected(&bounds, &expected_value, &epsilon);
+    }
+}

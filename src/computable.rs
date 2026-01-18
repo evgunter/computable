@@ -212,3 +212,126 @@ impl std::ops::Div for Computable {
         self * rhs.inv()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::binary::UBinary;
+    use num_bigint::BigUint;
+    use num_traits::One;
+
+    fn bin(mantissa: i64, exponent: i64) -> Binary {
+        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
+    }
+
+    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
+        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
+    }
+
+    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
+        XBinary::Finite(bin(mantissa, exponent))
+    }
+
+    fn unwrap_finite(input: &XBinary) -> Binary {
+        match input {
+            XBinary::Finite(value) => value.clone(),
+            XBinary::NegInf | XBinary::PosInf => {
+                panic!("expected finite extended binary")
+            }
+        }
+    }
+
+    fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
+        let mid_sum = unwrap_finite(lower).add(&unwrap_finite(upper));
+        let exponent = mid_sum.exponent() - BigInt::one();
+        Binary::new(mid_sum.mantissa().clone(), exponent)
+    }
+
+    fn sqrt_computable(value_int: u64) -> Computable {
+        let interval_state = Bounds::new(xbin(1, 0), xbin(value_int as i64, 0));
+        let bounds = |inner_state: &Bounds| Ok(inner_state.clone());
+        let refine = move |inner_state: Bounds| {
+            let mid = midpoint_between(inner_state.small(), &inner_state.large());
+            let mid_sq = mid.mul(&mid);
+            let value = bin(value_int as i64, 0);
+
+            if mid_sq <= value {
+                Bounds::new(XBinary::Finite(mid), inner_state.large().clone())
+            } else {
+                Bounds::new(inner_state.small().clone(), XBinary::Finite(mid))
+            }
+        };
+
+        Computable::new(interval_state, bounds, refine)
+    }
+
+    #[test]
+    fn from_binary_matches_constant_bounds() {
+        let value = bin(3, 0);
+        let computable: Computable = value.clone().into();
+
+        let bounds = computable.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            Bounds::new(
+                XBinary::Finite(value.clone()),
+                XBinary::Finite(value)
+            )
+        );
+    }
+
+    #[test]
+    fn integration_sqrt2_expression() {
+        let one = Computable::constant(bin(1, 0));
+        let sqrt2 = sqrt_computable(2);
+        let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
+
+        let epsilon = ubin(1, -12);
+        let bounds = expr
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = bounds.large();
+        let upper = unwrap_finite(&upper);
+        let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
+        let expected_binary = XBinary::from_f64(expected)
+            .expect("expected value should convert to extended binary");
+        let expected_value = unwrap_finite(&expected_binary);
+        let eps_binary = epsilon.to_binary();
+
+        let lower_plus = lower.add(&eps_binary);
+        let upper_minus = upper.sub(&eps_binary);
+
+        assert!(lower <= expected_value && expected_value <= upper);
+        assert!(upper_minus <= expected_value && expected_value <= lower_plus);
+    }
+
+    #[test]
+    fn shared_operand_in_expression() {
+        let shared = sqrt_computable(2);
+        let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
+
+        let epsilon = ubin(1, -12);
+        let bounds = expr
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = bounds.large();
+        let upper = unwrap_finite(&upper);
+        let expected = 2.0_f64 * 2.0_f64.sqrt();
+        let expected_binary = XBinary::from_f64(expected)
+            .expect("expected value should convert to extended binary");
+        let expected_value = unwrap_finite(&expected_binary);
+        let eps_binary = epsilon.to_binary();
+
+        let lower_plus = lower.add(&eps_binary);
+        let upper_minus = upper.sub(&eps_binary);
+
+        assert!(lower <= expected_value && expected_value <= upper);
+        assert!(upper_minus <= expected_value && expected_value <= lower_plus);
+    }
+}
