@@ -16,7 +16,10 @@ impl NodeOp for NegOp {
         let existing = self.inner.get_bounds()?;
         let lower = existing.small().neg();
         let upper = existing.large().neg();
-        Bounds::new_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
+        // Negation of valid bounds should always produce valid bounds
+        Bounds::new_checked(upper, lower).map_err(|_| {
+            crate::internal_error!("negation produced invalid bounds order: this indicates a bug")
+        })
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -44,7 +47,10 @@ impl NodeOp for AddOp {
         let right_bounds = self.right.get_bounds()?;
         let lower = left_bounds.small().add_lower(right_bounds.small());
         let upper = left_bounds.large().add_upper(&right_bounds.large());
-        Bounds::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
+        // Addition of valid bounds should always produce valid bounds
+        Bounds::new_checked(lower, upper).map_err(|_| {
+            crate::internal_error!("addition produced invalid bounds order: this indicates a bug")
+        })
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -93,7 +99,12 @@ impl NodeOp for MulOp {
             }
         }
 
-        Bounds::new_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
+        // Min/max of the same set of candidates should always be ordered
+        Bounds::new_checked(min, max).map_err(|_| {
+            crate::internal_error!(
+                "multiplication produced invalid bounds order: this indicates a bug"
+            )
+        })
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
