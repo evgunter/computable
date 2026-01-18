@@ -281,6 +281,9 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
     let denominator = &coeff * &k_power; // (2n+1) * k^(2n+1)
 
     // Compute 1/denominator, rounding UP for conservative error bound
+    // TODO(correctness): Fixed 128-bit precision here has the same limitation as in
+    // divide_one_by_bigint. For very high precision pi computations, this could underestimate
+    // the error bound. Should use adaptive precision matching the requested output precision.
     let precision_bits: u64 = 128;
     let numerator = BigInt::one() << precision_bits as usize;
     let (quot, rem) = num_integer::Integer::div_rem(&numerator, &denominator);

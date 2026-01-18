@@ -113,6 +113,9 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
 
     // Check if the input interval is wide enough to contain a full period
     let input_width = upper_bin.sub(lower_bin);
+    // TODO(correctness): Using midpoint instead of two_pi_interval.lo could cause incorrect
+    // classification at boundary cases. If input_width is between two_pi_lo and two_pi_hi,
+    // we might miss that it spans a full period. Should use two_pi_interval.lo for conservative check.
     let two_pi_approx = two_pi_interval.midpoint();
     if input_width >= two_pi_approx {
         // Input spans at least one full period, sin ranges over all of [-1, 1]
@@ -259,7 +262,10 @@ fn reduce_to_pi_range_interval(
     two_pi: &Interval,
     pi: &Interval,
 ) -> Interval {
-    // Use the midpoint of 2*pi for computing k
+    // TODO(correctness): Using midpoints for k computation could cause incorrect range reduction.
+    // If the input interval straddles a multiple of 2*pi, different parts of the interval may
+    // need different k values. Using midpoints could cause k to be off by 1, resulting in
+    // reduced values outside [-pi, pi]. Should track how k varies across the interval.
     let two_pi_mid = two_pi.midpoint();
     let neg_pi_lo = pi.lo.neg(); // most negative possible -pi (inner bound)
 
