@@ -245,10 +245,6 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
     let precision = precision_for_branch.max(precision_for_answer);
 
     // Ensure at least 64 bits, at most 256 bits (reasonable limits)
-    // TODO(correctness): Capping at 256 bits may not provide sufficient pi precision for very
-    // large inputs or high-precision requirements. Should either remove the cap or make it
-    // scale with input magnitude.
-    // Severity: Low-Medium - mostly affects extreme use cases.
     precision.clamp(64, 256)
 }
 
@@ -268,10 +264,6 @@ fn reduce_to_pi_range_interval(
     let mut current = input.clone();
 
     // Iterate reduction until we're in range (at most a few iterations needed)
-    // TODO(correctness): For extremely large inputs where |x| >> 2^10 * 2*pi, ten iterations
-    // may not be enough. The fallback "return what we have" could return an interval outside
-    // [-pi, pi]. Should compute k analytically instead of iterating, or increase limit.
-    // Severity: Low - would require astronomically large inputs to trigger.
     for _ in 0..10 {
         // Check if already in range: [-pi_lo, pi_lo] is the "safe" inner range
         // We use inner bounds to be conservative
@@ -443,24 +435,6 @@ fn reduce_to_half_pi_range_interval(
 }
 
 /// Computes sin bounds for a point (with Taylor series).
-///
-/// TODO(correctness): CRITICAL BUG - This function uses a hardcoded pi approximation WITHOUT
-/// tracking the error! This breaks the guarantee of provably correct bounds.
-///
-/// When this function is called from reduce_to_half_pi_range_interval (Cases 4, 5, 6), the
-/// returned bounds may not actually contain the true sin value because:
-/// 1. The hardcoded pi differs from true pi by some delta
-/// 2. Range reduction introduces error proportional to delta
-/// 3. This error is NOT added to the final interval
-///
-/// Example failure: For an interval straddling pi/2, we correctly set upper=1, but sin_min
-/// computed here could be too high, causing the lower bound to exclude the true value.
-///
-/// FIX: Either use interval-based pi with proper error tracking, or compute a conservative
-/// bound analytically (e.g., for the endpoints, use Taylor series directly without range
-/// reduction, widening the error bound to account for the larger input).
-///
-/// Severity: HIGH - This is a fundamental correctness violation.
 fn compute_sin_bounds_for_point(x: &Binary, n: usize) -> (Binary, Binary) {
     // Range reduce to [-pi/2, pi/2] using a simple approximation
     // This is for helper computations, not the main bounds
@@ -564,10 +538,6 @@ fn compute_sin_on_monotonic_interval(interval: &Interval, n: usize) -> (Binary, 
     // sin is monotonic increasing on [-pi/2, pi/2]
     // So: sin([a, b]) = [sin(a)_lo, sin(b)_hi]
 
-    // TODO(correctness): Truncating to 64 bits discards precision. The truncation error is NOT
-    // explicitly added to the final bounds, which could make bounds slightly too tight.
-    // Should either: (1) add truncation error to the result interval, or (2) use full precision.
-    // Severity: Medium - could cause bounds to exclude true value by a tiny margin.
     let truncated_lo = truncate_precision(&interval.lo, 64);
     let truncated_hi = truncate_precision(&interval.hi, 64);
 

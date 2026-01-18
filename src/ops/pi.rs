@@ -67,9 +67,7 @@ pub fn pi_bounds_at_precision(precision_bits: u64) -> (Binary, Binary) {
     // We use a conservative estimate with some margin:
     // TODO(correctness): Using f64 for this calculation is not rigorous for a "provably correct"
     // library. Should use integer arithmetic with conservative bounds instead.
-    let num_terms = ((precision_bits as f64 + 10.0) / 4.0).ceil() as usize;
-    let num_terms = num_terms.max(5); // At least 5 terms for reasonable accuracy
-
+    let num_terms = (((precision_bits as f64 + 10.0) / 4.0).ceil() as usize).max(5);
     compute_pi_bounds(num_terms)
 }
 
