@@ -160,8 +160,9 @@ fn compute_output_lower_bound(lower_input: &XBinary, is_even: bool, degree: u32)
         }
         XBinary::PosInf => {
             // Lower input is +∞ - this is mathematically impossible for a lower bound
-            debug_assert!(false, "lower input bound cannot be PosInf");
-            Ok(XBinary::PosInf)
+            Err(crate::internal_error!(
+                "lower input bound cannot be +∞: this indicates a bug in bounds computation"
+            ))
         }
         XBinary::Finite(lower_bin) => {
             if lower_bin.mantissa().is_negative() {
@@ -195,8 +196,9 @@ fn compute_output_upper_bound(upper_input: &XBinary, is_even: bool, degree: u32)
         XBinary::PosInf => Ok(XBinary::PosInf),
         XBinary::NegInf => {
             // Upper input is -∞ - this is mathematically impossible for an upper bound
-            debug_assert!(false, "upper input bound cannot be NegInf");
-            Ok(XBinary::NegInf)
+            Err(crate::internal_error!(
+                "upper input bound cannot be -∞: this indicates a bug in bounds computation"
+            ))
         }
         XBinary::Finite(upper_bin) => {
             if upper_bin.mantissa().is_negative() {

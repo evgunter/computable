@@ -94,7 +94,10 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
         (lower_bound, upper_bound)
     };
 
-    Bounds::new_checked(lower_bound, upper_bound).map_err(|_| ComputableError::InvalidBoundsOrder)
+    // The reciprocal algorithm handles sign cases to produce valid bounds
+    Bounds::new_checked(lower_bound, upper_bound).map_err(|_| {
+        crate::internal_error!("reciprocal produced invalid bounds order: this indicates a bug")
+    })
 }
 
 #[cfg(test)]

@@ -33,8 +33,11 @@ pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
         (Sign::Plus, Sign::NoSign)
         | (Sign::NoSign, Sign::Minus)
         | (Sign::Plus, Sign::Minus) => {
-            debug_assert!(false, "bounds are not ordered");
-            lower.clone()
+            unreachable!(
+                "bounds are not ordered (lower={:?}, upper={:?}): this indicates a bug",
+                lower,
+                &bounds.large()
+            )
         }
     }
 }
@@ -188,16 +191,17 @@ fn shortest_positive_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBina
     match (lower_mag, upper_mag) {
         (UXBinary::PosInf, UXBinary::PosInf) => XBinary::PosInf,
         (UXBinary::PosInf, UXBinary::Finite(_)) => {
-            debug_assert!(false, "positive bounds are not ordered");
-            XBinary::PosInf
+            unreachable!("positive bounds are not ordered: lower is +∞ but upper is finite")
         }
         (UXBinary::Finite(lower_val), UXBinary::PosInf) => {
             let lower_binary = lower_val.to_binary();
             shortest_power_of_two_at_least(&lower_binary)
                 .map(XBinary::Finite)
                 .unwrap_or_else(|| {
-                    debug_assert!(false, "positive lower bound unexpectedly non-positive");
-                    XBinary::Finite(lower_binary)
+                    unreachable!(
+                        "positive lower bound {:?} unexpectedly non-positive",
+                        lower_binary
+                    )
                 })
         }
         (UXBinary::Finite(lower_val), UXBinary::Finite(upper_val)) => {
@@ -206,8 +210,10 @@ fn shortest_positive_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBina
             shortest_binary_in_positive_interval(&lower_binary, &upper_binary)
                 .map(XBinary::Finite)
                 .unwrap_or_else(|| {
-                    debug_assert!(false, "positive interval had no valid odd mantissa");
-                    XBinary::Finite(lower_binary)
+                    unreachable!(
+                        "positive interval [{:?}, {:?}] had no valid odd mantissa",
+                        lower_binary, upper_binary
+                    )
                 })
         }
     }
@@ -221,8 +227,10 @@ fn shortest_negative_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBina
             shortest_power_of_two_at_most(&upper_binary)
                 .map(XBinary::Finite)
                 .unwrap_or_else(|| {
-                    debug_assert!(false, "negative upper bound unexpectedly non-negative");
-                    XBinary::Finite(upper_binary)
+                    unreachable!(
+                        "negative upper bound {:?} unexpectedly non-negative",
+                        upper_binary
+                    )
                 })
         }
         (UXBinary::Finite(lower_val), UXBinary::Finite(upper_val)) => {
@@ -231,13 +239,14 @@ fn shortest_negative_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBina
             shortest_binary_in_positive_interval(&upper_binary, &lower_binary)
                 .map(|value| XBinary::Finite(value.neg()))
                 .unwrap_or_else(|| {
-                    debug_assert!(false, "negative interval had no valid odd mantissa");
-                    XBinary::Finite(upper_binary.neg())
+                    unreachable!(
+                        "negative interval (magnitudes: [{:?}, {:?}]) had no valid odd mantissa",
+                        upper_binary, lower_binary
+                    )
                 })
         }
         (UXBinary::Finite(_), UXBinary::PosInf) => {
-            debug_assert!(false, "negative bounds are not ordered");
-            XBinary::NegInf
+            unreachable!("negative bounds are not ordered: lower is finite but upper magnitude is +∞")
         }
     }
 }

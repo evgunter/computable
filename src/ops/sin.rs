@@ -290,8 +290,11 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
         result_upper = pos_one;
     }
 
+    // The sin algorithm is designed to produce correctly ordered bounds
     Bounds::new_checked(XBinary::Finite(result_lower), XBinary::Finite(result_upper))
-        .map_err(|_| ComputableError::InvalidBoundsOrder)
+        .map_err(|_| crate::internal_error!(
+            "sin bounds computation produced invalid order: this indicates a bug"
+        ))
 }
 
 /// Rounding direction for directed rounding in interval arithmetic.
