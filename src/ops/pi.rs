@@ -67,7 +67,6 @@ pub fn pi_bounds_at_precision(precision_bits: u64) -> (Binary, Binary) {
     // We use a conservative estimate with some margin:
     // TODO(correctness): Using f64 for this calculation is not rigorous for a "provably correct"
     // library. Should use integer arithmetic with conservative bounds instead.
-    // Severity: Low - the formula is conservative, so unlikely to cause actual issues.
     let num_terms = ((precision_bits as f64 + 10.0) / 4.0).ceil() as usize;
     let num_terms = num_terms.max(5); // At least 5 terms for reasonable accuracy
 
@@ -226,7 +225,6 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
     // bits of pi precision are needed, the rounding errors in this fixed-precision division could
     // accumulate beyond what the error bound accounts for. Should make precision adaptive based
     // on the requested output precision.
-    // Severity: Medium - affects extreme precision use cases (>100 bits).
     let precision_bits: u64 = 128;
 
     let numerator = BigInt::one() << precision_bits as usize;
@@ -467,6 +465,7 @@ mod tests {
 
         // Convert to f64 for rough comparison
         // pi_lo and pi_hi should bracket 3.14159265...
+        // TODO: fix this by converting the f64 approximation of pi to Binary and then comparing
         // We can't easily convert Binary to f64, but we can check the bounds are ordered
         assert!(pi_lo < pi_hi, "lower bound should be less than upper bound");
 
@@ -509,6 +508,7 @@ mod tests {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 
+         // TODO: improve this by converting the f64 approximation of pi to Binary and then comparing
         // Check basic sanity
         let three = bin(3, 0);
         let four = bin(4, 0);
@@ -523,15 +523,14 @@ mod tests {
 
     #[test]
     fn pi_bounds_at_precision_helper() {
-        let (lo, hi) = pi_bounds_at_precision(50);
+        const PRECISION_BITS: u64 = 50;
+        let (lo, hi) = pi_bounds_at_precision(PRECISION_BITS);
         let width = hi.sub(&lo);
 
-        // Width should be approximately 2^-50 or smaller
-        // 2^-50 is very small, let's just check it's less than 2^-40
-        let threshold = bin(1, -40);
+        let threshold = bin(1, -(PRECISION_BITS as i64 - 1));
         assert!(
             width < threshold,
-            "50 bits of precision should give width < 2^-40"
+            "{} bits of precision should give width < 2^-{}", PRECISION_BITS, PRECISION_BITS - 1
         );
     }
 
@@ -547,6 +546,7 @@ mod tests {
         assert_eq!(result.hi, bin(-1, 0));
     }
 
+    // TODO: should this go with `neg` tests? is this actually needed or redundant?
     #[test]
     fn interval_negation() {
         let a = Interval::new(bin(1, 0), bin(3, 0)); // [1, 3]
