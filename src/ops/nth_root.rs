@@ -506,6 +506,35 @@ mod tests {
     }
 
     #[test]
+    fn sqrt_of_interval_overlapping_zero() {
+        // Test even root of a Computable with bounds overlapping zero: [-1, 4]
+        // The sqrt should have bounds [0, 2] (since sqrt is only defined for non-negative)
+        fn interval_computable(lower: i64, upper: i64) -> Computable {
+            let interval_state = Bounds::new(
+                XBinary::Finite(bin(lower, 0)),
+                XBinary::Finite(bin(upper, 0)),
+            );
+            Computable::new(
+                interval_state,
+                |state| Ok(state.clone()),
+                |state| state, // No refinement for this test
+            )
+        }
+
+        let interval = interval_computable(-1, 4);
+        let sqrt_interval = interval.nth_root(2);
+        let bounds = sqrt_interval.bounds().expect("bounds should succeed");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+
+        // Lower output bound should be 0 (since input overlaps negative)
+        assert_eq!(lower, bin(0, 0));
+        // Upper output bound should be >= sqrt(4) = 2
+        assert!(upper >= bin(2, 0));
+    }
+
+    #[test]
     fn power_function() {
         let x = bin(3, 0); // 3
         assert_eq!(power(&x, 2), bin(9, 0)); // 3^2 = 9
