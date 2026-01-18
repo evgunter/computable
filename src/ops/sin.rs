@@ -243,12 +243,12 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
     // (at most 2^(-64) * |reduced_value|) to the final error bound (while increasing the
     // precision bits so that the answer still converges instead of remaining stuck at 64 bits of precision).
     // Truncate to 64 bits to keep mantissas manageable
-    let reduced_lower = truncate_precision(&reduced_lower, 64);
-    let reduced_upper = truncate_precision(&reduced_upper, 64);
+    let truncated_lower = truncate_precision(&reduced_lower, 64);
+    let truncated_upper = truncate_precision(&reduced_upper, 64);
 
     // Compute Taylor series bounds on reduced values
-    let sin_lower_raw = taylor_sin_bounds(&reduced_lower, n);
-    let sin_upper_raw = taylor_sin_bounds(&reduced_upper, n);
+    let sin_lower_raw = taylor_sin_bounds(&truncated_lower, n);
+    let sin_upper_raw = taylor_sin_bounds(&truncated_upper, n);
 
     // Apply sign flips if needed
     let (sin_lower_lo, sin_lower_hi) = if lower_sign_flip {

@@ -109,7 +109,7 @@ fn max_power_of_two_divisor(lower: &BigInt, upper: &BigInt) -> u64 {
     let mut high = upper.bits().saturating_sub(1);
 
     while low < high {
-        let mid = (low + high + 1) / 2;
+        let mid = (low + high).div_ceil(2);
         if has_multiple_pow2(lower, upper, mid) {
             low = mid;
         } else {
@@ -191,8 +191,8 @@ fn shortest_positive_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBina
             debug_assert!(false, "positive bounds are not ordered");
             XBinary::PosInf
         }
-        (UXBinary::Finite(lower_mag), UXBinary::PosInf) => {
-            let lower_binary = lower_mag.to_binary();
+        (UXBinary::Finite(lower_val), UXBinary::PosInf) => {
+            let lower_binary = lower_val.to_binary();
             shortest_power_of_two_at_least(&lower_binary)
                 .map(XBinary::Finite)
                 .unwrap_or_else(|| {
@@ -200,9 +200,9 @@ fn shortest_positive_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBina
                     XBinary::Finite(lower_binary)
                 })
         }
-        (UXBinary::Finite(lower_mag), UXBinary::Finite(upper_mag)) => {
-            let lower_binary = lower_mag.to_binary();
-            let upper_binary = upper_mag.to_binary();
+        (UXBinary::Finite(lower_val), UXBinary::Finite(upper_val)) => {
+            let lower_binary = lower_val.to_binary();
+            let upper_binary = upper_val.to_binary();
             shortest_binary_in_positive_interval(&lower_binary, &upper_binary)
                 .map(XBinary::Finite)
                 .unwrap_or_else(|| {
@@ -216,8 +216,8 @@ fn shortest_positive_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBina
 fn shortest_negative_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBinary {
     match (lower_mag, upper_mag) {
         (UXBinary::PosInf, UXBinary::PosInf) => XBinary::NegInf,
-        (UXBinary::PosInf, UXBinary::Finite(upper_mag)) => {
-            let upper_binary = upper_mag.to_binary().neg();
+        (UXBinary::PosInf, UXBinary::Finite(upper_val)) => {
+            let upper_binary = upper_val.to_binary().neg();
             shortest_power_of_two_at_most(&upper_binary)
                 .map(XBinary::Finite)
                 .unwrap_or_else(|| {
@@ -225,9 +225,9 @@ fn shortest_negative_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBina
                     XBinary::Finite(upper_binary)
                 })
         }
-        (UXBinary::Finite(lower_mag), UXBinary::Finite(upper_mag)) => {
-            let lower_binary = lower_mag.to_binary();
-            let upper_binary = upper_mag.to_binary();
+        (UXBinary::Finite(lower_val), UXBinary::Finite(upper_val)) => {
+            let lower_binary = lower_val.to_binary();
+            let upper_binary = upper_val.to_binary();
             shortest_binary_in_positive_interval(&upper_binary, &lower_binary)
                 .map(|value| XBinary::Finite(value.neg()))
                 .unwrap_or_else(|| {

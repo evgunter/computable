@@ -13,8 +13,9 @@
 //! 5. Repeat
 //!
 //! TODO: The README describes an async/event-driven refinement model where:
-//! - Branches refine continuously and publish updates
-//! - Other nodes "subscribe" to updates and recompute live
+//!   - Branches refine continuously and publish updates
+//!   - Other nodes "subscribe" to updates and recompute live
+//!
 //! Either the README should be updated to reflect the actual synchronous
 //! model, or the implementation should be changed to the async model described.
 
