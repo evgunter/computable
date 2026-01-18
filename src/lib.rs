@@ -20,7 +20,7 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Zero};
 use parking_lot::{Condvar, Mutex, RwLock};
 
 mod binary;
