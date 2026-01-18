@@ -8,10 +8,9 @@
 //! and refines by bisection: if mid^n <= target, the root is in [mid, upper],
 //! otherwise it's in [lower, mid].
 //!
-//! TODO: Extract a generic binary search helper function that can be reused for
-//! other operations that use bisection (e.g., finding roots of monotonic functions).
-//! The helper could take: initial bounds, a comparison function, and produce a
-//! Computable that refines via bisection.
+//! This module uses the generic binary search helper from [`crate::binary::bisection`],
+//! which can be reused for other operations that use bisection (e.g., finding roots
+//! of monotonic functions).
 //!
 //! TODO: Contra the README, even-degree roots of inputs that overlap with negative
 //! numbers (but aren't completely negative) currently just return (0, ∞) bounds
@@ -26,10 +25,10 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, XBinary};
+use crate::binary::bisection::{midpoint, BisectionComparison, bisection_step};
+use crate::binary::{Binary, Bounds, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::binary::Bounds;
 
 /// N-th root operation with binary search refinement.
 ///
@@ -103,15 +102,19 @@ impl NodeOp for NthRootOp {
                 Ok(true)
             }
             Some(s) => {
-                // Perform one bisection step
-                let mid = midpoint(&s.lower, &s.upper);
-                let mid_pow = power(&mid, self.degree.get());
-                
-                if mid_pow <= s.target {
-                    s.lower = mid;
-                } else {
-                    s.upper = mid;
-                }
+                // Perform one bisection step using the generic helper
+                let degree = self.degree.get();
+                let target = s.target.clone();
+                let result = bisection_step(s.lower.clone(), s.upper.clone(), |mid| {
+                    let mid_pow = power(mid, degree);
+                    match mid_pow.cmp(&target) {
+                        std::cmp::Ordering::Less => BisectionComparison::Above,
+                        std::cmp::Ordering::Equal => BisectionComparison::Exact,
+                        std::cmp::Ordering::Greater => BisectionComparison::Below,
+                    }
+                });
+                s.lower = result.lower;
+                s.upper = result.upper;
                 Ok(true)
             }
         }
@@ -307,13 +310,6 @@ fn initialize_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<Bise
         target: actual_target,
         negate_result,
     })
-}
-
-/// Computes the midpoint of two Binary numbers.
-fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
-    let sum = lower.add(upper);
-    // Divide by 2 by subtracting 1 from the exponent
-    Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
 }
 
 /// Computes x^n for a Binary number.
