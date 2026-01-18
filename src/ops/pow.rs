@@ -52,7 +52,7 @@ impl NodeOp for PowOp {
 
         // TODO: InvalidBoundsOrder should be mathematically impossible here since we
         // carefully compute lower/upper based on monotonicity properties. We should
-        // try to prove this formally or add a debug_assert to demonstrate it.
+        // try to use the type system to constrain this so the error case is unrepresentable.
         Bounds::new_checked(result_lower, result_upper)
             .map_err(|_| ComputableError::InvalidBoundsOrder)
     }
