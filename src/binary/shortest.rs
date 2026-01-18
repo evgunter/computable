@@ -9,16 +9,11 @@ use crate::ordered_pair::Bounds;
 use super::shift;
 use super::{Binary, UBinary, UXBinary, XBinary};
 
-/// Returns a binary value inside the bounds with the shortest normalized mantissa.
-pub fn shortest_binary_in_bounds(bounds: &Bounds) -> Option<Binary> {
-    match shortest_xbinary_in_bounds(bounds) {
-        XBinary::Finite(value) => Some(value),
-        XBinary::NegInf | XBinary::PosInf => None,
-    }
-}
-
 /// Returns an XBinary value inside the bounds with the shortest normalized mantissa.
 pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
+    // NOTE: Bounds stores lower + width with UXBinary, so intervals like (-inf, -1]
+    // cannot be represented because the width is +inf and large() becomes +inf.
+    // TODO: consider whether we need a representation that preserves finite upper bounds.
     let lower = bounds.small();
     let (lower_sign, lower_mag) = split_xbinary(lower);
     let (upper_sign, upper_mag) = split_xbinary(&bounds.large());
@@ -259,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn shortest_binary_in_bounds_finds_sqrt_four() {
+    fn shortest_xbinary_in_bounds_finds_sqrt_four() {
         let four = bin(1, 2);
         let epsilon = bin(1, 0);
         let mut lower = bin(0, 0);
@@ -282,8 +277,8 @@ mod tests {
         }
 
         let bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
-        let shortest = shortest_binary_in_bounds(&bounds).expect("shortest should exist");
-        assert_eq!(shortest, bin(1, 1));
+        let shortest = shortest_xbinary_in_bounds(&bounds);
+        assert_eq!(shortest, XBinary::Finite(bin(1, 1)));
     }
 
     #[test]
