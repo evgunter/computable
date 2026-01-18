@@ -13,8 +13,6 @@
 //!   might become valid in the future (e.g., extended real number support). Include a
 //!   comment explaining why the case is currently unexpected and under what circumstances
 //!   it might become valid.
-//!
-//! See also the "Impossible Cases" section in `src/README.md` for more details.
 
 use crate::binary::BinaryError;
 use std::fmt;
