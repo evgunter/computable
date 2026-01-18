@@ -154,6 +154,13 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
     /// Computes the width between two XBinary values, returning a UXBinary.
     ///
     /// Width is always nonnegative: |other - self|.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal conversion to UBinary fails. This should never happen
+    /// because we ensure the value is non-negative before conversion by taking the
+    /// absolute value of the difference.
+    #[allow(clippy::expect_used)]
     fn abs_distance(self, other: Self) -> UXBinary {
         use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
@@ -166,15 +173,19 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
                 // Compute |u - l|
                 let diff = u.clone().sub(l.clone());
                 use num_traits::Signed;
+                // After swapping order (if needed), the difference is guaranteed non-negative,
+                // so try_from_binary should never fail.
                 if diff.mantissa().is_negative() {
                     // This means lower > upper, use |lower - upper| instead
                     let abs_diff = l.sub(u);
                     UXBinary::Finite(
-                        UBinary::try_from_binary(&abs_diff).unwrap_or_else(|_| UBinary::zero()),
+                        UBinary::try_from_binary(&abs_diff)
+                            .expect("swapped difference should be non-negative"),
                     )
                 } else {
                     UXBinary::Finite(
-                        UBinary::try_from_binary(&diff).unwrap_or_else(|_| UBinary::zero()),
+                        UBinary::try_from_binary(&diff)
+                            .expect("non-negative difference should convert to UBinary"),
                     )
                 }
             }
