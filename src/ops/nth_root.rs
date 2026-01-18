@@ -33,16 +33,15 @@ pub struct NthRootOp {
     /// The root degree (n in x^(1/n)).
     pub degree: u32,
     /// Current bisection state: tracks the interval for the root.
+    /// None until first refinement step initializes it from input bounds.
     /// Each refinement step halves this interval.
-    pub bisection_state: RwLock<BisectionState>,
+    pub bisection_state: RwLock<Option<BisectionState>>,
 }
 
 /// State for the bisection algorithm.
 /// Tracks the current interval bounds for the n-th root.
 #[derive(Clone, Debug)]
 pub struct BisectionState {
-    /// Whether the state has been initialized from the input bounds.
-    pub initialized: bool,
     /// Lower bound for the n-th root (finite Binary).
     pub lower: Binary,
     /// Upper bound for the n-th root (finite Binary).
@@ -53,59 +52,51 @@ pub struct BisectionState {
     pub negate_result: bool,
 }
 
-impl Default for BisectionState {
-    fn default() -> Self {
-        Self {
-            initialized: false,
-            lower: Binary::zero(),
-            upper: Binary::zero(),
-            target: Binary::zero(),
-            negate_result: false,
-        }
-    }
-}
-
 impl NodeOp for NthRootOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let state = self.bisection_state.read();
         
-        if !state.initialized {
-            // Return initial conservative bounds based on input
-            return compute_initial_bounds(&input_bounds, self.degree);
+        match &*state {
+            None => {
+                // Return initial conservative bounds based on input
+                compute_initial_bounds(&input_bounds, self.degree)
+            }
+            Some(s) => {
+                // Return current bisection interval
+                let (lower, upper) = if s.negate_result {
+                    (s.upper.neg(), s.lower.neg())
+                } else {
+                    (s.lower.clone(), s.upper.clone())
+                };
+                Ok(Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper)))
+            }
         }
-        
-        // Return current bisection interval
-        let (lower, upper) = if state.negate_result {
-            (state.upper.neg(), state.lower.neg())
-        } else {
-            (state.lower.clone(), state.upper.clone())
-        };
-        
-        Ok(Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper)))
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.bisection_state.write();
         
-        if !state.initialized {
-            // Initialize the bisection state from input bounds
-            *state = initialize_bisection_state(&input_bounds, self.degree)?;
-            return Ok(true);
+        match &mut *state {
+            None => {
+                // Initialize the bisection state from input bounds
+                *state = Some(initialize_bisection_state(&input_bounds, self.degree)?);
+                Ok(true)
+            }
+            Some(s) => {
+                // Perform one bisection step
+                let mid = midpoint(&s.lower, &s.upper);
+                let mid_pow = power(&mid, self.degree);
+                
+                if mid_pow <= s.target {
+                    s.lower = mid;
+                } else {
+                    s.upper = mid;
+                }
+                Ok(true)
+            }
         }
-        
-        // Perform one bisection step
-        let mid = midpoint(&state.lower, &state.upper);
-        let mid_pow = power(&mid, self.degree);
-        
-        if mid_pow <= state.target {
-            state.lower = mid;
-        } else {
-            state.upper = mid;
-        }
-        
-        Ok(true)
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
@@ -275,7 +266,6 @@ fn initialize_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<Bise
     };
     
     Ok(BisectionState {
-        initialized: true,
         lower: bisection_lower,
         upper: bisection_upper,
         target: actual_target,

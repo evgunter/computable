@@ -13,7 +13,6 @@ use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, SinOp};
-use crate::ops::nth_root::BisectionState;
 use crate::binary::Bounds;
 use crate::refinement::{bounds_width_leq, RefinementGraph};
 
@@ -159,7 +158,7 @@ impl Computable {
         let node = Node::new(Arc::new(NthRootOp {
             inner: Arc::clone(&self.node),
             degree,
-            bisection_state: RwLock::new(BisectionState::default()),
+            bisection_state: RwLock::new(None),
         }));
         Self { node }
     }
