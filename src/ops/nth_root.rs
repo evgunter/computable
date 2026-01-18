@@ -505,22 +505,22 @@ mod tests {
         assert!(lower <= expected && expected <= upper);
     }
 
+    fn interval_computable(lower: i64, upper: i64) -> Computable {
+        let interval_state = Bounds::new(
+            XBinary::Finite(bin(lower, 0)),
+            XBinary::Finite(bin(upper, 0)),
+        );
+        Computable::new(
+            interval_state,
+            |state| Ok(state.clone()),
+            |state| state, // No refinement for this test
+        )
+    }
+
     #[test]
     fn sqrt_of_interval_overlapping_zero() {
         // Test even root of a Computable with bounds overlapping zero: [-1, 4]
-        // The sqrt should have bounds [0, 2] (since sqrt is only defined for non-negative)
-        fn interval_computable(lower: i64, upper: i64) -> Computable {
-            let interval_state = Bounds::new(
-                XBinary::Finite(bin(lower, 0)),
-                XBinary::Finite(bin(upper, 0)),
-            );
-            Computable::new(
-                interval_state,
-                |state| Ok(state.clone()),
-                |state| state, // No refinement for this test
-            )
-        }
-
+        // The sqrt should have bounds [0, upper] (since sqrt is only defined for non-negative)
         let interval = interval_computable(-1, 4);
         let sqrt_interval = interval.nth_root(2);
         let bounds = sqrt_interval.bounds().expect("bounds should succeed");
@@ -532,6 +532,23 @@ mod tests {
         assert_eq!(lower, bin(0, 0));
         // Upper output bound should be >= sqrt(4) = 2
         assert!(upper >= bin(2, 0));
+    }
+
+    #[test]
+    fn cbrt_of_interval_overlapping_zero() {
+        // Test odd root of a Computable with bounds overlapping zero: [-8, 27]
+        // cbrt(-8) = -2, cbrt(27) = 3, so output should be approximately [-2, 3]
+        let interval = interval_computable(-8, 27);
+        let cbrt_interval = interval.nth_root(3);
+        let bounds = cbrt_interval.bounds().expect("bounds should succeed");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+
+        // Lower output bound should be <= cbrt(-8) = -2
+        assert!(lower <= bin(-2, 0));
+        // Upper output bound should be >= cbrt(27) = 3
+        assert!(upper >= bin(3, 0));
     }
 
     #[test]
