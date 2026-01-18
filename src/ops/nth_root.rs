@@ -125,8 +125,9 @@ fn compute_initial_bounds(input_bounds: &Bounds, degree: u32) -> Result<Bounds, 
     let upper = &input_bounds.large();
     let is_even = degree.is_multiple_of(2);
     
-    // Handle infinite input bounds
-    match (lower, upper) {
+    // Extract finite bounds, or return conservative infinite bounds
+    let (lower_bin, upper_bin) = match (lower, upper) {
+        (XBinary::Finite(l), XBinary::Finite(u)) => (l, u),
         (XBinary::NegInf, _) | (_, XBinary::PosInf) => {
             if is_even {
                 // Even root of potentially negative values or infinite range
@@ -136,16 +137,9 @@ fn compute_initial_bounds(input_bounds: &Bounds, degree: u32) -> Result<Bounds, 
                 return Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf));
             }
         }
-        _ => {}
-    }
-    
-    // Both bounds are finite
-    let lower_bin = match lower {
-        XBinary::Finite(b) => b,
-        _ => return Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
-    };
-    let upper_bin = match upper {
-        XBinary::Finite(b) => b,
+        // NegInf can only be lower bound, PosInf can only be upper bound
+        // so this case (PosInf, NegInf) or (PosInf, Finite) etc. shouldn't happen
+        // with valid Bounds, but handle defensively
         _ => return Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
     };
     
