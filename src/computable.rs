@@ -153,6 +153,8 @@ impl Computable {
     /// - `nth_root(2)` computes the square root
     /// - `nth_root(3)` computes the cube root
     /// - `nth_root(4)` computes the fourth root
+    // TODO: Refactor to remove this assert. Options include returning self for degree=0
+    // (since x^(1/0) is undefined, but we could define it as identity or error gracefully).
     pub fn nth_root(self, degree: u32) -> Self {
         assert!(degree >= 1, "Root degree must be at least 1");
         let node = Node::new(Arc::new(NthRootOp {
@@ -165,25 +167,33 @@ impl Computable {
 
     /// Raises this computable number to an integer power.
     ///
-    /// Computes x^n for positive integer exponents. This is more efficient than
+    /// Computes x^n for non-negative integer exponents. This is more efficient than
     /// repeated multiplication because it computes bounds directly using the
     /// monotonicity properties of power functions.
     ///
     /// # Arguments
-    /// * `exponent` - The power to raise to (n in x^n). Must be >= 1.
+    /// * `exponent` - The power to raise to (n in x^n).
     ///
     /// # Bounds Computation
-    /// - For odd exponents: x^n is monotonically increasing, so bounds are [lower^n, upper^n]
-    /// - For even exponents: x^n has a minimum at 0
+    /// - For n=0: returns constant 1 (including 0^0 = 1 by convention)
+    /// - For odd n: x^n is monotonically increasing, so bounds are [lower^n, upper^n]
+    /// - For even n: x^n has a minimum at 0
     ///   - If interval is non-negative: [lower^n, upper^n]
     ///   - If interval is non-positive: [upper^n, lower^n]
     ///   - If interval spans zero: [0, max(|lower|^n, |upper|^n)]
     ///
     /// # Examples
+    /// - `pow(0)` returns constant 1
     /// - `pow(2)` computes the square
     /// - `pow(3)` computes the cube
     pub fn pow(self, exponent: u32) -> Self {
-        assert!(exponent >= 1, "Exponent must be at least 1");
+        if exponent == 0 {
+            // x^0 = 1 for all x, including 0^0 = 1 by convention
+            return Computable::constant(Binary::new(
+                num_bigint::BigInt::from(1),
+                num_bigint::BigInt::from(0),
+            ));
+        }
         let node = Node::new(Arc::new(PowOp {
             inner: Arc::clone(&self.node),
             exponent,

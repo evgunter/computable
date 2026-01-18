@@ -15,7 +15,8 @@ use crate::binary::Bounds;
 
 /// Integer power operation.
 ///
-/// Computes x^n where n is a positive integer exponent.
+/// Computes x^n where n is a positive integer exponent (n >= 1).
+/// The case n=0 is handled at the `Computable::pow` level by returning constant 1.
 ///
 /// # Bounds Computation
 /// - For odd n: x^n is monotonically increasing, so bounds are [lower^n, upper^n]
@@ -23,14 +24,10 @@ use crate::binary::Bounds;
 ///   - If interval is non-negative: [lower^n, upper^n]
 ///   - If interval is non-positive: [upper^n, lower^n]
 ///   - If interval spans zero: [0, max(|lower|^n, |upper|^n)]
-///
-/// # Note on 0^0
-/// The exponent is required to be >= 1, so the indeterminate form 0^0 is avoided
-/// entirely. For x^1 where x=0, the result is simply 0.
 pub struct PowOp {
     /// The input node to raise to a power.
     pub inner: Arc<Node>,
-    /// The exponent (n in x^n). Must be >= 1.
+    /// The exponent (n in x^n). Must be >= 1 (n=0 is handled at the Computable level).
     pub exponent: u32,
 }
 
@@ -306,6 +303,30 @@ mod tests {
         let bounds = result.bounds().expect("bounds should succeed");
 
         let expected = bin(3, 0);
+        assert_eq!(unwrap_finite(bounds.small()), expected);
+        assert_eq!(unwrap_finite(&bounds.large()), expected);
+    }
+
+    #[test]
+    fn pow_exponent_zero() {
+        // x^0 = 1 for all x
+        let three = Computable::constant(bin(3, 0));
+        let result = three.pow(0);
+        let bounds = result.bounds().expect("bounds should succeed");
+
+        let expected = bin(1, 0);
+        assert_eq!(unwrap_finite(bounds.small()), expected);
+        assert_eq!(unwrap_finite(&bounds.large()), expected);
+    }
+
+    #[test]
+    fn pow_zero_to_zero() {
+        // 0^0 = 1 by convention
+        let zero = Computable::constant(bin(0, 0));
+        let result = zero.pow(0);
+        let bounds = result.bounds().expect("bounds should succeed");
+
+        let expected = bin(1, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
         assert_eq!(unwrap_finite(&bounds.large()), expected);
     }
