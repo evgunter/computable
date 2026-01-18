@@ -12,7 +12,7 @@ use num_traits::{One, Zero};
 use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
-use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, SinOp};
+use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PowOp, SinOp};
 use crate::binary::Bounds;
 use crate::refinement::{bounds_width_leq, RefinementGraph};
 
@@ -153,12 +153,49 @@ impl Computable {
     /// - `nth_root(2)` computes the square root
     /// - `nth_root(3)` computes the cube root
     /// - `nth_root(4)` computes the fourth root
+    // TODO: Refactor to remove this assert in non-test code.
     pub fn nth_root(self, degree: u32) -> Self {
         assert!(degree >= 1, "Root degree must be at least 1");
         let node = Node::new(Arc::new(NthRootOp {
             inner: Arc::clone(&self.node),
             degree,
             bisection_state: RwLock::new(None),
+        }));
+        Self { node }
+    }
+
+    /// Raises this computable number to an integer power.
+    ///
+    /// Computes x^n for non-negative integer exponents. This is more efficient than
+    /// repeated multiplication because it computes bounds directly using the
+    /// monotonicity properties of power functions.
+    ///
+    /// # Arguments
+    /// * `exponent` - The power to raise to (n in x^n).
+    ///
+    /// # Bounds Computation
+    /// - For n=0: returns constant 1 (including 0^0 = 1 by convention)
+    /// - For odd n: x^n is monotonically increasing, so bounds are [lower^n, upper^n]
+    /// - For even n: x^n has a minimum at 0
+    ///   - If interval is non-negative: [lower^n, upper^n]
+    ///   - If interval is non-positive: [upper^n, lower^n]
+    ///   - If interval spans zero: [0, max(|lower|^n, |upper|^n)]
+    ///
+    /// # Examples
+    /// - `pow(0)` returns constant 1
+    /// - `pow(2)` computes the square
+    /// - `pow(3)` computes the cube
+    pub fn pow(self, exponent: u32) -> Self {
+        if exponent == 0 {
+            // x^0 = 1 for all x, including 0^0 = 1 by convention
+            return Computable::constant(Binary::new(
+                num_bigint::BigInt::from(1),
+                num_bigint::BigInt::from(0),
+            ));
+        }
+        let node = Node::new(Arc::new(PowOp {
+            inner: Arc::clone(&self.node),
+            exponent,
         }));
         Self { node }
     }
