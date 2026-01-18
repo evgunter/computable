@@ -1,13 +1,13 @@
 //! Shortest mantissa selection within bounds.
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 
 use crate::ordered_pair::Bounds;
 
 use super::shift;
-use super::{Binary, UXBinary, XBinary};
+use super::{Binary, UBinary, UXBinary, XBinary};
 
 /// Returns a binary value inside the bounds with the shortest normalized mantissa.
 pub fn shortest_binary_in_bounds(bounds: &Bounds) -> Option<Binary> {
@@ -20,20 +20,19 @@ pub fn shortest_binary_in_bounds(bounds: &Bounds) -> Option<Binary> {
 /// Returns an XBinary value inside the bounds with the shortest normalized mantissa.
 pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
     let lower = bounds.small();
-    let upper = bounds.large();
-    let lower_mag = signed_magnitude(lower);
-    let upper_mag = signed_magnitude(&upper);
+    let (lower_sign, lower_mag) = split_xbinary(lower);
+    let (upper_sign, upper_mag) = split_xbinary(&bounds.large());
 
-    match (lower_mag.sign, upper_mag.sign) {
-        (Sign::Negative, Sign::Positive)
-        | (Sign::Negative, Sign::Zero)
-        | (Sign::Zero, Sign::Positive)
-        | (Sign::Zero, Sign::Zero) => XBinary::zero(),
-        (Sign::Positive, Sign::Positive) => shortest_positive_bounds(&lower_mag, &upper_mag),
-        (Sign::Negative, Sign::Negative) => shortest_negative_bounds(lower, &lower_mag, &upper_mag),
-        (Sign::Positive, Sign::Zero)
-        | (Sign::Zero, Sign::Negative)
-        | (Sign::Positive, Sign::Negative) => {
+    match (lower_sign, upper_sign) {
+        (Sign::Minus, Sign::Plus)
+        | (Sign::Minus, Sign::NoSign)
+        | (Sign::NoSign, Sign::Plus)
+        | (Sign::NoSign, Sign::NoSign) => XBinary::zero(),
+        (Sign::Plus, Sign::Plus) => shortest_positive_bounds(&lower_mag, &upper_mag),
+        (Sign::Minus, Sign::Minus) => shortest_negative_bounds(&lower_mag, &upper_mag),
+        (Sign::Plus, Sign::NoSign)
+        | (Sign::NoSign, Sign::Minus)
+        | (Sign::Plus, Sign::Minus) => {
             debug_assert!(false, "bounds are not ordered");
             lower.clone()
         }
@@ -165,53 +164,33 @@ fn shift_left_bigint(value: &BigInt, shift: &BigUint) -> BigInt {
     shift::shift_mantissa_chunked::<BigInt>(value, shift, &chunk_limit)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Sign {
-    Negative,
-    Zero,
-    Positive,
-}
-
-#[derive(Clone, Debug)]
-struct SignedMagnitude {
-    sign: Sign,
-    magnitude: UXBinary,
-}
-
-fn signed_magnitude(value: &XBinary) -> SignedMagnitude {
+fn split_xbinary(value: &XBinary) -> (Sign, UXBinary) {
     match value {
-        XBinary::NegInf => SignedMagnitude {
-            sign: Sign::Negative,
-            magnitude: UXBinary::PosInf,
-        },
-        XBinary::PosInf => SignedMagnitude {
-            sign: Sign::Positive,
-            magnitude: UXBinary::PosInf,
-        },
+        XBinary::NegInf => (Sign::Minus, UXBinary::PosInf),
+        XBinary::PosInf => (Sign::Plus, UXBinary::PosInf),
         XBinary::Finite(binary) => {
-            if binary.mantissa().is_zero() {
-                SignedMagnitude {
-                    sign: Sign::Zero,
-                    magnitude: UXBinary::zero(),
-                }
-            } else if binary.mantissa().is_positive() {
-                SignedMagnitude {
-                    sign: Sign::Positive,
-                    magnitude: UXBinary::Finite(binary.magnitude()),
-                }
+            let mantissa = binary.mantissa();
+            if mantissa.is_zero() {
+                (Sign::NoSign, UXBinary::zero())
             } else {
-                SignedMagnitude {
-                    sign: Sign::Negative,
-                    magnitude: UXBinary::Finite(binary.magnitude()),
+                let magnitude = UBinary::new(mantissa.magnitude().clone(), binary.exponent().clone());
+                if mantissa.is_positive() {
+                    (Sign::Plus, UXBinary::Finite(magnitude))
+                } else {
+                    (Sign::Minus, UXBinary::Finite(magnitude))
                 }
             }
         }
     }
 }
 
-fn shortest_positive_bounds(lower_mag: &SignedMagnitude, upper_mag: &SignedMagnitude) -> XBinary {
-    match (&lower_mag.magnitude, &upper_mag.magnitude) {
-        (UXBinary::PosInf, _) => XBinary::PosInf,
+fn shortest_positive_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBinary {
+    match (lower_mag, upper_mag) {
+        (UXBinary::PosInf, UXBinary::PosInf) => XBinary::PosInf,
+        (UXBinary::PosInf, UXBinary::Finite(_)) => {
+            debug_assert!(false, "positive bounds are not ordered");
+            XBinary::PosInf
+        }
         (UXBinary::Finite(lower_mag), UXBinary::PosInf) => {
             let lower_binary = lower_mag.to_binary();
             shortest_power_of_two_at_least(&lower_binary)
@@ -234,12 +213,8 @@ fn shortest_positive_bounds(lower_mag: &SignedMagnitude, upper_mag: &SignedMagni
     }
 }
 
-fn shortest_negative_bounds(
-    lower: &XBinary,
-    lower_mag: &SignedMagnitude,
-    upper_mag: &SignedMagnitude,
-) -> XBinary {
-    match (&lower_mag.magnitude, &upper_mag.magnitude) {
+fn shortest_negative_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBinary {
+    match (lower_mag, upper_mag) {
         (UXBinary::PosInf, UXBinary::PosInf) => XBinary::NegInf,
         (UXBinary::PosInf, UXBinary::Finite(upper_mag)) => {
             let upper_binary = upper_mag.to_binary().neg();
@@ -262,7 +237,7 @@ fn shortest_negative_bounds(
         }
         (UXBinary::Finite(_), UXBinary::PosInf) => {
             debug_assert!(false, "negative bounds are not ordered");
-            lower.clone()
+            XBinary::NegInf
         }
     }
 }
