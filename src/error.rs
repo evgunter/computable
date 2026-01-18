@@ -22,6 +22,10 @@ pub enum ComputableError {
     MaxRefinementIterations { max: usize },
     /// Error from binary number operations.
     Binary(BinaryError),
+    /// Input is outside the domain of the operation (e.g., negative for even roots).
+    DomainError,
+    /// Input bounds are infinite where finite bounds are required.
+    InfiniteBounds,
 }
 
 impl fmt::Display for ComputableError {
@@ -39,6 +43,8 @@ impl fmt::Display for ComputableError {
                 write!(f, "maximum refinement iterations ({max}) reached")
             }
             Self::Binary(err) => write!(f, "{err}"),
+            Self::DomainError => write!(f, "input is outside the domain of the operation"),
+            Self::InfiniteBounds => write!(f, "input bounds are infinite where finite bounds are required"),
         }
     }
 }

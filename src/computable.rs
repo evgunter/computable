@@ -12,7 +12,8 @@ use num_traits::{One, Zero};
 use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
-use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, SinOp};
+use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, SinOp};
+use crate::ops::nth_root::BisectionState;
 use crate::binary::Bounds;
 use crate::refinement::{bounds_width_leq, RefinementGraph};
 
@@ -133,6 +134,32 @@ impl Computable {
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
             num_terms: RwLock::new(BigInt::one()),
+        }));
+        Self { node }
+    }
+
+    /// Computes the n-th root of this computable number.
+    ///
+    /// Uses binary search (bisection) for guaranteed convergence with provably
+    /// correct bounds. For each refinement step, the interval is halved.
+    ///
+    /// # Arguments
+    /// * `degree` - The root degree (n in x^(1/n)). Must be >= 1.
+    ///
+    /// # Constraints
+    /// - For even degrees (2, 4, 6, ...): requires non-negative input
+    /// - For odd degrees (3, 5, 7, ...): supports all real inputs
+    ///
+    /// # Examples
+    /// - `nth_root(2)` computes the square root
+    /// - `nth_root(3)` computes the cube root
+    /// - `nth_root(4)` computes the fourth root
+    pub fn nth_root(self, degree: u32) -> Self {
+        assert!(degree >= 1, "Root degree must be at least 1");
+        let node = Node::new(Arc::new(NthRootOp {
+            inner: Arc::clone(&self.node),
+            degree,
+            bisection_state: RwLock::new(BisectionState::default()),
         }));
         Self { node }
     }
