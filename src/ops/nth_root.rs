@@ -7,6 +7,11 @@
 //! The algorithm maintains an interval [lower, upper] where the true root lies,
 //! and refines by bisection: if mid^n <= target, the root is in [mid, upper],
 //! otherwise it's in [lower, mid].
+//!
+//! TODO: Extract a generic binary search helper function that can be reused for
+//! other operations that use bisection (e.g., finding roots of monotonic functions).
+//! The helper could take: initial bounds, a comparison function, and produce a
+//! Computable that refines via bisection.
 
 use std::sync::Arc;
 
