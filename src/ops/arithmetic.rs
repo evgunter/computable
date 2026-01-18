@@ -116,16 +116,9 @@ mod tests {
     use crate::binary::{Binary, XBinary};
     use crate::computable::Computable;
     use crate::binary::Bounds;
+    use crate::test_utils::xbin;
     use num_bigint::BigInt;
     use num_traits::One;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
-    }
 
     fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
         fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {

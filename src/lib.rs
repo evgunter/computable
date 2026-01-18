@@ -49,6 +49,7 @@
 
 // External modules (already exist)
 mod binary;
+pub mod binary_utils;
 mod concurrency;
 mod ordered_pair;
 
@@ -59,9 +60,14 @@ mod node;
 mod ops;
 mod refinement;
 
+// Test utilities module (only compiled in test mode)
+#[cfg(test)]
+pub mod test_utils;
+
 // Re-export public API
 pub use binary::{
-    shortest_xbinary_in_bounds, Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError,
+    shortest_xbinary_in_bounds, Binary, BinaryError, FiniteBounds, UBinary, UXBinary, XBinary,
+    XBinaryError,
 };
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
 pub use error::ComputableError;

@@ -101,41 +101,12 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use crate::binary::{Binary, UBinary, UXBinary, XBinary};
+    use crate::binary::{Binary, UBinary, XBinary};
     use crate::computable::Computable;
     use crate::binary::Bounds;
-    use num_bigint::{BigInt, BigUint};
+    use crate::test_utils::{ubin, xbin, unwrap_finite, unwrap_finite_uxbinary};
+    use num_bigint::BigInt;
     use num_traits::One;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
-    }
-
-    fn unwrap_finite(input: &XBinary) -> Binary {
-        match input {
-            XBinary::Finite(value) => value.clone(),
-            XBinary::NegInf | XBinary::PosInf => {
-                panic!("expected finite extended binary")
-            }
-        }
-    }
-
-    fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
-        match input {
-            UXBinary::Finite(value) => value.clone(),
-            UXBinary::PosInf => {
-                panic!("expected finite unsigned extended binary")
-            }
-        }
-    }
 
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,

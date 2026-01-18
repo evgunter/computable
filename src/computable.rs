@@ -4,6 +4,7 @@
 //! It is backed by a computation graph where leaf nodes contain user-defined
 //! state and refinement logic, and interior nodes represent arithmetic operations.
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
@@ -12,7 +13,7 @@ use num_traits::{One, Zero};
 use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
-use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, SinOp};
+use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PowOp, SinOp};
 use crate::binary::Bounds;
 use crate::refinement::{bounds_width_leq, RefinementGraph};
 
@@ -122,13 +123,10 @@ impl Computable {
     /// Computes the sine of this computable number.
     ///
     /// Uses Taylor series with provably correct error bounds.
-    /// The error bound |x|^(2n+1)/(2n+1)! is computed conservatively (rounded up)
+    /// The implementation uses directed rounding throughout: the lower bound computation
+    /// rounds toward negative infinity and the upper bound rounds toward positive infinity.
+    /// The error bound |x|^(2n+1)/(2n+1)! is also computed conservatively (rounded up)
     /// to ensure the true value is always contained within the returned bounds.
-    ///
-    /// TODO: Ideally, we'd round differently for lower vs upper bounds in the sum
-    /// computation (round down for lower, round up for upper). Currently we round up
-    /// for the error bound which covers intermediate rounding, but directed rounding
-    /// throughout would be more precise.
     pub fn sin(self) -> Self {
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
@@ -143,22 +141,57 @@ impl Computable {
     /// correct bounds. For each refinement step, the interval is halved.
     ///
     /// # Arguments
-    /// * `degree` - The root degree (n in x^(1/n)). Must be >= 1.
+    /// * `degree` - The root degree (n in x^(1/n)). Must be >= 1, enforced by the type system.
     ///
     /// # Constraints
     /// - For even degrees (2, 4, 6, ...): requires non-negative input
     /// - For odd degrees (3, 5, 7, ...): supports all real inputs
     ///
     /// # Examples
-    /// - `nth_root(2)` computes the square root
-    /// - `nth_root(3)` computes the cube root
-    /// - `nth_root(4)` computes the fourth root
-    pub fn nth_root(self, degree: u32) -> Self {
-        assert!(degree >= 1, "Root degree must be at least 1");
+    /// - `nth_root(NonZeroU32::new(2).unwrap())` computes the square root
+    /// - `nth_root(NonZeroU32::new(3).unwrap())` computes the cube root
+    /// - `nth_root(NonZeroU32::new(4).unwrap())` computes the fourth root
+    pub fn nth_root(self, degree: NonZeroU32) -> Self {
         let node = Node::new(Arc::new(NthRootOp {
             inner: Arc::clone(&self.node),
             degree,
             bisection_state: RwLock::new(None),
+        }));
+        Self { node }
+    }
+
+    /// Raises this computable number to an integer power.
+    ///
+    /// Computes x^n for non-negative integer exponents. This is more efficient than
+    /// repeated multiplication because it computes bounds directly using the
+    /// monotonicity properties of power functions.
+    ///
+    /// # Arguments
+    /// * `exponent` - The power to raise to (n in x^n).
+    ///
+    /// # Bounds Computation
+    /// - For n=0: returns constant 1 (including 0^0 = 1 by convention)
+    /// - For odd n: x^n is monotonically increasing, so bounds are [lower^n, upper^n]
+    /// - For even n: x^n has a minimum at 0
+    ///   - If interval is non-negative: [lower^n, upper^n]
+    ///   - If interval is non-positive: [upper^n, lower^n]
+    ///   - If interval spans zero: [0, max(|lower|^n, |upper|^n)]
+    ///
+    /// # Examples
+    /// - `pow(0)` returns constant 1
+    /// - `pow(2)` computes the square
+    /// - `pow(3)` computes the cube
+    pub fn pow(self, exponent: u32) -> Self {
+        if exponent == 0 {
+            // x^0 = 1 for all x, including 0^0 = 1 by convention
+            return Computable::constant(Binary::new(
+                num_bigint::BigInt::from(1),
+                num_bigint::BigInt::from(0),
+            ));
+        }
+        let node = Node::new(Arc::new(PowOp {
+            inner: Arc::clone(&self.node),
+            exponent,
         }));
         Self { node }
     }
@@ -244,28 +277,11 @@ mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use crate::binary::UBinary;
-    use num_bigint::BigUint;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn unwrap_finite(input: &XBinary) -> Binary {
-        match input {
-            XBinary::Finite(value) => value.clone(),
-            XBinary::NegInf | XBinary::PosInf => {
-                panic!("expected finite extended binary")
-            }
-        }
-    }
+    use crate::test_utils::{bin, ubin, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        Computable::constant(bin(value_int as i64, 0)).nth_root(2)
+        Computable::constant(bin(value_int as i64, 0))
+            .nth_root(NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
     #[test]

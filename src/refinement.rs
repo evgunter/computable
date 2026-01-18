@@ -284,34 +284,14 @@ mod tests {
     use crate::binary::{Binary, XBinary};
     use crate::computable::Computable;
     use crate::error::ComputableError;
-    use num_bigint::{BigInt, BigUint};
+    use crate::test_utils::{bin, ubin, xbin, unwrap_finite};
+    use num_bigint::BigInt;
     use num_traits::One;
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
 
     type IntervalState = Bounds;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
-    }
-
-    fn unwrap_finite(input: &XBinary) -> Binary {
-        match input {
-            XBinary::Finite(value) => value.clone(),
-            XBinary::NegInf | XBinary::PosInf => {
-                panic!("expected finite extended binary")
-            }
-        }
-    }
 
     fn interval_bounds(state: &IntervalState) -> Bounds {
         state.clone()
@@ -346,7 +326,8 @@ mod tests {
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        Computable::constant(bin(value_int as i64, 0)).nth_root(2)
+        Computable::constant(bin(value_int as i64, 0))
+            .nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
     fn assert_width_nonnegative(bounds: &Bounds) {

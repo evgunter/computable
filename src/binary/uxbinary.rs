@@ -154,6 +154,10 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
     /// Computes the width between two XBinary values, returning a UXBinary.
     ///
     /// Width is always nonnegative: |other - self|.
+    // TODO: Investigate if the type system can prevent needing the unreachable! check below.
+    // After taking the absolute value, the result is guaranteed non-negative, so try_from_binary
+    // should never fail. Ideally we'd have a type-level proof of this.
+    #[allow(clippy::unreachable)]
     fn abs_distance(self, other: Self) -> UXBinary {
         use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
@@ -164,19 +168,18 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
             (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::PosInf,
             (Finite(l), Finite(u)) => {
                 // Compute |u - l|
-                let diff = u.clone().sub(l.clone());
                 use num_traits::Signed;
-                if diff.mantissa().is_negative() {
-                    // This means lower > upper, use |lower - upper| instead
-                    let abs_diff = l.sub(u);
-                    UXBinary::Finite(
-                        UBinary::try_from_binary(&abs_diff).unwrap_or_else(|_| UBinary::zero()),
-                    )
+                let diff = u.clone().sub(l.clone());
+                let non_negative = if diff.mantissa().is_negative() {
+                    l.sub(u)
                 } else {
-                    UXBinary::Finite(
-                        UBinary::try_from_binary(&diff).unwrap_or_else(|_| UBinary::zero()),
-                    )
-                }
+                    diff
+                };
+                UXBinary::Finite(
+                    UBinary::try_from_binary(&non_negative).unwrap_or_else(|_| {
+                        unreachable!("absolute value of difference should always be non-negative")
+                    }),
+                )
             }
         }
     }
@@ -202,20 +205,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use super::super::binary_impl::Binary;
-    use num_bigint::{BigInt, BigUint};
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn xbin(mantissa: i64, exponent: i64) -> XBinary {
-        XBinary::Finite(bin(mantissa, exponent))
-    }
+    use crate::test_utils::{bin, ubin, xbin};
 
     #[test]
     fn uxbinary_zero_is_zero() {

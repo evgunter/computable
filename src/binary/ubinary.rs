@@ -192,14 +192,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-
-    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
+    use crate::test_utils::{bin, ubin};
 
     #[test]
     fn ubinary_normalizes_even_mantissa() {
