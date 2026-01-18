@@ -1,4 +1,13 @@
 //! Error types for computable operations.
+//!
+//! TODO: Standardize how we handle mathematically impossible cases throughout the
+//! codebase. Options include:
+//! - `debug_assert!(false, ...)` - only panics in debug builds, silent in release
+//! - `panic!(...)` - always panics
+//! - `unreachable!()` - semantically clearer but same as panic
+//! - Return an error variant (e.g., `ComputableError::InternalError`)
+//! Currently we use `debug_assert!` in some places (e.g., impossible bounds ordering
+//! in nth_root), but this should be consistent across the codebase.
 
 use crate::binary::BinaryError;
 use std::fmt;
