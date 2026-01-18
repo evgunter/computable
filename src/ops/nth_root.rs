@@ -13,6 +13,10 @@
 //! The helper could take: initial bounds, a comparison function, and produce a
 //! Computable that refines via bisection.
 //!
+//! TODO: Add a node type for integer powers of a computable (e.g., x^2, x^3).
+//! This would be the "inverse" of nth_root and could be implemented more efficiently
+//! than repeated multiplication, especially for computing bounds.
+//!
 //! TODO: Contra the README, even-degree roots of inputs that overlap with negative
 //! numbers (but aren't completely negative) currently just return (0, ∞) bounds
 //! instead of returning a recoverable error that would trigger refinement of the
