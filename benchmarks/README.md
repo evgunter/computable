@@ -2,7 +2,7 @@
 
 This directory contains performance benchmarks comparing Computable arithmetic against standard f64 floating-point operations.
 
-The benchmarks are implemented as a separate crate (not published to crates.io) that depends on the main `computable` library.
+The benchmarks are implemented as a separate crate (which shouldn't be published to crates.io) that depends on the main `computable` library.
 
 ## Running the Benchmarks
 
