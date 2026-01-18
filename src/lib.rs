@@ -1147,6 +1147,10 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
     let (reduced_lower, lower_sign_flip) = reduce_to_half_pi_range(lower_bin);
     let (reduced_upper, upper_sign_flip) = reduce_to_half_pi_range(upper_bin);
 
+    // TODO: This truncation loses precision and isn't accounted for in error bounds.
+    // For provable correctness, either remove truncation or add the truncation error
+    // (at most 2^(-64) * |reduced_value|) to the final error bound (while increasing the
+    // precision bits so that the answer still converges instead of remaining stuck at 64 bits of precision).
     // Truncate to 64 bits to keep mantissas manageable
     let reduced_lower = truncate_precision(&reduced_lower, 64);
     let reduced_upper = truncate_precision(&reduced_upper, 64);
