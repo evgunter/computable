@@ -188,10 +188,11 @@ pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
     // Find shortest width in [min_width, min_width + margin]
     let new_width = shortest_binary_in_positive_interval(&min_width_unsigned, &UXBinary::Finite(finite_margin.clone()));
 
-    // Construct new bounds: new_upper = new_lower + new_width
-    // TODO: here and elsewhere it might be nice to be able to construct Bounds directly rather than finding the upper bound just to have it turn that back into a width
-    let new_upper = new_lower.add(&new_width.to_binary());
-    Bounds::new(XBinary::Finite(new_lower), XBinary::Finite(new_upper))
+    // Construct new bounds directly from lower and width
+    Bounds::from_lower_and_width(
+        XBinary::Finite(new_lower),
+        UXBinary::Finite(new_width),
+    )
 }
 
 

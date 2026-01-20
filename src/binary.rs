@@ -128,4 +128,41 @@ mod integration_tests {
         }
     }
 
+    #[test]
+    fn bounds_from_lower_and_width_constructs_correctly() {
+        let lower = xbin(5, 0);
+        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(3u32), BigInt::from(0)));
+
+        let bounds = Bounds::from_lower_and_width(lower.clone(), width.clone());
+
+        assert_eq!(bounds.small(), &xbin(5, 0));
+        assert_eq!(bounds.width(), &width);
+        assert_eq!(bounds.large(), xbin(8, 0));
+    }
+
+    #[test]
+    fn bounds_from_lower_and_width_matches_new() {
+        let lower = xbin(10, 0);
+        let upper = xbin(25, 0);
+
+        let via_new = Bounds::new(lower.clone(), upper.clone());
+        let via_from_lower_and_width = Bounds::from_lower_and_width(
+            lower.clone(),
+            via_new.width().clone(),
+        );
+
+        assert_eq!(via_new, via_from_lower_and_width);
+    }
+
+    #[test]
+    fn bounds_from_lower_and_width_zero_width() {
+        let lower = xbin(42, 0);
+        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(0u32), BigInt::from(0)));
+
+        let bounds = Bounds::from_lower_and_width(lower.clone(), width);
+
+        assert_eq!(bounds.small(), &xbin(42, 0));
+        assert_eq!(bounds.large(), xbin(42, 0));
+    }
+
 }
