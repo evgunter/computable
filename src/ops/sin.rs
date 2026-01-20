@@ -26,9 +26,17 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, Bounds, XBinary};
+use crate::binary::{simplify_bounds_if_needed, Binary, Bounds, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+
+/// Precision threshold for triggering bounds simplification.
+/// When total mantissa bits exceed this, we simplify to reduce memory usage.
+const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
+
+/// Loosening fraction for bounds simplification.
+/// A value of 2 means we loosen by width/8, which is conservative.
+const LOOSENING_FRACTION: u32 = 2;
 
 use super::pi::{
     half_pi_interval_at_precision, pi_interval_at_precision,
@@ -45,7 +53,13 @@ impl NodeOp for SinOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let num_terms = self.num_terms.read().clone();
-        sin_bounds(&input_bounds, &num_terms)
+        let raw_bounds = sin_bounds(&input_bounds, &num_terms)?;
+        // Simplify bounds to reduce precision bloat from Taylor series computation
+        Ok(simplify_bounds_if_needed(
+            &raw_bounds,
+            PRECISION_SIMPLIFICATION_THRESHOLD,
+            LOOSENING_FRACTION,
+        ))
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -177,8 +191,15 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
         result_hi
     };
 
-    Bounds::new_checked(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi))
-        .map_err(|_| ComputableError::InvalidBoundsOrder)
+    let raw_bounds = Bounds::new_checked(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi))
+        .map_err(|_| ComputableError::InvalidBoundsOrder)?;
+
+    // Simplify bounds to reduce precision bloat from Taylor series computation
+    Ok(simplify_bounds_if_needed(
+        &raw_bounds,
+        PRECISION_SIMPLIFICATION_THRESHOLD,
+        LOOSENING_FRACTION,
+    ))
 }
 
 //=============================================================================

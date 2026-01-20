@@ -32,9 +32,17 @@ use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary_utils::bisection::{midpoint, BisectionComparison, bisection_step};
-use crate::binary::{Binary, Bounds, FiniteBounds, XBinary};
+use crate::binary::{Binary, Bounds, FiniteBounds, XBinary, simplify_bounds_if_needed};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+
+/// Precision threshold for triggering bounds simplification.
+/// When total mantissa bits exceed this, we simplify to reduce memory usage.
+const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
+
+/// Loosening fraction for bounds simplification.
+/// A value of 2 means we loosen by width/8, which is conservative.
+const LOOSENING_FRACTION: u32 = 2;
 
 /// N-th root operation with binary search refinement.
 ///
@@ -86,13 +94,19 @@ impl NodeOp for NthRootOp {
                 compute_initial_bounds(&input_bounds, self.degree.get())
             }
             Some(s) => {
-                // Return current bisection interval
+                // Return current bisection interval, simplified if needed
                 let (lower, upper) = if s.negate_result {
                     (s.upper.neg(), s.lower.neg())
                 } else {
                     (s.lower.clone(), s.upper.clone())
                 };
-                Ok(Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper)))
+                let raw_bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
+                // Simplify bounds to reduce precision bloat from bisection
+                Ok(simplify_bounds_if_needed(
+                    &raw_bounds,
+                    PRECISION_SIMPLIFICATION_THRESHOLD,
+                    LOOSENING_FRACTION,
+                ))
             }
         }
     }

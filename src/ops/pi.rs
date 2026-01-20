@@ -18,13 +18,21 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, Bounds, XBinary};
+use crate::binary::{simplify_bounds_if_needed, Binary, Bounds, XBinary};
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
 /// Initial number of Taylor series terms for pi computation.
 const INITIAL_PI_TERMS: usize = 10;
+
+/// Precision threshold for triggering bounds simplification.
+/// When total mantissa bits exceed this, we simplify to reduce memory usage.
+const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 256;
+
+/// Loosening fraction for bounds simplification.
+/// A value of 3 means we loosen by width/16, which is conservative for pi.
+const LOOSENING_FRACTION: u32 = 3;
 
 /// Returns pi as a Computable that can be refined to arbitrary precision.
 ///
@@ -85,8 +93,14 @@ impl NodeOp for PiOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let num_terms = *self.num_terms.read();
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms);
-        Bounds::new_checked(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi))
-            .map_err(|_| ComputableError::InvalidBoundsOrder)
+        let raw_bounds = Bounds::new_checked(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi))
+            .map_err(|_| ComputableError::InvalidBoundsOrder)?;
+        // Simplify bounds to reduce precision bloat from high-precision pi computation
+        Ok(simplify_bounds_if_needed(
+            &raw_bounds,
+            PRECISION_SIMPLIFICATION_THRESHOLD,
+            LOOSENING_FRACTION,
+        ))
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {

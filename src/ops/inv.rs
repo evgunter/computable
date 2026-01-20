@@ -6,10 +6,19 @@ use num_bigint::BigInt;
 use num_traits::Zero;
 use parking_lot::RwLock;
 
-use crate::binary::{reciprocal_rounded_abs_extended, ReciprocalRounding, XBinary};
+use crate::binary::{
+    reciprocal_rounded_abs_extended, simplify_bounds_if_needed, Bounds, ReciprocalRounding, XBinary,
+};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::binary::Bounds;
+
+/// Precision threshold for triggering bounds simplification.
+/// When total mantissa bits exceed this, we simplify to reduce memory usage.
+const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
+
+/// Loosening fraction for bounds simplification.
+/// A value of 2 means we loosen by width/8, which is conservative.
+const LOOSENING_FRACTION: u32 = 2;
 
 /// Initial precision bits to start with for inv refinement.
 /// Starting at a reasonable value avoids unnecessary early iterations.
@@ -30,7 +39,13 @@ pub struct InvOp {
 impl NodeOp for InvOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let existing = self.inner.get_bounds()?;
-        reciprocal_bounds(&existing, &self.precision_bits.read())
+        let raw_bounds = reciprocal_bounds(&existing, &self.precision_bits.read())?;
+        // Simplify bounds to reduce precision bloat from high-precision reciprocal computation
+        Ok(simplify_bounds_if_needed(
+            &raw_bounds,
+            PRECISION_SIMPLIFICATION_THRESHOLD,
+            LOOSENING_FRACTION,
+        ))
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {

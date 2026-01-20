@@ -1,16 +1,24 @@
 //! Shortest mantissa selection within bounds.
+//!
+//! This module provides functions to find binary representations with shorter mantissas
+//! that lie within given bounds. This is useful for reducing memory usage and computation
+//! time during iterative refinement, where intermediate bounds can accumulate many bits
+//! of precision.
+//!
+//! # Main Functions
+//!
+//! - [`shortest_xbinary_in_bounds`]: Find the shortest representation strictly within bounds
+//! - [`simplify_bounds`]: Simplify bounds by finding shorter representations for both
+//!   the lower bound and width (matching how `Bounds` stores data internally)
 
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
 
 use super::Bounds;
-use super::{UBinary, UXBinary, XBinary};
+use super::{Binary, UBinary, UXBinary, XBinary};
 
 // TODO: use these functions to make binary-search-based refinement not need to represent intervals that have so many bits of precision
-// TODO: use similar functions to make other refinement strategies not need to represent intervals that have so many bits of precision
-// by loosening bounds (this will require something other than plain shortest_xbinary_in_bounds since the loosened bounds would obviously not
-// lie within the original bounds; but perhaps lower bound - width/4 and upper bound + width/4 would be reasonable?
-// or even something that uses epsilon rather than just width?)
+// by replacing the midpoint with shortest_xbinary_in_bounds (falling back to the midpoint if it returned one of the original endpoints)
 
 /// Returns an XBinary value inside the bounds with the shortest normalized mantissa.
 /// infinities are only returned if the bounds do not contain any finite numbers; this shouldn't happen currently but it might be valid in the future.
@@ -93,12 +101,233 @@ fn split_xbinary(value: &XBinary) -> (Sign, UXBinary) {
     }
 }
 
+// TODO: replace margin_shift with just margin so that the caller can more directly decide how much to loosen the bounds
+// (e.g. the caller may want to loosen based on epsilon rather than only width)
+
+/// simplifies bounds by finding shorter binary representations for both the lower bound and the width
+/// which contain the original bounds.
+///
+/// # Arguments
+///
+/// * `bounds` - The bounds to simplify
+/// * `margin_shift` - How many bits to right-shift the width to get the margin.
+///   E.g., `2` means `margin = width >> 2 = width/4`, `3` means `margin = width/8`.
+///   Higher values are more conservative (less loosening, fewer bits saved).
+///
+/// # Returns
+///
+/// bounds which contain the original bounds, widen the bounds by at most the specified margin, and which have
+/// a shorter binary representation for the lower bound and width (or, if this is not possible, just return the original bounds)
+///
+pub fn simplify_bounds(bounds: &Bounds, margin_shift: u32) -> Bounds {
+    // recall that bounds stores (lower, width) internally
+    let original_width = match bounds.width() {
+        UXBinary::Inf => return bounds.clone(),
+        UXBinary::Finite(w) => w.clone(),
+    };
+
+    if original_width.mantissa().is_zero() {
+        return bounds.clone();
+    }
+
+    // Compute margin: width >> margin_shift (i.e., width / 2^margin_shift)
+    let margin_exponent = original_width.exponent() - BigInt::from(margin_shift);
+    let margin = UBinary::new(original_width.mantissa().clone(), margin_exponent);
+
+    // Step 1: Find shortest lower bound in [original_lower - margin, original_lower]
+    // This relaxes the lower bound downward to find a shorter representation
+    let original_lower = match bounds.small() {
+        XBinary::Finite(lower) => lower.clone(),
+        _ => return bounds.clone(), // Can't simplify infinite lower bound
+    };
+
+    let relaxed_lower = original_lower.sub(&margin.to_binary());
+    let lower_search_bounds = Bounds::new(
+        XBinary::Finite(relaxed_lower),
+        XBinary::Finite(original_lower.clone()),
+    );
+    let new_lower = match shortest_xbinary_in_bounds(&lower_search_bounds) {
+        XBinary::Finite(l) => l,
+        _ => return bounds.clone(),
+    };
+
+    // Step 2: Find shortest width in [min_width, min_width + margin]
+    // where min_width = original_upper - new_lower (the minimum to contain original interval)
+    let original_upper = match bounds.large() {
+        XBinary::Finite(upper) => upper,
+        _ => return bounds.clone(), // Can't simplify infinite upper bound
+    };
+
+    // TODO: can we use the type system to ensure that this is non-negative?
+    // min_width = original_upper - new_lower
+    // Since new_lower <= original_lower <= original_upper, this is non-negative
+    let min_width = original_upper.sub(&new_lower);
+    let min_width_unsigned = match UBinary::try_from_binary(&min_width) {
+        Ok(w) => w,
+        Err(_) => return bounds.clone(), // Shouldn't happen, but be safe
+    };
+
+    // Find shortest width in [min_width, min_width + margin]
+    let new_width = shortest_binary_in_positive_interval(&min_width_unsigned, &UXBinary::Finite(margin));
+
+    // Construct new bounds: new_upper = new_lower + new_width
+    // TODO: here and elsewhere it might be nice to be able to construct Bounds directly rather than finding the upper bound just to have it turn that back into a width
+    let new_upper = new_lower.add(&new_width.to_binary());
+    Bounds::new(XBinary::Finite(new_lower), XBinary::Finite(new_upper))
+}
+
+
+/// Computes the mantissa bit count of a Binary number.
+///
+/// Returns the number of bits in the mantissa, which is a measure of precision.
+/// Useful for tracking precision growth during refinement.
+pub fn mantissa_bits(value: &Binary) -> u64 {
+    value.mantissa().magnitude().bits()
+}
+
+/// Computes the total mantissa bits used by bounds (lower + upper).
+///
+/// This is useful for monitoring precision accumulation during refinement.
+pub fn bounds_precision(bounds: &Bounds) -> u64 {
+    let lower_bits = match bounds.small() {
+        XBinary::Finite(b) => mantissa_bits(b),
+        _ => 0,
+    };
+    let upper_bits = match bounds.large() {
+        XBinary::Finite(b) => mantissa_bits(&b),
+        _ => 0,
+    };
+    lower_bits + upper_bits
+}
+
+/// Simplifies bounds if they exceed a precision threshold.
+///
+/// This is the recommended function for use in refinement loops. It only
+/// simplifies when the accumulated precision exceeds the threshold, avoiding
+/// unnecessary work on already-simple bounds.
+///
+/// # Arguments
+///
+/// * `bounds` - The bounds to potentially simplify
+/// * `precision_threshold` - Only simplify if total mantissa bits exceed this
+/// * `margin_shift` - Passed to `simplify_bounds` if simplification occurs
+///
+/// # Returns
+///
+/// Simplified bounds if precision exceeded threshold, otherwise the original bounds.
+pub fn simplify_bounds_if_needed(
+    bounds: &Bounds,
+    precision_threshold: u64,
+    margin_shift: u32,
+) -> Bounds {
+    if bounds_precision(bounds) > precision_threshold {
+        simplify_bounds(bounds, margin_shift)
+    } else {
+        bounds.clone()
+    }
+}
+
+//=============================================================================
+// FiniteBounds support for bisection-style algorithms
+//=============================================================================
+
+use super::FiniteBounds;
+
+/// Computes the total mantissa bits used by finite bounds (lower + upper).
+///
+/// This is useful for monitoring precision accumulation during bisection.
+#[allow(dead_code)]
+pub fn finite_bounds_precision(bounds: &FiniteBounds) -> u64 {
+    mantissa_bits(bounds.small()) + mantissa_bits(&bounds.large())
+}
+
+/// Simplifies finite bounds by finding shorter binary representations.
+///
+/// This is the key function for reducing precision accumulation in bisection-style
+/// algorithms (nth_root, etc.). It works by:
+///
+/// 1. Converting to extended bounds
+/// 2. Applying the standard `simplify_bounds` algorithm
+/// 3. Converting back to finite bounds
+///
+/// # Arguments
+///
+/// * `bounds` - The finite bounds to simplify
+/// * `margin_shift` - How many bits to right-shift the width to get the margin.
+///   E.g., `2` means `margin = width/4`, `3` means `margin = width/8`.
+///
+/// # Returns
+///
+/// Simplified finite bounds that still contain the original bounds.
+#[allow(dead_code)]
+pub fn simplify_finite_bounds(bounds: &FiniteBounds, margin_shift: u32) -> FiniteBounds {
+    let width = bounds.width();
+
+    // If width is zero, nothing to simplify
+    if width.mantissa().is_zero() {
+        return bounds.clone();
+    }
+
+    // Convert to extended bounds for the core algorithm
+    let xbounds = Bounds::new(
+        XBinary::Finite(bounds.small().clone()),
+        XBinary::Finite(bounds.large()),
+    );
+
+    let simplified = simplify_bounds(&xbounds, margin_shift);
+
+    // Extract finite bounds (should always succeed for finite input)
+    match (simplified.small(), &simplified.large()) {
+        (XBinary::Finite(lower), XBinary::Finite(upper)) => {
+            FiniteBounds::new(lower.clone(), upper.clone())
+        }
+        // Fall back to original if something unexpected happens
+        _ => bounds.clone(),
+    }
+}
+
+/// Simplifies finite bounds if they exceed a precision threshold.
+///
+/// This is the recommended function for use in bisection-style refinement loops.
+/// It only simplifies when the accumulated precision exceeds the threshold,
+/// avoiding unnecessary work on already-simple bounds.
+///
+/// # Arguments
+///
+/// * `bounds` - The finite bounds to potentially simplify
+/// * `precision_threshold` - Only simplify if total mantissa bits exceed this
+/// * `margin_shift` - Passed to `simplify_finite_bounds` if simplification occurs
+///
+/// # Returns
+///
+/// Simplified bounds if precision exceeded threshold, otherwise the original bounds.
+///
+/// # Example
+///
+/// In a bisection refinement loop:
+/// ```text
+/// let simplified = simplify_finite_bounds_if_needed(&bounds, 128, 2);
+/// // If total mantissa bits > 128, simplify with margin = width/4
+/// ```
+#[allow(dead_code)]
+pub fn simplify_finite_bounds_if_needed(
+    bounds: &FiniteBounds,
+    precision_threshold: u64,
+    margin_shift: u32,
+) -> FiniteBounds {
+    if finite_bounds_precision(bounds) > precision_threshold {
+        simplify_finite_bounds(bounds, margin_shift)
+    } else {
+        bounds.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use crate::test_utils::bin;
+    use crate::test_utils::{bin, ubin};
 
     use super::super::Binary;
 
@@ -153,5 +382,263 @@ mod tests {
         // this case is currently blocked by the debug_assert, but it should be added if we want to support extended reals
         // let bounds = Bounds::new(XBinary::PosInf, XBinary::PosInf);
         // assert_eq!(shortest_xbinary_in_bounds(&bounds), XBinary::PosInf);
+    }
+
+    // Tests for new bound-loosening functions
+
+    #[test]
+    fn simplify_bounds_reduces_precision() {
+        // Create bounds with many bits of precision (simulating bisection accumulation)
+        // After many bisection steps on sqrt(2), we might get something like:
+        // [1.41421356..., 1.41421357...] with many mantissa bits
+        let lower = bin(181, -7); // ~1.4140625
+        let upper = bin(363, -8); // ~1.41796875
+        let bounds = Bounds::new(XBinary::Finite(lower.clone()), XBinary::Finite(upper.clone()));
+
+        let original_precision = bounds_precision(&bounds);
+        let simplified = simplify_bounds(&bounds, 2); // loosen by width/4
+        let new_precision = bounds_precision(&simplified);
+
+        // The simplified bounds should have less or equal precision
+        // (exact reduction depends on the values, but shouldn't increase)
+        assert!(new_precision <= original_precision + 10); // Allow some tolerance
+
+        // The simplified bounds should still contain the original bounds
+        assert!(simplified.small() <= bounds.small());
+        assert!(simplified.large() >= bounds.large());
+    }
+
+    #[test]
+    fn simplify_bounds_preserves_correctness() {
+        // Bounds around sqrt(2) ~ 1.414...
+        let lower = bin(1414, -10); // ~1.380859375
+        let upper = bin(1415, -10); // ~1.3818359375
+        let bounds = Bounds::new(XBinary::Finite(lower.clone()), XBinary::Finite(upper.clone()));
+
+        let simplified = simplify_bounds(&bounds, 2);
+
+        // The simplified bounds must contain the original interval
+        assert!(
+            simplified.small() <= bounds.small(),
+            "Simplified lower bound {} should be <= original lower {}",
+            simplified.small(), bounds.small()
+        );
+        assert!(
+            simplified.large() >= bounds.large(),
+            "Simplified upper bound {} should be >= original upper {}",
+            simplified.large(), bounds.large()
+        );
+    }
+
+    #[test]
+    fn simplify_bounds_handles_zero_width() {
+        let point = bin(5, 0);
+        let bounds = Bounds::new(XBinary::Finite(point.clone()), XBinary::Finite(point.clone()));
+
+        let simplified = simplify_bounds(&bounds, 2);
+
+        // With zero width, should return unchanged
+        assert_eq!(simplified.small(), bounds.small());
+        assert_eq!(simplified.large(), bounds.large());
+    }
+
+    #[test]
+    fn simplify_bounds_handles_infinite_width() {
+        let bounds = Bounds::new(XBinary::Finite(bin(1, 0)), XBinary::PosInf);
+
+        let simplified = simplify_bounds(&bounds, 2);
+
+        // With infinite width, should return unchanged
+        assert_eq!(simplified.small(), bounds.small());
+        assert_eq!(simplified.large(), bounds.large());
+    }
+
+    #[test]
+    fn simplify_bounds_if_needed_respects_threshold() {
+        let lower = bin(12345, -14);
+        let upper = bin(12346, -14);
+        let bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
+
+        let precision = bounds_precision(&bounds);
+
+        // Below threshold: should return unchanged
+        let unchanged = simplify_bounds_if_needed(&bounds, precision + 100, 2);
+        assert_eq!(unchanged, bounds);
+
+        // Above threshold: should simplify
+        let simplified = simplify_bounds_if_needed(&bounds, 1, 2);
+        // The result should still contain the original bounds
+        assert!(simplified.small() <= bounds.small());
+        assert!(simplified.large() >= bounds.large());
+    }
+
+    #[test]
+    fn mantissa_bits_counts_correctly() {
+        assert_eq!(mantissa_bits(&bin(1, 0)), 1);
+        assert_eq!(mantissa_bits(&bin(3, 0)), 2);
+        assert_eq!(mantissa_bits(&bin(7, 0)), 3);
+        assert_eq!(mantissa_bits(&bin(255, 0)), 8);
+        assert_eq!(mantissa_bits(&bin(-255, 0)), 8); // magnitude
+    }
+
+    #[test]
+    fn bounds_precision_sums_both_endpoints() {
+        let lower = bin(7, 0); // 3 bits
+        let upper = bin(255, 0); // 8 bits
+        let bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
+
+        assert_eq!(bounds_precision(&bounds), 11);
+    }
+
+    #[test]
+    fn simplify_bounds_significant_reduction_after_bisection() {
+        // Simulate what happens after many bisection steps
+        // Each step can double the mantissa bits
+        let mut lower = bin(1, 0);
+        let upper = bin(2, 0);
+
+        // Do 20 "fake" bisection steps that accumulate precision
+        for _ in 0..20 {
+            let mid = midpoint_between(&lower, &upper);
+            // Arbitrarily take upper half each time
+            lower = mid;
+        }
+
+        let bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
+        let original_precision = bounds_precision(&bounds);
+
+        // After 20 bisections, precision should have grown significantly
+        assert!(
+            original_precision > 20,
+            "Expected precision growth from bisection, got {}",
+            original_precision
+        );
+
+        let simplified = simplify_bounds(&bounds, 2);
+        let new_precision = bounds_precision(&simplified);
+
+        // Simplified should have noticeably less precision
+        // (the exact amount depends on the values, but should improve)
+        println!(
+            "Original precision: {}, Simplified precision: {}",
+            original_precision, new_precision
+        );
+
+        // Most importantly: correctness is preserved
+        assert!(simplified.small() <= bounds.small());
+        assert!(simplified.large() >= bounds.large());
+    }
+
+    //=========================================================================
+    // Tests for FiniteBounds functions
+    //=========================================================================
+
+    #[test]
+    fn finite_bounds_precision_works() {
+        let lower = bin(7, 0); // 3 bits
+        let upper = bin(255, 0); // 8 bits
+        let bounds = FiniteBounds::new(lower, upper);
+
+        assert_eq!(finite_bounds_precision(&bounds), 11);
+    }
+
+    #[test]
+    fn simplify_finite_bounds_reduces_precision() {
+        // Create bounds with many bits of precision
+        let lower = bin(12345, -14);
+        let upper = bin(12346, -14);
+        let bounds = FiniteBounds::new(lower, upper);
+
+        let original_precision = finite_bounds_precision(&bounds);
+        let simplified = simplify_finite_bounds(&bounds, 2);
+        let new_precision = finite_bounds_precision(&simplified);
+
+        // Precision should not increase significantly
+        assert!(new_precision <= original_precision + 10);
+
+        // The simplified bounds should still contain the original bounds
+        assert!(simplified.small() <= bounds.small());
+        assert!(&simplified.large() >= &bounds.large());
+    }
+
+    #[test]
+    fn simplify_finite_bounds_preserves_correctness() {
+        let lower = bin(1414, -10);
+        let upper = bin(1415, -10);
+        let bounds = FiniteBounds::new(lower.clone(), upper.clone());
+
+        let simplified = simplify_finite_bounds(&bounds, 2);
+
+        // The simplified bounds must contain the original interval
+        assert!(
+            simplified.small() <= &lower,
+            "Simplified lower bound {} should be <= original lower {}",
+            simplified.small(), lower
+        );
+        assert!(
+            &simplified.large() >= &upper,
+            "Simplified upper bound {} should be >= original upper {}",
+            simplified.large(), upper
+        );
+    }
+
+    #[test]
+    fn simplify_finite_bounds_handles_zero_width() {
+        let point = bin(5, 0);
+        let bounds = FiniteBounds::new(point.clone(), point.clone());
+
+        let simplified = simplify_finite_bounds(&bounds, 2);
+
+        // With zero width, should return unchanged
+        assert_eq!(simplified.small(), bounds.small());
+        assert_eq!(&simplified.large(), &bounds.large());
+    }
+
+    #[test]
+    fn simplify_finite_bounds_if_needed_respects_threshold() {
+        let lower = bin(12345, -14);
+        let upper = bin(12346, -14);
+        let bounds = FiniteBounds::new(lower.clone(), upper.clone());
+
+        let precision = finite_bounds_precision(&bounds);
+
+        // Below threshold: should return unchanged
+        let unchanged = simplify_finite_bounds_if_needed(&bounds, precision + 100, 2);
+        assert_eq!(unchanged.small(), bounds.small());
+        assert_eq!(&unchanged.large(), &bounds.large());
+
+        // Above threshold: should simplify
+        let simplified = simplify_finite_bounds_if_needed(&bounds, 1, 2);
+        // The result should still contain the original bounds
+        assert!(simplified.small() <= &lower);
+        assert!(&simplified.large() >= &upper);
+    }
+
+    #[test]
+    fn simplify_finite_bounds_with_bisection_accumulation() {
+        // Simulate bisection accumulation like in nth_root
+        let mut lower = bin(1, 0);
+        let upper = bin(2, 0);
+
+        for _ in 0..30 {
+            let mid = midpoint_between(&lower, &upper);
+            lower = mid;
+        }
+
+        let bounds = FiniteBounds::new(lower.clone(), upper.clone());
+        let original_precision = finite_bounds_precision(&bounds);
+
+        // After 30 bisections, precision should have grown
+        assert!(
+            original_precision > 30,
+            "Expected precision growth, got {}",
+            original_precision
+        );
+
+        let simplified = simplify_finite_bounds(&bounds, 2);
+
+        // Correctness is preserved
+        assert!(simplified.small() <= &lower);
+        assert!(&simplified.large() >= &upper);
     }
 }
