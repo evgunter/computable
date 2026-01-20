@@ -323,7 +323,7 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
 // Interval arithmetic helpers for use in sin.rs
 //=============================================================================
 
-// TODO: make this into FiniteBounds instead, using the same paradigm as the Bounds type
+// TODO: use FiniteBounds instead, using the same paradigm as the Bounds type
 
 /// Represents an interval [lo, hi] for full interval propagation.
 #[derive(Clone, Debug)]
