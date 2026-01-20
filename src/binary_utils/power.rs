@@ -31,6 +31,8 @@ use crate::binary::{Binary, XBinary};
 /// let result = binary_pow(&x, 2);
 /// assert_eq!(result, Binary::new(BigInt::from(9), BigInt::from(0))); // 9
 /// ```
+// TODO: Use repeated squaring (exponentiation by squaring) for O(log n) complexity
+// instead of the current O(n) repeated multiplication.
 pub fn binary_pow(x: &Binary, n: u32) -> Binary {
     if n == 0 {
         return Binary::new(BigInt::one(), BigInt::from(0));
