@@ -60,6 +60,7 @@ pub fn binary_pow(x: &Binary, n: u32) -> Binary {
 /// # Returns
 ///
 /// The result of x raised to the power n.
+// TODO: Use NonZeroU32 for the exponent to avoid handling infinity^0 (which is indeterminate).
 pub fn xbinary_pow(x: &XBinary, n: u32) -> XBinary {
     match x {
         XBinary::NegInf => {
