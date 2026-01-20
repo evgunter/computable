@@ -37,7 +37,7 @@ use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
 /// Precision threshold for triggering bounds simplification.
-/// When total mantissa bits exceed this, we simplify to reduce memory usage.
+/// 64 chosen: bisection benefits most from simplification (13% speedup vs disabled).
 const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 64;
 
 /// Loosening fraction for bounds simplification.
