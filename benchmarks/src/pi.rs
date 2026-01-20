@@ -1,47 +1,21 @@
 //! Benchmark for pi computation.
 //!
 //! This benchmark tests the performance of the pi implementation at various
-//! precision levels. It requires the `pi()` and `pi_bounds_at_precision()`
-//! functions to be implemented and exported from the computable crate.
-//!
-//! Run with: cargo run --release --bin pi_benchmark --features benchmarks
+//! precision levels.
 
 use std::time::{Duration, Instant};
 
-use computable::{pi, pi_bounds_at_precision, Binary, Bounds, Computable, UBinary, XBinary};
+use computable::{pi, pi_bounds_at_precision, Binary, Computable, UBinary};
 use num_bigint::{BigInt, BigUint};
-use num_traits::One;
+use num_traits::{One, Signed, Zero};
+
+use crate::common::{binary_from_f64, finite_binary, midpoint};
 
 /// Precision levels to test (in bits)
 const PRECISION_BITS: &[u64] = &[32, 64, 128, 256, 512, 1024];
 
 /// Number of iterations for timing stability
 const TIMING_ITERATIONS: u32 = 5;
-
-fn finite_binary(value: &XBinary) -> Binary {
-    match value {
-        XBinary::Finite(binary) => binary.clone(),
-        XBinary::NegInf | XBinary::PosInf => {
-            panic!("expected finite bounds")
-        }
-    }
-}
-
-fn midpoint(bounds: &Bounds) -> Binary {
-    let lower = finite_binary(bounds.small());
-    let upper = finite_binary(&bounds.large());
-    let sum = lower.add(&upper);
-    let half = Binary::new(BigInt::one(), BigInt::from(-1));
-    sum.mul(&half)
-}
-
-// TODO: remove this and exclusively convert f64 to Binary for comparisons
-fn binary_to_f64_approx(b: &Binary) -> f64 {
-    // Rough approximation for display purposes only
-    let mantissa_f64 = b.mantissa().to_string().parse::<f64>().unwrap_or(0.0);
-    let exp_i32 = b.exponent().to_string().parse::<i32>().unwrap_or(0);
-    mantissa_f64 * 2.0_f64.powi(exp_i32)
-}
 
 /// Benchmark pi refinement at various precision levels
 fn benchmark_pi_refinement() {
@@ -77,27 +51,27 @@ fn benchmark_pi_refinement() {
         // TODO: can we avoid using unwrap?
         let bounds = final_bounds.unwrap();
 
-        let lower = finite_binary(bounds.small());
-        let upper = finite_binary(&bounds.large());
         let width = bounds.width();
         let mid = midpoint(&bounds);
 
-        // Compare to known pi digits
-        let pi_f64 = std::f64::consts::PI;
-        let mid_f64 = binary_to_f64_approx(&mid);
-        let error_f64 = (mid_f64 - pi_f64).abs();
+        // Compare to known pi digits (converting f64 to Binary for comparison)
+        let pi_binary = binary_from_f64(std::f64::consts::PI);
+        let error = mid.sub(&pi_binary).magnitude();
 
-        println!("Precision: {} bits (epsilon = 2^-{})", precision_bits, precision_bits);
+        println!(
+            "Precision: {} bits (epsilon = 2^-{})",
+            precision_bits, precision_bits
+        );
         println!("  Average time: {:?}", avg_duration);
         println!("  Width: {}", width);
-        println!("  Midpoint ≈ {:.15}", mid_f64);
-        println!("  |midpoint - π| ≈ {:.2e}", error_f64);
+        println!("  Midpoint: {}", mid);
+        println!("  |midpoint - pi|: {}", error);
         println!();
     }
 }
 
 /// Benchmark the pi_bounds_at_precision helper function
-fn benchmark_pi_bounds_at_precision() {
+fn benchmark_pi_bounds_at_precision_fn() {
     println!("== pi_bounds_at_precision Benchmark ==");
     println!();
     println!("Testing direct bounds computation at various precision levels");
@@ -126,13 +100,10 @@ fn benchmark_pi_bounds_at_precision() {
         let sum = lower.add(&upper);
         let mid = Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one());
 
-        let mid_f64 = binary_to_f64_approx(&mid);
-        let width_f64 = binary_to_f64_approx(&width);
-
         println!("Precision: {} bits", precision_bits);
         println!("  Average time: {:?}", avg_duration);
-        println!("  Width ≈ {:.2e}", width_f64);
-        println!("  Midpoint ≈ {:.15}", mid_f64);
+        println!("  Width: {}", width);
+        println!("  Midpoint: {}", mid);
         println!();
     }
 }
@@ -145,78 +116,82 @@ fn benchmark_pi_arithmetic() {
     let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-64));
 
     // 2 * pi
-    println!("Computing 2π:");
+    println!("Computing 2pi:");
     let start = Instant::now();
     let two = Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)));
     let two_pi = two * pi();
     let bounds = two_pi
         .refine_to_default(epsilon.clone())
-        .expect("2π computation should succeed");
+        .expect("2pi computation should succeed");
     let duration = start.elapsed();
     let mid = midpoint(&bounds);
+    let expected = binary_from_f64(2.0 * std::f64::consts::PI);
     println!("  Time: {:?}", duration);
-    println!("  Midpoint ≈ {:.15}", binary_to_f64_approx(&mid));
-    println!("  Expected: {:.15}", 2.0 * std::f64::consts::PI);
+    println!("  Midpoint: {}", mid);
+    println!("  Expected: {}", expected);
     println!();
 
     // pi / 2
-    println!("Computing π/2:");
+    println!("Computing pi/2:");
     let start = Instant::now();
     let half = Computable::constant(Binary::new(BigInt::from(1), BigInt::from(-1)));
     let half_pi = half * pi();
     let bounds = half_pi
         .refine_to_default(epsilon.clone())
-        .expect("π/2 computation should succeed");
+        .expect("pi/2 computation should succeed");
     let duration = start.elapsed();
     let mid = midpoint(&bounds);
+    let expected = binary_from_f64(std::f64::consts::FRAC_PI_2);
     println!("  Time: {:?}", duration);
-    println!("  Midpoint ≈ {:.15}", binary_to_f64_approx(&mid));
-    println!("  Expected: {:.15}", std::f64::consts::FRAC_PI_2);
+    println!("  Midpoint: {}", mid);
+    println!("  Expected: {}", expected);
     println!();
 
     // pi^2
-    println!("Computing π²:");
+    println!("Computing pi^2:");
     let start = Instant::now();
     let pi_squared = pi() * pi();
     let bounds = pi_squared
         .refine_to_default(epsilon.clone())
-        .expect("π² computation should succeed");
+        .expect("pi^2 computation should succeed");
     let duration = start.elapsed();
     let mid = midpoint(&bounds);
+    let expected = binary_from_f64(std::f64::consts::PI * std::f64::consts::PI);
     println!("  Time: {:?}", duration);
-    println!("  Midpoint ≈ {:.15}", binary_to_f64_approx(&mid));
-    println!("  Expected: {:.15}", std::f64::consts::PI * std::f64::consts::PI);
+    println!("  Midpoint: {}", mid);
+    println!("  Expected: {}", expected);
     println!();
 
     // 1 / pi
-    println!("Computing 1/π:");
+    println!("Computing 1/pi:");
     let start = Instant::now();
     let inv_pi = pi().inv();
     let bounds = inv_pi
         .refine_to_default(epsilon.clone())
-        .expect("1/π computation should succeed");
+        .expect("1/pi computation should succeed");
     let duration = start.elapsed();
     let mid = midpoint(&bounds);
+    let expected = binary_from_f64(1.0 / std::f64::consts::PI);
     println!("  Time: {:?}", duration);
-    println!("  Midpoint ≈ {:.15}", binary_to_f64_approx(&mid));
-    println!("  Expected: {:.15}", 1.0 / std::f64::consts::PI);
+    println!("  Midpoint: {}", mid);
+    println!("  Expected: {}", expected);
     println!();
 }
 
 /// Benchmark sin(pi) - tests integration between pi and sin
 fn benchmark_sin_pi() {
-    println!("== sin(π) Benchmark ==");
+    println!("== sin(pi) Benchmark ==");
     println!();
-    println!("Testing sin at multiples of π (should be ≈ 0)");
+    println!("Testing sin at multiples of pi (should be ~= 0)");
     println!();
 
     let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-32));
 
     let test_cases = [
-        (1, "sin(π)"),
-        (2, "sin(2π)"),
-        (10, "sin(10π)"),
-        (100, "sin(100π)"),
+        (1, "sin(pi)"),
+        (2, "sin(2pi)"),
+        (10, "sin(10pi)"),
+        (100, "sin(100pi)"),
     ];
 
     for (multiplier, label) in test_cases {
@@ -232,7 +207,7 @@ fn benchmark_sin_pi() {
         let sin_n_pi = n_pi.sin();
         let bounds = sin_n_pi
             .refine_to_default(epsilon.clone())
-            .expect("sin(nπ) computation should succeed");
+            .expect("sin(n*pi) computation should succeed");
         let duration = start.elapsed();
 
         let lower = finite_binary(bounds.small());
@@ -241,12 +216,12 @@ fn benchmark_sin_pi() {
 
         println!("{}:", label);
         println!("  Time: {:?}", duration);
-        println!("  Bounds: [{:.6e}, {:.6e}]",
-            binary_to_f64_approx(&lower),
-            binary_to_f64_approx(&upper));
+        println!("  Bounds: [{}, {}]", lower, upper);
         println!("  Width: {}", width);
-        println!("  Contains 0: {}",
-            lower.mantissa().is_negative() || lower.mantissa().is_zero());
+        println!(
+            "  Contains 0: {}",
+            lower.mantissa().is_negative() || lower.mantissa().is_zero()
+        );
         println!();
     }
 }
@@ -261,9 +236,11 @@ fn benchmark_high_precision() {
     for &precision_bits in high_precisions {
         let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(precision_bits as i64)));
 
-        println!("Precision: {} bits ({} decimal digits approx)",
+        println!(
+            "Precision: {} bits ({} decimal digits approx)",
             precision_bits,
-            (precision_bits as f64 * 0.301).round() as u64);
+            (precision_bits as f64 * 0.301).round() as u64
+        );
 
         let start = Instant::now();
         let pi_comp = pi();
@@ -280,19 +257,13 @@ fn benchmark_high_precision() {
     }
 }
 
-fn main() {
-    println!("========================================");
-    println!("        Pi Computation Benchmark        ");
-    println!("========================================");
+pub fn run_pi_benchmark() {
+    println!("== Pi Computation Benchmark ==");
     println!();
 
     benchmark_pi_refinement();
-    benchmark_pi_bounds_at_precision();
+    benchmark_pi_bounds_at_precision_fn();
     benchmark_pi_arithmetic();
     benchmark_sin_pi();
     benchmark_high_precision();
-
-    println!("========================================");
-    println!("           Benchmark Complete           ");
-    println!("========================================");
 }

@@ -21,6 +21,6 @@ pub use arithmetic::{AddOp, MulOp, NegOp};
 pub use base::BaseOp;
 pub use inv::InvOp;
 pub use nth_root::NthRootOp;
-pub use pi::pi;
+pub use pi::{pi, pi_bounds_at_precision};
 pub use pow::PowOp;
 pub use sin::SinOp;

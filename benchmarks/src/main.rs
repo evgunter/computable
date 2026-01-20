@@ -10,17 +10,19 @@ mod common;
 mod complex;
 mod integer_roots;
 mod inv;
+mod pi;
 mod sin;
 mod summation;
 
 use complex::run_complex_benchmark;
 use integer_roots::run_integer_roots_benchmark;
 use inv::run_inv_benchmark;
+use pi::run_pi_benchmark;
 use sin::run_sin_benchmark;
 use summation::run_summation_benchmark;
 
 /// Available benchmark names
-const BENCHMARK_NAMES: &[&str] = &["complex", "summation", "integer-roots", "inv", "sin"];
+const BENCHMARK_NAMES: &[&str] = &["complex", "summation", "integer-roots", "inv", "sin", "pi"];
 
 fn print_usage() {
     println!("Usage: benchmarks [OPTIONS] [BENCHMARK...]");
@@ -129,6 +131,7 @@ fn main() {
                 2 => run_integer_roots_benchmark(&mut rng),
                 3 => run_inv_benchmark(&mut rng),
                 4 => run_sin_benchmark(&mut rng),
+                5 => run_pi_benchmark(),
                 _ => unreachable!(),
             }
         }

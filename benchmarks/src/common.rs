@@ -21,11 +21,9 @@ pub struct ComputableResult {
 
 /// Converts an f64 value to a Binary, panicking if the value is not finite.
 pub fn binary_from_f64(value: f64) -> Binary {
-    match XBinary::from_f64(value).expect("expected finite f64") {
-        XBinary::Finite(binary) => binary,
-        XBinary::NegInf | XBinary::PosInf => {
-            panic!("expected finite f64 input")
-        }
+    match XBinary::from_f64(value) {
+        Ok(XBinary::Finite(b)) => b,
+        _ => panic!("expected finite f64 value"),
     }
 }
 
