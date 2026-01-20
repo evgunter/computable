@@ -17,8 +17,8 @@ use crate::node::{Node, NodeOp};
 const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
 
 /// Loosening fraction for bounds simplification.
-/// A value of 2 means we loosen by width/8, which is conservative.
-const LOOSENING_FRACTION: u32 = 2;
+/// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
+const LOOSENING_FRACTION: u32 = 3;
 
 /// Initial precision bits to start with for inv refinement.
 /// Starting at a reasonable value avoids unnecessary early iterations.

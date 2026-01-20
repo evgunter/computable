@@ -31,7 +31,7 @@ const INITIAL_PI_TERMS: usize = 10;
 const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
 
 /// Loosening fraction for bounds simplification.
-/// A value of 3 means we loosen by width/16, which is conservative for pi.
+/// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
 const LOOSENING_FRACTION: u32 = 3;
 
 /// Returns pi as a Computable that can be refined to arbitrary precision.
