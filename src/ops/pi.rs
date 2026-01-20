@@ -18,7 +18,10 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{margin_from_width, simplify_bounds_if_needed, Binary, Bounds, XBinary};
+use crate::binary::{
+    margin_from_width, reciprocal_of_positive_bigint, simplify_bounds_if_needed, Binary, Bounds,
+    ReciprocalRounding, XBinary,
+};
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -227,8 +230,9 @@ fn arctan_recip_partial_sum(k: u64, num_terms: usize, rounding: RoundDir) -> Bin
     sum
 }
 
-// TODO: does this have any overlap with the `inv` function? can they be unified or at least share common code?
 /// Computes 1/denominator as a Binary with directed rounding.
+///
+/// Uses the shared `reciprocal_of_positive_bigint` function from the binary module.
 ///
 /// For interval arithmetic, we need to round in the correct direction based on
 /// whether this term contributes positively or negatively to the sum.
@@ -236,58 +240,47 @@ fn arctan_recip_partial_sum(k: u64, num_terms: usize, rounding: RoundDir) -> Bin
 /// - For positive terms: round down gives lower bound, round up gives upper bound
 /// - For negative terms: we negate, so round up gives lower bound (more negative), etc.
 fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_term: bool) -> Binary {
-    // We compute 2^precision / denominator with appropriate rounding.
-    // Result = (2^precision / denominator) * 2^(-precision)
-    //
-    // Use high precision for intermediate computation
     // TODO(correctness): Fixed 128-bit precision caps the achievable accuracy to ~118 bits.
     // This causes the refinement loop to hang when requesting precision > 118 bits, because
     // the computed width (~2^-119) never reaches epsilon (e.g., 2^-128). Should make precision
     // adaptive based on the requested output precision.
     let precision_bits: u64 = 128;
 
-    let numerator = BigInt::one() << precision_bits as usize;
-    let (quot, rem) = num_integer::Integer::div_rem(&numerator, denominator);
-
-    // Determine if we need to round up (add 1 to quotient)
-    let has_remainder = !rem.is_zero();
-
-    // Effective rounding direction considering sign of term:
-    // - Positive term, Down rounding: truncate (floor)
-    // - Positive term, Up rounding: round up (ceil)
-    // - Negative term, Down rounding: round up in magnitude (more negative = smaller)
-    // - Negative term, Up rounding: truncate in magnitude (less negative = larger)
-    let should_round_up = has_remainder
-        && match (rounding, is_positive_term) {
-            (RoundDir::Up, true) => true,   // Positive, want upper -> round up
-            (RoundDir::Down, true) => false, // Positive, want lower -> truncate
-            (RoundDir::Up, false) => false,  // Negative, want upper -> less negative -> truncate
-            (RoundDir::Down, false) => true, // Negative, want lower -> more negative -> round up
-        };
-
-    let final_quot = if should_round_up {
-        quot + BigInt::one()
-    } else {
-        quot
+    // Determine the rounding direction for the reciprocal based on the overall rounding
+    // direction and whether the term is positive or negative:
+    // - Positive term, Down rounding: floor (to get lower bound)
+    // - Positive term, Up rounding: ceil (to get upper bound)
+    // - Negative term, Down rounding: ceil then negate (more negative = smaller = lower bound)
+    // - Negative term, Up rounding: floor then negate (less negative = larger = upper bound)
+    let recip_rounding = match (rounding, is_positive_term) {
+        (RoundDir::Down, true) => ReciprocalRounding::Floor,
+        (RoundDir::Up, true) => ReciprocalRounding::Ceil,
+        (RoundDir::Down, false) => ReciprocalRounding::Ceil,
+        (RoundDir::Up, false) => ReciprocalRounding::Floor,
     };
 
-    // Apply sign
-    let signed_mantissa = if is_positive_term {
-        final_quot
-    } else {
-        -final_quot
-    };
+    // This unwrap cannot fail because precision_bits is a constant 128, which is
+    // trivially representable as usize on any 64-bit system.
+    let unsigned_result = reciprocal_of_positive_bigint(denominator, precision_bits, recip_rounding)
+        .unwrap_or_else(|_| unreachable!("128-bit precision is always valid"));
 
-    Binary::new(signed_mantissa, -BigInt::from(precision_bits))
+    // Apply sign based on whether this is a positive or negative term
+    if is_positive_term {
+        unsigned_result
+    } else {
+        unsigned_result.neg()
+    }
 }
 
 /// Computes error bound for arctan(1/k) Taylor series after n terms.
+///
+/// Uses the shared `reciprocal_of_positive_bigint` function from the binary module.
 ///
 /// For alternating series with decreasing terms, the error is bounded by
 /// the absolute value of the first omitted term:
 /// |error| <= 1 / ((2n+1) * k^(2n+1))
 ///
-/// We round UP to get a conservative (safe) error bound.
+/// We round UP (ceiling) to get a conservative (safe) error bound.
 fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
     let exponent = 2 * num_terms + 1;
     let coeff = BigInt::from(exponent); // 2n+1
@@ -300,23 +293,17 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
 
     let denominator = &coeff * &k_power; // (2n+1) * k^(2n+1)
 
-    // Compute 1/denominator, rounding UP for conservative error bound
     // TODO(correctness): Fixed 128-bit precision here has the same limitation as in
     // divide_one_by_bigint: achievable accuracy is capped at ~118 bits, causing refinement
     // to hang for higher precision requests. Should use adaptive precision matching the
     // requested output precision.
     let precision_bits: u64 = 128;
-    let numerator = BigInt::one() << precision_bits as usize;
-    let (quot, rem) = num_integer::Integer::div_rem(&numerator, &denominator);
 
-    // Always round up for error bound
-    let final_quot = if !rem.is_zero() {
-        quot + BigInt::one()
-    } else {
-        quot
-    };
-
-    Binary::new(final_quot, -BigInt::from(precision_bits))
+    // Compute 1/denominator, rounding UP for conservative error bound.
+    // This unwrap cannot fail because precision_bits is a constant 128, which is
+    // trivially representable as usize on any 64-bit system.
+    reciprocal_of_positive_bigint(&denominator, precision_bits, ReciprocalRounding::Ceil)
+        .unwrap_or_else(|_| unreachable!("128-bit precision is always valid"))
 }
 
 //=============================================================================

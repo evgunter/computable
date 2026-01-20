@@ -20,6 +20,42 @@ pub enum ReciprocalRounding {
     Ceil,
 }
 
+/// Computes 1/denominator where denominator is a positive BigInt.
+///
+/// Returns `mantissa * 2^(-precision_bits)` where:
+/// - For `Floor`: `mantissa = floor(2^precision_bits / denominator)`
+/// - For `Ceil`: `mantissa = ceil(2^precision_bits / denominator)`
+///
+/// # Arguments
+/// * `denominator` - A positive BigInt to take the reciprocal of
+/// * `precision_bits` - Number of bits of precision for the computation
+/// * `rounding` - Whether to round toward floor or ceiling
+///
+/// # Errors
+/// Returns `BinaryError::ReciprocalOverflow` if the precision is too large to represent.
+///
+/// # Panics
+/// Debug-asserts that denominator is positive.
+pub fn reciprocal_of_positive_bigint(
+    denominator: &BigInt,
+    precision_bits: u64,
+    rounding: ReciprocalRounding,
+) -> Result<Binary, BinaryError> {
+    debug_assert!(
+        denominator.is_positive(),
+        "reciprocal_of_positive_bigint requires positive denominator"
+    );
+
+    let shift = precision_bits_to_usize(&BigInt::from(precision_bits))?;
+    let numerator = BigInt::one() << shift;
+    let quotient = match rounding {
+        ReciprocalRounding::Floor => numerator.div_floor(denominator),
+        ReciprocalRounding::Ceil => numerator.div_ceil(denominator),
+    };
+    let exponent = -BigInt::from(precision_bits);
+    Ok(Binary::new(quotient, exponent))
+}
+
 /// Computes the reciprocal of the absolute value of an extended binary number.
 ///
 /// The result is computed with the specified precision and rounding direction.
@@ -91,6 +127,42 @@ mod tests {
 
     use super::*;
     use crate::test_utils::xbin;
+
+    #[test]
+    fn reciprocal_of_positive_bigint_basic() {
+        // 1/5 with precision 8
+        let denom = BigInt::from(5);
+        let result = reciprocal_of_positive_bigint(&denom, 8, ReciprocalRounding::Floor)
+            .expect("should succeed");
+
+        // 2^8 / 5 = 256 / 5 = 51 (floor)
+        // Result is 51 * 2^-8
+        // After normalization (51 is odd), mantissa = 51, exponent = -8
+        assert_eq!(result.mantissa(), &BigInt::from(51));
+        assert_eq!(result.exponent(), &BigInt::from(-8));
+    }
+
+    #[test]
+    fn reciprocal_of_positive_bigint_rounding_modes() {
+        // 1/3 with precision 8
+        let denom = BigInt::from(3);
+
+        let floor = reciprocal_of_positive_bigint(&denom, 8, ReciprocalRounding::Floor)
+            .expect("should succeed");
+        let ceil = reciprocal_of_positive_bigint(&denom, 8, ReciprocalRounding::Ceil)
+            .expect("should succeed");
+
+        // 2^8 / 3 = 256 / 3 = 85.33...
+        // Floor = 85, Ceil = 86
+        // After normalization: 85 (odd), 43 * 2^1 = 86
+        assert_eq!(floor.mantissa(), &BigInt::from(85));
+        assert_eq!(floor.exponent(), &BigInt::from(-8));
+        assert_eq!(ceil.mantissa(), &BigInt::from(43));
+        assert_eq!(ceil.exponent(), &BigInt::from(-7)); // 43 * 2^-7 = 86 * 2^-8
+
+        // Ceil should be > Floor since 1/3 is not exactly representable
+        assert!(ceil > floor);
+    }
 
     #[test]
     fn reciprocal_of_infinity_is_zero() {
