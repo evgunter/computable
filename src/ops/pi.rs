@@ -240,10 +240,10 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
     // Result = (2^precision / denominator) * 2^(-precision)
     //
     // Use high precision for intermediate computation
-    // TODO(correctness): Fixed 128-bit precision caps the achievable accuracy. If more than ~128
-    // bits of pi precision are needed, the rounding errors in this fixed-precision division could
-    // accumulate beyond what the error bound accounts for. Should make precision adaptive based
-    // on the requested output precision.
+    // TODO(correctness): Fixed 128-bit precision caps the achievable accuracy to ~118 bits.
+    // This causes the refinement loop to hang when requesting precision > 118 bits, because
+    // the computed width (~2^-119) never reaches epsilon (e.g., 2^-128). Should make precision
+    // adaptive based on the requested output precision.
     let precision_bits: u64 = 128;
 
     let numerator = BigInt::one() << precision_bits as usize;
@@ -302,8 +302,9 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
 
     // Compute 1/denominator, rounding UP for conservative error bound
     // TODO(correctness): Fixed 128-bit precision here has the same limitation as in
-    // divide_one_by_bigint. For very high precision pi computations, this could underestimate
-    // the error bound. Should use adaptive precision matching the requested output precision.
+    // divide_one_by_bigint: achievable accuracy is capped at ~118 bits, causing refinement
+    // to hang for higher precision requests. Should use adaptive precision matching the
+    // requested output precision.
     let precision_bits: u64 = 128;
     let numerator = BigInt::one() << precision_bits as usize;
     let (quot, rem) = num_integer::Integer::div_rem(&numerator, &denominator);
