@@ -60,19 +60,7 @@ fn split_xbinary(value: &XBinary) -> (Sign, UXBinary) {
     match value {
         XBinary::NegInf => (Sign::Minus, UXBinary::PosInf),
         XBinary::PosInf => (Sign::Plus, UXBinary::PosInf),
-        XBinary::Finite(binary) => {
-            let mantissa = binary.mantissa();
-            if mantissa.is_zero() {
-                (Sign::NoSign, UXBinary::zero())
-            } else {
-                let magnitude = UBinary::new(mantissa.magnitude().clone(), binary.exponent().clone());
-                if mantissa.is_positive() {
-                    (Sign::Plus, UXBinary::Finite(magnitude))
-                } else {
-                    (Sign::Minus, UXBinary::Finite(magnitude))
-                }
-            }
-        }
+        XBinary::Finite(v) => (v.mantissa().sign(), UXBinary::Finite(v.magnitude()))
     }
 }
 
