@@ -37,32 +37,25 @@ pub fn shortest_binary_in_finite_bounds(bounds: &FiniteBounds) -> Binary {
     let lower = bounds.small();
     let upper = bounds.large();
 
-    // If lower is zero or positive, find the shortest in the positive interval
-    if lower.mantissa().sign() != Sign::Minus {
-        let lower_ubinary = UBinary::try_from_binary(lower)
-            .unwrap_or_else(|_| unreachable!("non-negative Binary should convert to UBinary"));
-        let upper_ubinary = UBinary::try_from_binary(&upper)
-            .unwrap_or_else(|_| unreachable!("non-negative Binary should convert to UBinary"));
-        // width = upper - lower (using sub_saturating, which is safe since upper >= lower)
-        let width = upper_ubinary.sub_saturating(&lower_ubinary);
-        shortest_binary_in_positive_interval(&lower_ubinary, &UXBinary::Finite(width)).to_binary()
-    } else if upper.mantissa().sign() != Sign::Plus {
-        // Both bounds are negative (or upper is zero)
-        // Find shortest in the negated interval, then negate the result
-        let neg_upper = upper.neg();
-        let neg_lower = lower.neg();
-        let neg_upper_ubinary = UBinary::try_from_binary(&neg_upper)
-            .unwrap_or_else(|_| unreachable!("negated negative should be non-negative"));
-        let neg_lower_ubinary = UBinary::try_from_binary(&neg_lower)
-            .unwrap_or_else(|_| unreachable!("negated negative should be non-negative"));
-        // width = neg_lower - neg_upper = |lower| - |upper| (using sub_saturating)
-        let width = neg_lower_ubinary.sub_saturating(&neg_upper_ubinary);
-        shortest_binary_in_positive_interval(&neg_upper_ubinary, &UXBinary::Finite(width))
-            .to_binary()
-            .neg()
-    } else {
+    match (lower.mantissa().sign(), upper.mantissa().sign()) {
         // Interval spans zero - zero is the shortest representation
-        Binary::zero()
+        (Sign::Minus, Sign::Plus) | (Sign::Minus, Sign::NoSign) | (Sign::NoSign, Sign::Plus) => {
+            Binary::zero()
+        }
+        // Both bounds are non-negative (lower >= 0)
+        (Sign::NoSign, Sign::NoSign) | (Sign::Plus, Sign::Plus) | (Sign::NoSign, _) | (Sign::Plus, _) => {
+            // Use magnitude() to get UBinary directly, and bounds.width() for the width
+            shortest_binary_in_positive_interval(&lower.magnitude(), &UXBinary::Finite(bounds.width().clone()))
+                .to_binary()
+        }
+        // Both bounds are negative (upper <= 0)
+        (Sign::Minus, Sign::Minus) => {
+            // For negative interval [lower, upper] where lower < upper < 0:
+            // Map to positive interval [|upper|, |lower|] and negate the result
+            shortest_binary_in_positive_interval(&upper.magnitude(), &UXBinary::Finite(bounds.width().clone()))
+                .to_binary()
+                .neg()
+        }
     }
 }
 
