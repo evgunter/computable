@@ -8,8 +8,5 @@
 //! - [`bisection`]: Binary search helper for iterative refinement
 //! - [`power`]: Integer power operations for Binary and XBinary
 
-// TODO: Migrate from mod.rs to the newer Rust convention of using binary_utils.rs
-// with `#[path]` attributes or directory-named files.
-
 pub mod bisection;
 pub mod power;
