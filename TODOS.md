@@ -2,33 +2,12 @@
 
 ## Tier 1: Quick Wins (Unblocked, straightforward)
 
-### <a id="pi-binary-cmp"></a>pi-binary-cmp: Use Binary for pi comparison instead of f64
-**File:** `src/ops/pi.rs:494`
+### <a id="mod-rs-convention"></a>mod-rs-convention: Migrate from mod.rs to newer Rust convention
+**File:** `src/binary_utils/mod.rs:11`
 ```rust
-// TODO: fix this by converting the f64 approximation of pi to Binary and then comparing
+// TODO: Migrate from mod.rs to the newer Rust convention of using binary_utils.rs
 ```
-More rigorous comparison.
-
-### <a id="pi-binary-cmp-2"></a>pi-binary-cmp-2: Improve pi comparison (similar)
-**File:** `src/ops/pi.rs:537`
-```rust
-// TODO: improve this by converting the f64 approximation of pi to Binary and then comparing
-```
-Same pattern as [pi-binary-cmp](#pi-binary-cmp).
-
-### <a id="binary-ops-location"></a>binary-ops-location: Investigate Binary operations location
-**File:** `src/binary_utils/mod.rs:10`
-```rust
-//! TODO: Investigate if any pure-Binary operations from `ops/` should be moved here.
-```
-Code organization review.
-
-### <a id="bounds-construct"></a>bounds-construct: Construct Bounds directly
-**File:** `src/binary/shortest.rs:192`
-```rust
-// TODO: here and elsewhere it might be nice to be able to construct Bounds directly
-```
-API ergonomics improvement.
+Code organization update to follow modern Rust conventions.
 
 ---
 
@@ -40,6 +19,20 @@ API ergonomics improvement.
 // TODO: use these functions to make binary-search-based refinement not need to represent intervals that have so many bits of precision
 ```
 **Blocks:** [epsilon-zero](#epsilon-zero)
+
+### <a id="repeated-squaring"></a>repeated-squaring: Use repeated squaring for power operations
+**File:** `src/binary_utils/power.rs:34`
+```rust
+// TODO: Use repeated squaring (exponentiation by squaring) for O(log n) complexity
+```
+Optimize binary_pow from O(n) to O(log n) complexity.
+
+### <a id="nonzero-exponent"></a>nonzero-exponent: Use NonZeroU32 for xbinary_pow exponent
+**File:** `src/binary_utils/power.rs:63`
+```rust
+// TODO: Use NonZeroU32 for the exponent to avoid handling infinity^0 (which is indeterminate).
+```
+Type-level prevention of indeterminate forms.
 
 ### <a id="nonzero-benchmark"></a>nonzero-benchmark: Use NonZeroU32 directly in benchmark
 **File:** `benchmarks/src/integer_roots.rs:32`
@@ -70,9 +63,9 @@ Type constraint addition.
 Algorithm improvement.
 
 ### <a id="interval-finitebounds"></a>interval-finitebounds: Convert Interval to FiniteBounds
-**File:** `src/ops/pi.rs:326`
+**File:** `src/ops/pi.rs:311`
 ```rust
-// TODO: make this into FiniteBounds instead, using the same paradigm as the Bounds type
+// TODO: use FiniteBounds instead, using the same paradigm as the Bounds type
 ```
 Refactor to reduce code duplication. **Blocks:** [interval-debug-assert](#interval-debug-assert), [pi-neg-test](#pi-neg-test)
 
@@ -144,9 +137,9 @@ Refactor to use existing pattern.
 Edge case handling.
 
 ### <a id="pi-f64"></a>pi-f64: Replace f64 with rigorous computation in pi
-**File:** `src/ops/pi.rs:81`
+**File:** `src/ops/pi.rs:84`
 ```rust
-// TODO(correctness): Using f64 for this calculation is not rigorous
+// TODO(correctness): Using f64 for this calculation is not rigorous for a "provably correct"
 ```
 Need arbitrary precision instead of f64.
 
@@ -158,7 +151,7 @@ Need arbitrary precision instead of f64.
 Memory safety for edge cases.
 
 ### <a id="pow-type-bounds"></a>pow-type-bounds: Type system for invalid bounds in pow
-**File:** `src/ops/pow.rs:53`
+**File:** `src/ops/pow.rs:51`
 ```rust
 // TODO: Investigate if the type system can constrain this so that invalid bounds
 ```
@@ -172,9 +165,9 @@ Type-level prevention of invalid states.
 Eliminate impossible states at type level.
 
 ### <a id="binary-unreachable"></a>binary-unreachable: Type system for Binary unreachable
-**File:** `src/binary/binary_impl.rs:240`
+**File:** `src/binary/binary_impl.rs:271`
 ```rust
-// TODO: Investigate if the type system can prevent needing the unreachable! check
+// TODO: Investigate if the type system can prevent needing the unreachable! check below.
 ```
 Similar to [uxbinary-unreachable](#uxbinary-unreachable).
 
@@ -186,9 +179,9 @@ Similar to [uxbinary-unreachable](#uxbinary-unreachable).
 **Blocks:** [pi-128-plus](#pi-128-plus), [pi-dead-code](#pi-dead-code), [pi-benchmark-reenable](#pi-benchmark-reenable)
 
 ### <a id="pi-adaptive-2"></a>pi-adaptive-2: Make pi precision adaptive (second instance)
-**File:** `src/ops/pi.rs:304`
+**File:** `src/ops/pi.rs:286`
 ```rust
-// TODO(correctness): Fixed 128-bit precision here has the same limitation
+// TODO(correctness): Fixed 128-bit precision here has the same limitation as in
 ```
 Related to [pi-adaptive](#pi-adaptive).
 
@@ -246,7 +239,7 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 **Blocked by:** [async-refinement](#async-refinement)
 
 ### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
-**File:** `src/ops/pi.rs:575`
+**File:** `src/ops/pi.rs:586`
 ```rust
 // TODO: should this go with `neg` tests? is this actually needed or redundant?
 ```
@@ -254,7 +247,7 @@ Evaluate and either move or remove. Once Interval is refactored to FiniteBounds,
 **Blocked by:** [interval-finitebounds](#interval-finitebounds)
 
 ### <a id="interval-debug-assert"></a>interval-debug-assert: Remove debug_assert from Interval::new
-**File:** `src/ops/pi.rs:338`
+**File:** `src/ops/pi.rs:323`
 ```rust
 // TODO: no debug assert! this should be just like in Bounds
 ```
