@@ -483,24 +483,25 @@ mod tests {
         }
     }
 
+    /// Returns the f64 approximation of pi as a Binary.
+    ///
+    /// Note: f64 PI = 3.14159265358979311... which is slightly LESS than true pi
+    /// (3.14159265358979323...) due to f64 rounding. The difference is ~1.2e-16.
+    fn pi_f64_binary() -> Binary {
+        Binary::from_f64(std::f64::consts::PI).expect("PI should convert to Binary")
+    }
+
     #[test]
     fn pi_bounds_contain_true_pi() {
-        // pi = 3.14159265358979323846...
-        // We check against a known approximation
         let (pi_lo, pi_hi) = compute_pi_bounds(20);
-
-        // Convert f64 pi approximation to Binary for comparison.
-        // Note: f64 PI = 3.14159265358979311... which is slightly LESS than true pi
-        // (3.14159265358979323...) due to f64 rounding. The difference is ~1.2e-16.
-        let pi_f64_binary =
-            Binary::from_f64(std::f64::consts::PI).expect("PI should convert to Binary");
+        let pi_f64 = pi_f64_binary();
 
         // Check that bounds are ordered correctly
         assert!(pi_lo < pi_hi, "lower bound should be less than upper bound");
 
         // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < pi_hi)
         assert!(
-            pi_hi >= pi_f64_binary,
+            pi_hi >= pi_f64,
             "upper bound should be >= f64 pi approximation"
         );
 
@@ -508,8 +509,8 @@ mod tests {
         // and our pi computation uses 128 bits, the difference between pi_lo and f64_pi
         // should be at most about 2^-52 (the f64 rounding error).
         // We use a generous epsilon of 2^-50 to account for this.
-        let f64_error_bound = bin(1, -50); // 2^-50, generous bound for f64 rounding error
-        let pi_lo_minus_f64 = pi_lo.sub(&pi_f64_binary);
+        let f64_error_bound = bin(1, -50);
+        let pi_lo_minus_f64 = pi_lo.sub(&pi_f64);
         assert!(
             pi_lo_minus_f64 < f64_error_bound,
             "lower bound should be within 2^-50 of f64 pi approximation"
@@ -550,16 +551,11 @@ mod tests {
 
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-
-        // Convert f64 pi approximation to Binary for comparison.
-        // Note: f64 PI = 3.14159265358979311... which is slightly LESS than true pi
-        // (3.14159265358979323...) due to f64 rounding.
-        let pi_f64_binary =
-            Binary::from_f64(std::f64::consts::PI).expect("PI should convert to Binary");
+        let pi_f64 = pi_f64_binary();
 
         // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
         assert!(
-            upper >= pi_f64_binary,
+            upper >= pi_f64,
             "upper bound should be >= f64 pi approximation"
         );
 
@@ -567,7 +563,7 @@ mod tests {
         // the bounds are much looser than f64 precision, so lower should be <= f64 pi.
         // (The refined bounds are simplified/loosened from the raw computation.)
         assert!(
-            lower <= pi_f64_binary,
+            lower <= pi_f64,
             "lower bound should be <= f64 pi approximation (after simplification)"
         );
 
