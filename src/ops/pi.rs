@@ -15,12 +15,12 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::One;
 use parking_lot::RwLock;
 
 use crate::binary::{
     margin_from_width, reciprocal_of_biguint, simplify_bounds_if_needed, Binary, Bounds,
-    ReciprocalRounding, XBinary,
+    FiniteBounds, ReciprocalRounding, UBinary, XBinary,
 };
 use crate::computable::Computable;
 use crate::error::ComputableError;
@@ -304,145 +304,30 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
     reciprocal_of_biguint(&denominator, PRECISION_BITS, ReciprocalRounding::Ceil)
 }
 
-//=============================================================================
-// Interval arithmetic helpers for use in sin.rs
-//=============================================================================
 
-// TODO: use FiniteBounds instead, using the same paradigm as the Bounds type
-
-/// Represents an interval [lo, hi] for full interval propagation.
-#[derive(Clone, Debug)]
-pub struct Interval {
-    pub lo: Binary,
-    pub hi: Binary,
-}
-
-impl Interval {
-    /// Creates a new interval [lo, hi].
-    pub fn new(lo: Binary, hi: Binary) -> Self {
-        // TODO: no debug assert! this should be just like in Bounds
-        debug_assert!(lo <= hi, "Interval lower bound must be <= upper bound");
-        Self { lo, hi }
-    }
-
-    /// Creates a point interval [x, x].
-    pub fn point(x: Binary) -> Self {
-        Self {
-            lo: x.clone(),
-            hi: x,
-        }
-    }
-
-    /// Interval addition: [a,b] + [c,d] = [a+c, b+d]
-    pub fn add(&self, other: &Self) -> Self {
-        Self {
-            lo: self.lo.add(&other.lo),
-            hi: self.hi.add(&other.hi),
-        }
-    }
-
-    /// Interval subtraction: [a,b] - [c,d] = [a-d, b-c]
-    /// Note the swap in the second operand!
-    pub fn sub(&self, other: &Self) -> Self {
-        Self {
-            lo: self.lo.sub(&other.hi), // a - d
-            hi: self.hi.sub(&other.lo), // b - c
-        }
-    }
-
-    /// Interval negation: -[a,b] = [-b, -a]
-    pub fn neg(&self) -> Self {
-        Self {
-            lo: self.hi.neg(),
-            hi: self.lo.neg(),
-        }
-    }
-
-    /// Interval multiplication by a positive scalar k: k * [a,b] = [k*a, k*b]
-    pub fn scale_positive(&self, k: &Binary) -> Self {
-        debug_assert!(
-            !k.mantissa().is_negative(),
-            "scale_positive requires non-negative scalar"
-        );
-        Self {
-            lo: self.lo.mul(k),
-            hi: self.hi.mul(k),
-        }
-    }
-
-    /// Interval multiplication by a BigInt (can be negative).
-    pub fn scale_bigint(&self, k: &BigInt) -> Self {
-        if k.is_negative() {
-            // k * [a,b] = [k*b, k*a] when k < 0
-            let k_binary = Binary::new(k.clone(), BigInt::zero());
-            Self {
-                lo: self.hi.mul(&k_binary),
-                hi: self.lo.mul(&k_binary),
-            }
-        } else {
-            let k_binary = Binary::new(k.clone(), BigInt::zero());
-            Self {
-                lo: self.lo.mul(&k_binary),
-                hi: self.hi.mul(&k_binary),
-            }
-        }
-    }
-
-    /// Returns the width of the interval (hi - lo).
-    pub fn width(&self) -> Binary {
-        self.hi.sub(&self.lo)
-    }
-
-    /// Returns the midpoint of the interval.
-    pub fn midpoint(&self) -> Binary {
-        let sum = self.lo.add(&self.hi);
-        // Divide by 2 by decrementing exponent
-        Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
-    }
-
-    /// Checks if this interval contains a point.
-    pub fn contains(&self, point: &Binary) -> bool {
-        &self.lo <= point && point <= &self.hi
-    }
-
-    /// Checks if this interval is entirely less than another.
-    pub fn entirely_less_than(&self, other: &Self) -> bool {
-        self.hi < other.lo
-    }
-
-    /// Checks if this interval is entirely greater than another.
-    pub fn entirely_greater_than(&self, other: &Self) -> bool {
-        self.lo > other.hi
-    }
-
-    /// Checks if this interval overlaps with another.
-    pub fn overlaps(&self, other: &Self) -> bool {
-        !(self.entirely_less_than(other) || self.entirely_greater_than(other))
-    }
-}
-
-/// Returns pi as an Interval with specified precision.
-pub fn pi_interval_at_precision(precision_bits: u64) -> Interval {
+/// Returns pi as a FiniteBounds interval with specified precision.
+pub fn pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
     let (lo, hi) = pi_bounds_at_precision(precision_bits);
-    Interval::new(lo, hi)
+    FiniteBounds::new(lo, hi)
 }
 
-/// Returns 2*pi as an Interval with specified precision.
-pub fn two_pi_interval_at_precision(precision_bits: u64) -> Interval {
-    let (pi_lo, pi_hi) = pi_bounds_at_precision(precision_bits);
-    // 2*pi: multiply by 2 (shift exponent by 1)
-    let two_pi_lo = Binary::new(pi_lo.mantissa().clone(), pi_lo.exponent() + BigInt::one());
-    let two_pi_hi = Binary::new(pi_hi.mantissa().clone(), pi_hi.exponent() + BigInt::one());
-    Interval::new(two_pi_lo, two_pi_hi)
+/// Returns 2*pi as a FiniteBounds interval with specified precision.
+pub fn two_pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
+    use num_bigint::BigUint;
+
+    let pi_interval = pi_interval_at_precision(precision_bits);
+    // 2*pi: multiply by 2
+    let two = UBinary::new(BigUint::from(1u32), BigInt::from(1)); // 2^1 = 2
+    pi_interval.scale_positive(&two)
 }
 
-/// Returns pi/2 as an Interval with specified precision.
-pub fn half_pi_interval_at_precision(precision_bits: u64) -> Interval {
+/// Returns pi/2 as a FiniteBounds interval with specified precision.
+pub fn half_pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
     let (pi_lo, pi_hi) = pi_bounds_at_precision(precision_bits);
     // pi/2: divide by 2 (decrement exponent by 1)
     let half_pi_lo = Binary::new(pi_lo.mantissa().clone(), pi_lo.exponent() - BigInt::one());
     let half_pi_hi = Binary::new(pi_hi.mantissa().clone(), pi_hi.exponent() - BigInt::one());
-    Interval::new(half_pi_lo, half_pi_hi)
+    FiniteBounds::new(half_pi_lo, half_pi_hi)
 }
 
 #[cfg(test)]
@@ -574,21 +459,21 @@ mod tests {
     #[test]
     fn interval_arithmetic_subtraction() {
         // Test that [a,b] - [c,d] = [a-d, b-c]
-        let a = Interval::new(bin(1, 0), bin(2, 0)); // [1, 2]
-        let b = Interval::new(bin(3, 0), bin(5, 0)); // [3, 5]
+        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
 
-        let result = a.sub(&b);
+        let result = a.interval_sub(&b);
         // [1, 2] - [3, 5] = [1-5, 2-3] = [-4, -1]
-        assert_eq!(result.lo, bin(-4, 0));
-        assert_eq!(result.hi, bin(-1, 0));
+        assert_eq!(result.lo(), &bin(-4, 0));
+        assert_eq!(result.hi(), bin(-1, 0));
     }
 
     // TODO: should this go with `neg` tests? is this actually needed or redundant?
     #[test]
     fn interval_negation() {
-        let a = Interval::new(bin(1, 0), bin(3, 0)); // [1, 3]
-        let neg_a = a.neg(); // [-3, -1]
-        assert_eq!(neg_a.lo, bin(-3, 0));
-        assert_eq!(neg_a.hi, bin(-1, 0));
+        let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
+        let neg_a = a.interval_neg(); // [-3, -1]
+        assert_eq!(neg_a.lo(), &bin(-3, 0));
+        assert_eq!(neg_a.hi(), bin(-1, 0));
     }
 }
