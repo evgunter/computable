@@ -7,8 +7,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, Mul, Neg, Sub};
 
-use num_bigint::BigInt;
-use num_traits::{Float, Signed, Zero};
+use num_traits::{Signed, Zero};
 
 use super::binary_impl::Binary;
 use super::error::XBinaryError;
@@ -58,26 +57,20 @@ impl XBinary {
 
     /// Converts an f64 to an XBinary.
     ///
-    /// Returns an error if the input is NaN.
+    /// Returns an error if the input is NaN. Infinite values are converted to
+    /// `PosInf` or `NegInf` respectively.
     pub fn from_f64(value: f64) -> Result<Self, XBinaryError> {
-        if value.is_nan() {
-            return Err(XBinaryError::Nan);
-        }
-        if value == 0.0 {
-            return Ok(Self::Finite(Binary::zero()));
-        }
         if value == f64::INFINITY {
             return Ok(Self::PosInf);
         }
         if value == f64::NEG_INFINITY {
             return Ok(Self::NegInf);
         }
-        let (mantissa, exponent, sign) = value.integer_decode();
-        let signed_mantissa = BigInt::from(sign) * BigInt::from(mantissa);
-        Ok(Self::Finite(Binary::new(
-            signed_mantissa,
-            BigInt::from(exponent),
-        )))
+        // For finite values (including zero) and NaN, delegate to Binary::from_f64
+        match Binary::from_f64(value) {
+            Ok(binary) => Ok(Self::Finite(binary)),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Adds two extended binary numbers, preferring the lower bound on conflict.
@@ -233,10 +226,17 @@ mod tests {
 
     use super::*;
     use crate::test_utils::xbin;
+    use num_bigint::BigInt;
 
     #[test]
     fn xbinary_from_f64_handles_special_values() {
-        assert!(matches!(XBinary::from_f64(f64::NAN), Err(XBinaryError::Nan)));
+        use crate::binary::BinaryError;
+        // NaN is rejected (via Binary::from_f64)
+        assert!(matches!(
+            XBinary::from_f64(f64::NAN),
+            Err(XBinaryError::Binary(BinaryError::Nan))
+        ));
+        // Infinities are converted to XBinary's infinity variants
         assert_eq!(XBinary::from_f64(f64::INFINITY).expect("should succeed"), XBinary::PosInf);
         assert_eq!(XBinary::from_f64(f64::NEG_INFINITY).expect("should succeed"), XBinary::NegInf);
         assert_eq!(XBinary::from_f64(0.0).expect("should succeed"), XBinary::zero());
