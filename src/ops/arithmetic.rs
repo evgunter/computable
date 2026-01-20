@@ -75,25 +75,26 @@ impl NodeOp for MulOp {
         let right_lower = right_bounds.small();
         let right_upper = right_bounds.large();
 
-        let candidates = [
-            left_lower.mul(right_lower),
-            left_lower.mul(&right_upper),
-            left_upper.mul(right_lower),
-            left_upper.mul(&right_upper),
-        ];
+        // Compute all candidate products
+        let c0 = left_lower.mul(right_lower);
+        let c1 = left_lower.mul(&right_upper);
+        let c2 = left_upper.mul(right_lower);
+        let c3 = left_upper.mul(&right_upper);
 
-        let mut min = candidates[0].clone();
-        let mut max = candidates[0].clone();
-        for candidate in candidates.iter().skip(1) {
-            if candidate < &min {
-                min = candidate.clone();
+        // Find min and max using references, only clone the winners
+        let mut min = &c0;
+        let mut max = &c0;
+        for candidate in [&c1, &c2, &c3] {
+            if candidate < min {
+                min = candidate;
             }
-            if candidate > &max {
-                max = candidate.clone();
+            if candidate > max {
+                max = candidate;
             }
         }
 
-        Bounds::new_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
+        Bounds::new_checked(min.clone(), max.clone())
+            .map_err(|_| ComputableError::InvalidBoundsOrder)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {

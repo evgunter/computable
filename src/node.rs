@@ -200,9 +200,14 @@ impl Node {
     /// Returns cached bounds, computing and caching if needed.
     /// Combinators are infallible, so bounds are lazily computed on demand.
     pub fn get_bounds(&self) -> Result<Bounds, ComputableError> {
-        if let Some(bounds) = self.cached_bounds() {
-            return Ok(bounds);
+        // Fast path: check cache with read lock
+        {
+            let cache = self.bounds_cache.read();
+            if let Some(bounds) = cache.as_ref() {
+                return Ok(bounds.clone());
+            }
         }
+        // Slow path: compute and cache
         let bounds = self.compute_bounds()?;
         self.set_bounds(bounds.clone());
         Ok(bounds)
