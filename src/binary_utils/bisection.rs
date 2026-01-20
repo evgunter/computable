@@ -47,7 +47,7 @@
 use num_bigint::BigInt;
 use num_traits::One;
 
-use crate::binary::{Binary, FiniteBounds};
+use crate::binary::{Binary, FiniteBounds, shortest_binary_in_finite_bounds};
 
 /// Result of comparing a test value against the target in a binary search.
 ///
@@ -86,15 +86,16 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
 /// Performs a single step of binary search between bounds.
 ///
 /// This function:
-/// 1. Computes the midpoint of the bounds
-/// 2. Calls the comparison function with the midpoint
-/// 3. Returns new bounds based on the comparison result
+/// 1. Finds the shortest representation within the bounds (to reduce precision accumulation)
+/// 2. Falls back to the midpoint if the shortest representation equals an endpoint
+/// 3. Calls the comparison function with the split point
+/// 4. Returns new bounds based on the comparison result
 ///
 /// # Arguments
 ///
 /// * `bounds` - The current bounds interval
-/// * `compare` - A function that compares the midpoint to the target value
-///   and returns whether the target is above, below, or exactly at the midpoint
+/// * `compare` - A function that compares the split point to the target value
+///   and returns whether the target is above, below, or exactly at the split point
 ///
 /// # Returns
 ///
@@ -103,24 +104,41 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
 ///
 /// # Behavior
 ///
-/// - If `compare` returns `Above`: the target is above the midpoint, so
-///   the new interval is [midpoint, upper]
-/// - If `compare` returns `Below`: the target is below the midpoint, so
-///   the new interval is [lower, midpoint]
-/// - If `compare` returns `Exact`: the midpoint is exactly the target,
-///   so both bounds are set to the midpoint (width becomes zero)
+/// - If `compare` returns `Above`: the target is above the split point, so
+///   the new interval is [split, upper]
+/// - If `compare` returns `Below`: the target is below the split point, so
+///   the new interval is [lower, split]
+/// - If `compare` returns `Exact`: the split point is exactly the target,
+///   so both bounds are set to the split point (width becomes zero)
+///
+/// # Precision Optimization
+///
+/// Unlike a simple midpoint calculation, this function uses `shortest_binary_in_finite_bounds`
+/// to find a split point with a shorter mantissa representation. This prevents the
+/// exponential growth of mantissa bits that would occur with naive midpoint bisection,
+/// where each step can double the number of mantissa bits.
 pub fn bisection_step<F>(bounds: FiniteBounds, compare: F) -> FiniteBounds
 where
     F: FnOnce(&Binary) -> BisectionComparison,
 {
     let lower = bounds.small().clone();
     let upper = bounds.large();
-    let mid = midpoint(&lower, &upper);
 
-    match compare(&mid) {
-        BisectionComparison::Above => FiniteBounds::new(mid, upper),
-        BisectionComparison::Below => FiniteBounds::new(lower, mid),
-        BisectionComparison::Exact => FiniteBounds::new(mid.clone(), mid),
+    // Find the shortest representation within the bounds
+    let shortest = shortest_binary_in_finite_bounds(&bounds);
+
+    // If the shortest representation equals an endpoint, fall back to the midpoint
+    // to ensure progress (we need a point strictly between the bounds)
+    let split = if shortest == lower || shortest == upper {
+        midpoint(&lower, &upper)
+    } else {
+        shortest
+    };
+
+    match compare(&split) {
+        BisectionComparison::Above => FiniteBounds::new(split, upper),
+        BisectionComparison::Below => FiniteBounds::new(lower, split),
+        BisectionComparison::Exact => FiniteBounds::new(split.clone(), split),
     }
 }
 

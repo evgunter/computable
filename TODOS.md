@@ -2,13 +2,6 @@
 
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
-### <a id="shortest-repr"></a>shortest-repr: Use shortest representation functions
-**File:** `src/binary/shortest.rs:20`
-```rust
-// TODO: use these functions to make binary-search-based refinement not need to represent intervals that have so many bits of precision
-```
-**Blocks:** [epsilon-zero](#epsilon-zero)
-
 ### <a id="repeated-squaring"></a>repeated-squaring: Use repeated squaring for power operations
 **File:** `src/binary_utils/power.rs:34`
 ```rust
@@ -78,6 +71,13 @@ This also suggests a correctness issue (using the midpoint rather than the bound
 // TODO(correctness): Using midpoints for k computation could cause incorrect range reduction.
 ```
 Correctness issue.
+
+### <a id="epsilon-zero"></a>epsilon-zero: Allow epsilon = 0 with proper checks
+**File:** `src/computable.rs:73`
+```rust
+// TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
+```
+Now unblocked after shortest-repr implementation.
 
 ---
 
@@ -205,13 +205,6 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 // TODO: Re-enable once fixed 128-bit intermediate precision in src/ops/pi.rs is made adaptive.
 ```
 **Blocked by:** [pi-adaptive](#pi-adaptive)
-
-### <a id="epsilon-zero"></a>epsilon-zero: Allow epsilon = 0 with proper checks
-**File:** `src/computable.rs:73`
-```rust
-// TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
-```
-**Blocked by:** [shortest-repr](#shortest-repr)
 
 ### <a id="nth-root-negative"></a>nth-root-negative: Handle negative inputs for even-degree roots
 **File:** `src/ops/nth_root.rs:15`
