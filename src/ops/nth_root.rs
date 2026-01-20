@@ -32,7 +32,7 @@ use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary_utils::bisection::{midpoint, BisectionComparison, bisection_step};
-use crate::binary::{Binary, Bounds, FiniteBounds, XBinary, simplify_bounds_if_needed};
+use crate::binary::{Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -102,10 +102,11 @@ impl NodeOp for NthRootOp {
                 };
                 let raw_bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
                 // Simplify bounds to reduce precision bloat from bisection
+                let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
                 Ok(simplify_bounds_if_needed(
                     &raw_bounds,
                     PRECISION_SIMPLIFICATION_THRESHOLD,
-                    MARGIN_SHIFT,
+                    &margin,
                 ))
             }
         }

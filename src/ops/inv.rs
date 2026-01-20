@@ -7,7 +7,7 @@ use num_traits::Zero;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    reciprocal_rounded_abs_extended, simplify_bounds_if_needed, Bounds, ReciprocalRounding, XBinary,
+    margin_from_width, reciprocal_rounded_abs_extended, simplify_bounds_if_needed, Bounds, ReciprocalRounding, XBinary,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -41,10 +41,11 @@ impl NodeOp for InvOp {
         let existing = self.inner.get_bounds()?;
         let raw_bounds = reciprocal_bounds(&existing, &self.precision_bits.read())?;
         // Simplify bounds to reduce precision bloat from high-precision reciprocal computation
+        let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
         Ok(simplify_bounds_if_needed(
             &raw_bounds,
             PRECISION_SIMPLIFICATION_THRESHOLD,
-            MARGIN_SHIFT,
+            &margin,
         ))
     }
 

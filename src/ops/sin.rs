@@ -26,7 +26,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{simplify_bounds_if_needed, Binary, Bounds, XBinary};
+use crate::binary::{margin_from_width, simplify_bounds_if_needed, Binary, Bounds, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -55,10 +55,11 @@ impl NodeOp for SinOp {
         let num_terms = self.num_terms.read().clone();
         let raw_bounds = sin_bounds(&input_bounds, &num_terms)?;
         // Simplify bounds to reduce precision bloat from Taylor series computation
+        let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
         Ok(simplify_bounds_if_needed(
             &raw_bounds,
             PRECISION_SIMPLIFICATION_THRESHOLD,
-            MARGIN_SHIFT,
+            &margin,
         ))
     }
 
@@ -195,10 +196,11 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
         .map_err(|_| ComputableError::InvalidBoundsOrder)?;
 
     // Simplify bounds to reduce precision bloat from Taylor series computation
+    let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
     Ok(simplify_bounds_if_needed(
         &raw_bounds,
         PRECISION_SIMPLIFICATION_THRESHOLD,
-        MARGIN_SHIFT,
+        &margin,
     ))
 }
 

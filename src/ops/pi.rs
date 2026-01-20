@@ -18,7 +18,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{simplify_bounds_if_needed, Binary, Bounds, XBinary};
+use crate::binary::{margin_from_width, simplify_bounds_if_needed, Binary, Bounds, XBinary};
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -96,10 +96,11 @@ impl NodeOp for PiOp {
         let raw_bounds = Bounds::new_checked(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi))
             .map_err(|_| ComputableError::InvalidBoundsOrder)?;
         // Simplify bounds to reduce precision bloat from high-precision pi computation
+        let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
         Ok(simplify_bounds_if_needed(
             &raw_bounds,
             PRECISION_SIMPLIFICATION_THRESHOLD,
-            MARGIN_SHIFT,
+            &margin,
         ))
     }
 

@@ -101,8 +101,28 @@ fn split_xbinary(value: &XBinary) -> (Sign, UXBinary) {
     }
 }
 
-// TODO: replace margin_shift with just margin so that the caller can more directly decide how much to loosen the bounds
-// (e.g. the caller may want to loosen based on epsilon rather than only width)
+/// Computes margin from width using a bit shift.
+///
+/// This is a convenience function for callers that want to specify margin as a fraction of width.
+///
+/// # Arguments
+///
+/// * `width` - The width to compute margin from
+/// * `shift` - How many bits to right-shift the width.
+///   E.g., `2` means `margin = width >> 2 = width/4`, `3` means `margin = width/8`.
+///
+/// # Returns
+///
+/// The margin as `UXBinary`. Returns `UXBinary::Inf` if width is infinite.
+pub fn margin_from_width(width: &UXBinary, shift: u32) -> UXBinary {
+    match width {
+        UXBinary::Inf => UXBinary::Inf,
+        UXBinary::Finite(w) => {
+            let margin_exponent = w.exponent() - BigInt::from(shift);
+            UXBinary::Finite(UBinary::new(w.mantissa().clone(), margin_exponent))
+        }
+    }
+}
 
 /// simplifies bounds by finding shorter binary representations for both the lower bound and the width
 /// which contain the original bounds.
@@ -110,29 +130,27 @@ fn split_xbinary(value: &XBinary) -> (Sign, UXBinary) {
 /// # Arguments
 ///
 /// * `bounds` - The bounds to simplify
-/// * `margin_shift` - How many bits to right-shift the width to get the margin.
-///   E.g., `2` means `margin = width >> 2 = width/4`, `3` means `margin = width/8`.
-///   Higher values are more conservative (less loosening, fewer bits saved).
+/// * `margin` - How much to loosen the bounds by. The lower bound can decrease by up to this amount,
+///   and the width can increase by up to this amount. If infinite, returns bounds unchanged.
 ///
 /// # Returns
 ///
 /// bounds which contain the original bounds, widen the bounds by at most the specified margin, and which have
 /// a shorter binary representation for the lower bound and width (or, if this is not possible, just return the original bounds)
 ///
-pub fn simplify_bounds(bounds: &Bounds, margin_shift: u32) -> Bounds {
-    // recall that bounds stores (lower, width) internally
-    let original_width = match bounds.width() {
+pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
+    let finite_margin = match margin {
         UXBinary::Inf => return bounds.clone(),
-        UXBinary::Finite(w) => w.clone(),
+        UXBinary::Finite(m) => m,
     };
 
-    if original_width.mantissa().is_zero() {
+    if matches!(bounds.width(), UXBinary::Inf) {
         return bounds.clone();
     }
 
-    // Compute margin: width >> margin_shift (i.e., width / 2^margin_shift)
-    let margin_exponent = original_width.exponent() - BigInt::from(margin_shift);
-    let margin = UBinary::new(original_width.mantissa().clone(), margin_exponent);
+    if finite_margin.mantissa().is_zero() {
+        return bounds.clone();
+    }
 
     // Step 1: Find shortest lower bound in [original_lower - margin, original_lower]
     // This relaxes the lower bound downward to find a shorter representation
@@ -141,7 +159,7 @@ pub fn simplify_bounds(bounds: &Bounds, margin_shift: u32) -> Bounds {
         _ => return bounds.clone(), // Can't simplify infinite lower bound
     };
 
-    let relaxed_lower = original_lower.sub(&margin.to_binary());
+    let relaxed_lower = original_lower.sub(&finite_margin.to_binary());
     let lower_search_bounds = Bounds::new(
         XBinary::Finite(relaxed_lower),
         XBinary::Finite(original_lower.clone()),
@@ -168,7 +186,7 @@ pub fn simplify_bounds(bounds: &Bounds, margin_shift: u32) -> Bounds {
     };
 
     // Find shortest width in [min_width, min_width + margin]
-    let new_width = shortest_binary_in_positive_interval(&min_width_unsigned, &UXBinary::Finite(margin));
+    let new_width = shortest_binary_in_positive_interval(&min_width_unsigned, &UXBinary::Finite(finite_margin.clone()));
 
     // Construct new bounds: new_upper = new_lower + new_width
     // TODO: here and elsewhere it might be nice to be able to construct Bounds directly rather than finding the upper bound just to have it turn that back into a width
@@ -210,7 +228,8 @@ pub fn bounds_precision(bounds: &Bounds) -> u64 {
 ///
 /// * `bounds` - The bounds to potentially simplify
 /// * `precision_threshold` - Only simplify if total mantissa bits exceed this
-/// * `margin_shift` - Passed to `simplify_bounds` if simplification occurs
+/// * `margin` - How much to loosen the bounds by (passed to `simplify_bounds`).
+///   If infinite, returns bounds unchanged.
 ///
 /// # Returns
 ///
@@ -218,10 +237,10 @@ pub fn bounds_precision(bounds: &Bounds) -> u64 {
 pub fn simplify_bounds_if_needed(
     bounds: &Bounds,
     precision_threshold: u64,
-    margin_shift: u32,
+    margin: &UXBinary,
 ) -> Bounds {
     if bounds_precision(bounds) > precision_threshold {
-        simplify_bounds(bounds, margin_shift)
+        simplify_bounds(bounds, margin)
     } else {
         bounds.clone()
     }
@@ -301,7 +320,8 @@ mod tests {
         let bounds = Bounds::new(XBinary::Finite(lower.clone()), XBinary::Finite(upper.clone()));
 
         let original_precision = bounds_precision(&bounds);
-        let simplified = simplify_bounds(&bounds, 2); // loosen by width/4
+        let margin = margin_from_width(bounds.width(), 2); // loosen by width/4
+        let simplified = simplify_bounds(&bounds, &margin);
         let new_precision = bounds_precision(&simplified);
 
         // The simplified bounds should have less or equal precision
@@ -320,7 +340,8 @@ mod tests {
         let upper = bin(1415, -10); // ~1.3818359375
         let bounds = Bounds::new(XBinary::Finite(lower.clone()), XBinary::Finite(upper.clone()));
 
-        let simplified = simplify_bounds(&bounds, 2);
+        let margin = margin_from_width(bounds.width(), 2);
+        let simplified = simplify_bounds(&bounds, &margin);
 
         // The simplified bounds must contain the original interval
         assert!(
@@ -340,9 +361,11 @@ mod tests {
         let point = bin(5, 0);
         let bounds = Bounds::new(XBinary::Finite(point.clone()), XBinary::Finite(point.clone()));
 
-        let simplified = simplify_bounds(&bounds, 2);
+        // margin_from_width with zero width gives a zero margin
+        let margin = margin_from_width(bounds.width(), 2);
+        let simplified = simplify_bounds(&bounds, &margin);
 
-        // With zero width, should return unchanged
+        // With zero margin, should return unchanged
         assert_eq!(simplified.small(), bounds.small());
         assert_eq!(simplified.large(), bounds.large());
     }
@@ -351,9 +374,14 @@ mod tests {
     fn simplify_bounds_handles_infinite_width() {
         let bounds = Bounds::new(XBinary::Finite(bin(1, 0)), XBinary::PosInf);
 
-        let simplified = simplify_bounds(&bounds, 2);
+        // margin_from_width returns Inf for infinite width
+        assert!(matches!(margin_from_width(bounds.width(), 2), UXBinary::Inf));
 
-        // With infinite width, should return unchanged
+        // simplify_bounds with infinite margin returns bounds unchanged
+        let margin = margin_from_width(bounds.width(), 2);
+        let simplified = simplify_bounds(&bounds, &margin);
+
+        // With infinite margin, should return unchanged
         assert_eq!(simplified.small(), bounds.small());
         assert_eq!(simplified.large(), bounds.large());
     }
@@ -365,13 +393,14 @@ mod tests {
         let bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
 
         let precision = bounds_precision(&bounds);
+        let margin = margin_from_width(bounds.width(), 2);
 
         // Below threshold: should return unchanged
-        let unchanged = simplify_bounds_if_needed(&bounds, precision + 100, 2);
+        let unchanged = simplify_bounds_if_needed(&bounds, precision + 100, &margin);
         assert_eq!(unchanged, bounds);
 
         // Above threshold: should simplify
-        let simplified = simplify_bounds_if_needed(&bounds, 1, 2);
+        let simplified = simplify_bounds_if_needed(&bounds, 1, &margin);
         // The result should still contain the original bounds
         assert!(simplified.small() <= bounds.small());
         assert!(simplified.large() >= bounds.large());
@@ -419,7 +448,8 @@ mod tests {
             original_precision
         );
 
-        let simplified = simplify_bounds(&bounds, 2);
+        let margin = margin_from_width(bounds.width(), 2);
+        let simplified = simplify_bounds(&bounds, &margin);
         let new_precision = bounds_precision(&simplified);
 
         // Simplified should have noticeably less precision
