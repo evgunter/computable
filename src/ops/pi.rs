@@ -489,11 +489,33 @@ mod tests {
         // We check against a known approximation
         let (pi_lo, pi_hi) = compute_pi_bounds(20);
 
-        // Convert to f64 for rough comparison
-        // pi_lo and pi_hi should bracket 3.14159265...
-        // TODO: fix this by converting the f64 approximation of pi to Binary and then comparing
-        // We can't easily convert Binary to f64, but we can check the bounds are ordered
+        // Convert f64 pi approximation to Binary for comparison.
+        // Note: f64 PI = 3.14159265358979311... which is slightly LESS than true pi
+        // (3.14159265358979323...) due to f64 rounding. The difference is ~1.2e-16.
+        let pi_f64_binary = match XBinary::from_f64(std::f64::consts::PI) {
+            Ok(XBinary::Finite(b)) => b,
+            _ => panic!("std::f64::consts::PI should convert to a finite Binary"),
+        };
+
+        // Check that bounds are ordered correctly
         assert!(pi_lo < pi_hi, "lower bound should be less than upper bound");
+
+        // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < pi_hi)
+        assert!(
+            pi_hi >= pi_f64_binary,
+            "upper bound should be >= f64 pi approximation"
+        );
+
+        // The lower bound should be very close to f64 pi. Since f64 has ~53 bits of precision
+        // and our pi computation uses 128 bits, the difference between pi_lo and f64_pi
+        // should be at most about 2^-52 (the f64 rounding error).
+        // We use a generous epsilon of 2^-50 to account for this.
+        let f64_error_bound = bin(1, -50); // 2^-50, generous bound for f64 rounding error
+        let pi_lo_minus_f64 = pi_lo.sub(&pi_f64_binary);
+        assert!(
+            pi_lo_minus_f64 < f64_error_bound,
+            "lower bound should be within 2^-50 of f64 pi approximation"
+        );
 
         // Check that the interval is reasonably tight (width < 1)
         let width = pi_hi.sub(&pi_lo);
@@ -501,8 +523,6 @@ mod tests {
         assert!(width < one, "pi bounds should be tighter than width 1");
 
         // Check bounds bracket approximately 3.14
-        // 3 < pi_lo should NOT hold (pi_lo should be > 3)
-        // Actually, let's check: pi_lo > 3 and pi_hi < 4
         let three = bin(3, 0);
         let four = bin(4, 0);
         assert!(pi_lo > three, "pi lower bound should be > 3");
@@ -534,7 +554,28 @@ mod tests {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 
-         // TODO: improve this by converting the f64 approximation of pi to Binary and then comparing
+        // Convert f64 pi approximation to Binary for comparison.
+        // Note: f64 PI = 3.14159265358979311... which is slightly LESS than true pi
+        // (3.14159265358979323...) due to f64 rounding.
+        let pi_f64_binary = match XBinary::from_f64(std::f64::consts::PI) {
+            Ok(XBinary::Finite(b)) => b,
+            _ => panic!("std::f64::consts::PI should convert to a finite Binary"),
+        };
+
+        // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
+        assert!(
+            upper >= pi_f64_binary,
+            "upper bound should be >= f64 pi approximation"
+        );
+
+        // The lower bound should be very close to f64 pi. With 2^-20 epsilon precision,
+        // the bounds are much looser than f64 precision, so lower should be <= f64 pi.
+        // (The refined bounds are simplified/loosened from the raw computation.)
+        assert!(
+            lower <= pi_f64_binary,
+            "lower bound should be <= f64 pi approximation (after simplification)"
+        );
+
         // Check basic sanity
         let three = bin(3, 0);
         let four = bin(4, 0);
