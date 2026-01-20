@@ -186,11 +186,7 @@ fn compute_output_lower_bound(lower_input: &XBinary, is_even: bool, degree: u32)
         }
         XBinary::PosInf => {
             // Lower input is +∞ - currently unexpected for a lower bound.
-            // This debug_assert is here because nothing currently produces this case, so
-            // hitting it likely indicates a bug. However, this could become a valid case
-            // if we later support computations in the extended reals where +∞ bounds are
-            // meaningful. If that feature is added, this assertion should be removed.
-            debug_assert!(false, "lower input bound is PosInf - unexpected but may be valid for extended reals");
+            crate::detected_computable_with_infinite_value!("lower input bound is PosInf");
             Ok(XBinary::PosInf)
         }
         XBinary::Finite(lower_bin) => {
@@ -225,11 +221,7 @@ fn compute_output_upper_bound(upper_input: &XBinary, is_even: bool, degree: u32)
         XBinary::PosInf => Ok(XBinary::PosInf),
         XBinary::NegInf => {
             // Upper input is -∞ - currently unexpected for an upper bound.
-            // This debug_assert is here because nothing currently produces this case, so
-            // hitting it likely indicates a bug. However, this could become a valid case
-            // if we later support computations in the extended reals where -∞ bounds are
-            // meaningful. If that feature is added, this assertion should be removed.
-            debug_assert!(false, "upper input bound is NegInf - unexpected but may be valid for extended reals");
+            crate::detected_computable_with_infinite_value!("upper input bound is NegInf");
             Ok(XBinary::NegInf)
         }
         XBinary::Finite(upper_bin) => {

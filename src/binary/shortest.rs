@@ -88,11 +88,7 @@ pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
 fn shortest_xbinary_in_positive_interval(lower: &UXBinary, width: &UXBinary) -> XBinary {
     match lower {
         UXBinary::Inf => {
-            // This debug_assert is here because nothing currently produces this case, so
-            // hitting it likely indicates a bug. However, this could become a valid case
-            // if we later support computations in the extended reals where +∞ bounds are
-            // meaningful. If that feature is added, this assertion should be removed.
-            debug_assert!(false, "lower input bound is PosInf - unexpected but may be valid for extended reals");
+            crate::detected_computable_with_infinite_value!("lower input bound is PosInf");
             XBinary::PosInf
         }
         UXBinary::Finite(lm) => XBinary::Finite(shortest_binary_in_positive_interval(lm, width).to_binary())
@@ -349,7 +345,7 @@ mod tests {
             XBinary::Finite(bin(-1, 0))
         );
 
-        // this case is currently blocked by the debug_assert, but it should be added if we want to support extended reals
+        // this case is currently blocked by detected_computable_with_infinite_value!, but it should be added if we want to support extended reals
         // let bounds = Bounds::new(XBinary::PosInf, XBinary::PosInf);
         // assert_eq!(shortest_xbinary_in_bounds(&bounds), XBinary::PosInf);
     }

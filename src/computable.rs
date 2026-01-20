@@ -190,14 +190,8 @@ impl Computable {
                     let has_infinite = matches!(bounds.small(), XBinary::NegInf | XBinary::PosInf)
                         || matches!(&bounds.large(), XBinary::NegInf | XBinary::PosInf);
                     if has_infinite {
-                        // This debug_assert is here because nothing currently produces this case, so
-                        // hitting it likely indicates a bug. However, this could become a valid case
-                        // if we later support computations in the extended reals where infinity^0
-                        // needs special handling. If that feature is added, this assertion should be
-                        // removed and proper handling added.
-                        debug_assert!(
-                            false,
-                            "input has infinite bounds - unexpected but may be valid for extended reals"
+                        crate::detected_computable_with_infinite_value!(
+                            "input has infinite bounds for x^0 (infinity^0 is an indeterminate form)"
                         );
                     }
                 }
