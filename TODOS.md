@@ -1,13 +1,21 @@
 # TODOs - Ranked by Ease of Completion
 
-## Tier 2: Medium Effort (Unblocked, requires some work)
+## Tier 1: Easy
 
-### <a id="nonzero-benchmark"></a>nonzero-benchmark: Use NonZeroU32 directly in benchmark
-**File:** `benchmarks/src/integer_roots.rs:35`
+### <a id="epsilon-zero"></a>epsilon-zero: Allow epsilon = 0 with proper checks
+**File:** `src/computable.rs:73`
 ```rust
-// TODO: see if we can take the input as NonZeroU32 directly so we don't need to unwrap
+// TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
 ```
-Minor API change to avoid an unwrap.
+Now unblocked after shortest-repr implementation.
+
+### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
+**File:** `src/binary/shortest.rs:22`
+```rust
+// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
+// to reduce code duplication.
+```
+Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
 
 ### <a id="bisection-benchmark"></a>bisection-benchmark: Compare midpoint vs shortest-representation bisection
 **File:** `benchmarks/src/integer_roots.rs:1`
@@ -18,13 +26,15 @@ Minor API change to avoid an unwrap.
 ```
 Benchmark to validate that the shortest-representation bisection strategy reduces precision accumulation without significant performance cost.
 
-### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
-**File:** `src/binary/shortest.rs:22`
+
+## Tier 2: Medium Effort (Unblocked, requires some work)
+
+### <a id="nonzero-benchmark"></a>nonzero-benchmark: Use NonZeroU32 directly in benchmark
+**File:** `benchmarks/src/integer_roots.rs:35`
 ```rust
-// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
-// to reduce code duplication.
+// TODO: see if we can take the input as NonZeroU32 directly so we don't need to unwrap
 ```
-Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
+Minor API change to avoid an unwrap.
 
 ### <a id="pi-unwrap"></a>pi-unwrap: Avoid using unwrap in pi benchmark
 **File:** `benchmarks/src/pi.rs:55`
@@ -74,13 +84,6 @@ This also suggests a correctness issue (using the midpoint rather than the bound
 // TODO(correctness): Using midpoints for k computation could cause incorrect range reduction.
 ```
 Correctness issue.
-
-### <a id="epsilon-zero"></a>epsilon-zero: Allow epsilon = 0 with proper checks
-**File:** `src/computable.rs:73`
-```rust
-// TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
-```
-Now unblocked after shortest-repr implementation.
 
 ---
 
