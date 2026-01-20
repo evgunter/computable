@@ -30,9 +30,9 @@ const INITIAL_PI_TERMS: usize = 10;
 /// 128 chosen: similar to sin, Taylor series benefits from less frequent simplification.
 const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
 
-/// Loosening fraction for bounds simplification.
+/// margin parameter for bounds simplification.
 /// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const LOOSENING_FRACTION: u32 = 3;
+const MARGIN_SHIFT: u32 = 3;
 
 /// Returns pi as a Computable that can be refined to arbitrary precision.
 ///
@@ -99,7 +99,7 @@ impl NodeOp for PiOp {
         Ok(simplify_bounds_if_needed(
             &raw_bounds,
             PRECISION_SIMPLIFICATION_THRESHOLD,
-            LOOSENING_FRACTION,
+            MARGIN_SHIFT,
         ))
     }
 

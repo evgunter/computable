@@ -42,7 +42,7 @@ const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 64;
 
 /// Loosening fraction for bounds simplification.
 /// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const LOOSENING_FRACTION: u32 = 3;
+const MARGIN_SHIFT: u32 = 3;
 
 /// N-th root operation with binary search refinement.
 ///
@@ -105,7 +105,7 @@ impl NodeOp for NthRootOp {
                 Ok(simplify_bounds_if_needed(
                     &raw_bounds,
                     PRECISION_SIMPLIFICATION_THRESHOLD,
-                    LOOSENING_FRACTION,
+                    MARGIN_SHIFT,
                 ))
             }
         }

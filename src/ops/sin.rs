@@ -34,9 +34,9 @@ use crate::node::{Node, NodeOp};
 /// 128 chosen: 8% faster than 64; Taylor series doesn't accumulate precision as rapidly as bisection.
 const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
 
-/// Loosening fraction for bounds simplification.
+/// margin parameter for bounds simplification.
 /// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const LOOSENING_FRACTION: u32 = 3;
+const MARGIN_SHIFT: u32 = 3;
 
 use super::pi::{
     half_pi_interval_at_precision, pi_interval_at_precision,
@@ -58,7 +58,7 @@ impl NodeOp for SinOp {
         Ok(simplify_bounds_if_needed(
             &raw_bounds,
             PRECISION_SIMPLIFICATION_THRESHOLD,
-            LOOSENING_FRACTION,
+            MARGIN_SHIFT,
         ))
     }
 
@@ -198,7 +198,7 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
     Ok(simplify_bounds_if_needed(
         &raw_bounds,
         PRECISION_SIMPLIFICATION_THRESHOLD,
-        LOOSENING_FRACTION,
+        MARGIN_SHIFT,
     ))
 }
 

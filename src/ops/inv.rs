@@ -16,9 +16,9 @@ use crate::node::{Node, NodeOp};
 /// 128 chosen: 12% faster than 64 due to lower overhead in precision-doubling refinement.
 const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
 
-/// Loosening fraction for bounds simplification.
+/// margin parameter for bounds simplification.
 /// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const LOOSENING_FRACTION: u32 = 3;
+const MARGIN_SHIFT: u32 = 3;
 
 /// Initial precision bits to start with for inv refinement.
 /// Starting at a reasonable value avoids unnecessary early iterations.
@@ -44,7 +44,7 @@ impl NodeOp for InvOp {
         Ok(simplify_bounds_if_needed(
             &raw_bounds,
             PRECISION_SIMPLIFICATION_THRESHOLD,
-            LOOSENING_FRACTION,
+            MARGIN_SHIFT,
         ))
     }
 
