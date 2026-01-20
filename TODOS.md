@@ -9,13 +9,6 @@
 ```
 **Blocks:** [epsilon-zero](#epsilon-zero)
 
-### <a id="repeated-squaring"></a>repeated-squaring: Use repeated squaring for power operations
-**File:** `src/binary_utils/power.rs:34`
-```rust
-// TODO: Use repeated squaring (exponentiation by squaring) for O(log n) complexity
-```
-Optimize binary_pow from O(n) to O(log n) complexity.
-
 ### <a id="nonzero-exponent"></a>nonzero-exponent: Use NonZeroU32 for xbinary_pow exponent
 **File:** `src/binary_utils/power.rs:63`
 ```rust

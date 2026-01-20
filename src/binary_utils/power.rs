@@ -31,17 +31,27 @@ use crate::binary::{Binary, XBinary};
 /// let result = binary_pow(&x, 2);
 /// assert_eq!(result, Binary::new(BigInt::from(9), BigInt::from(0))); // 9
 /// ```
-// TODO: Use repeated squaring (exponentiation by squaring) for O(log n) complexity
-// instead of the current O(n) repeated multiplication.
 pub fn binary_pow(x: &Binary, n: u32) -> Binary {
     if n == 0 {
         return Binary::new(BigInt::one(), BigInt::from(0));
     }
 
-    let mut result = x.clone();
-    for _ in 1..n {
-        result = result.mul(x);
+    // Use exponentiation by squaring for O(log n) complexity.
+    // Algorithm: x^n = (x^2)^(n/2) if n is even, x * (x^2)^((n-1)/2) if n is odd.
+    let mut result = Binary::new(BigInt::one(), BigInt::from(0));
+    let mut base = x.clone();
+    let mut exp = n;
+
+    while exp > 0 {
+        if exp & 1 == 1 {
+            result = result.mul(&base);
+        }
+        exp >>= 1;
+        if exp > 0 {
+            base = base.mul(&base);
+        }
     }
+
     result
 }
 
