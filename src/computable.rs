@@ -182,18 +182,24 @@ impl Computable {
     /// - `pow(2)` computes the square
     /// - `pow(3)` computes the cube
     pub fn pow(self, exponent: u32) -> Self {
-        if exponent == 0 {
-            // x^0 = 1 for all x, including 0^0 = 1 by convention
-            return Computable::constant(Binary::new(
-                num_bigint::BigInt::from(1),
-                num_bigint::BigInt::from(0),
-            ));
+        match std::num::NonZeroU32::new(exponent) {
+            None => {
+                // x^0 = 1 for all x, including 0^0 = 1 by convention
+                // TODO: If Computable is extended to represent extended reals (including infinity),
+                // this could be problematic since infinity^0 is an indeterminate form.
+                Computable::constant(Binary::new(
+                    num_bigint::BigInt::from(1),
+                    num_bigint::BigInt::from(0),
+                ))
+            }
+            Some(nonzero_exp) => {
+                let node = Node::new(Arc::new(PowOp {
+                    inner: Arc::clone(&self.node),
+                    exponent: nonzero_exp,
+                }));
+                Self { node }
+            }
         }
-        let node = Node::new(Arc::new(PowOp {
-            inner: Arc::clone(&self.node),
-            exponent,
-        }));
-        Self { node }
     }
 
     /// Creates a constant computable with exact bounds.
