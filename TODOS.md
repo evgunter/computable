@@ -2,13 +2,6 @@
 
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
-### <a id="shortest-repr"></a>shortest-repr: Use shortest representation functions
-**File:** `src/binary/shortest.rs:20`
-```rust
-// TODO: use these functions to make binary-search-based refinement not need to represent intervals that have so many bits of precision
-```
-**Blocks:** [epsilon-zero](#epsilon-zero)
-
 ### <a id="repeated-squaring"></a>repeated-squaring: Use repeated squaring for power operations
 **File:** `src/binary_utils/power.rs:34`
 ```rust
@@ -24,11 +17,28 @@ Optimize binary_pow from O(n) to O(log n) complexity.
 Type-level prevention of indeterminate forms.
 
 ### <a id="nonzero-benchmark"></a>nonzero-benchmark: Use NonZeroU32 directly in benchmark
-**File:** `benchmarks/src/integer_roots.rs:32`
+**File:** `benchmarks/src/integer_roots.rs:35`
 ```rust
 // TODO: see if we can take the input as NonZeroU32 directly so we don't need to unwrap
 ```
 Minor API change to avoid an unwrap.
+
+### <a id="bisection-benchmark"></a>bisection-benchmark: Compare midpoint vs shortest-representation bisection
+**File:** `benchmarks/src/integer_roots.rs:1`
+```rust
+// TODO: Add comparison benchmark between midpoint-based bisection (bisection_step_midpoint)
+// and shortest-representation bisection (bisection_step) to measure the precision
+// accumulation reduction and any performance differences.
+```
+Benchmark to validate that the shortest-representation bisection strategy reduces precision accumulation without significant performance cost.
+
+### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
+**File:** `src/binary/shortest.rs:22`
+```rust
+// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
+// to reduce code duplication.
+```
+Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
 
 ### <a id="pi-unwrap"></a>pi-unwrap: Avoid using unwrap in pi benchmark
 **File:** `benchmarks/src/pi.rs:55`
@@ -78,6 +88,13 @@ This also suggests a correctness issue (using the midpoint rather than the bound
 // TODO(correctness): Using midpoints for k computation could cause incorrect range reduction.
 ```
 Correctness issue.
+
+### <a id="epsilon-zero"></a>epsilon-zero: Allow epsilon = 0 with proper checks
+**File:** `src/computable.rs:73`
+```rust
+// TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
+```
+Now unblocked after shortest-repr implementation.
 
 ---
 
@@ -205,13 +222,6 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 // TODO: Re-enable once fixed 128-bit intermediate precision in src/ops/pi.rs is made adaptive.
 ```
 **Blocked by:** [pi-adaptive](#pi-adaptive)
-
-### <a id="epsilon-zero"></a>epsilon-zero: Allow epsilon = 0 with proper checks
-**File:** `src/computable.rs:73`
-```rust
-// TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
-```
-**Blocked by:** [shortest-repr](#shortest-repr)
 
 ### <a id="nth-root-negative"></a>nth-root-negative: Handle negative inputs for even-degree roots
 **File:** `src/ops/nth_root.rs:15`
