@@ -189,9 +189,12 @@ impl Computable {
                 num_bigint::BigInt::from(0),
             ));
         }
+        // SAFETY: We've already checked that exponent != 0, so this is safe
+        let nonzero_exp = std::num::NonZeroU32::new(exponent)
+            .unwrap_or_else(|| unreachable!("exponent checked to be non-zero above"));
         let node = Node::new(Arc::new(PowOp {
             inner: Arc::clone(&self.node),
-            exponent,
+            exponent: nonzero_exp,
         }));
         Self { node }
     }

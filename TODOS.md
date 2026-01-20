@@ -2,13 +2,6 @@
 
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
-### <a id="nonzero-exponent"></a>nonzero-exponent: Use NonZeroU32 for xbinary_pow exponent
-**File:** `src/binary_utils/power.rs:63`
-```rust
-// TODO: Use NonZeroU32 for the exponent to avoid handling infinity^0 (which is indeterminate).
-```
-Type-level prevention of indeterminate forms.
-
 ### <a id="nonzero-benchmark"></a>nonzero-benchmark: Use NonZeroU32 directly in benchmark
 **File:** `benchmarks/src/integer_roots.rs:35`
 ```rust

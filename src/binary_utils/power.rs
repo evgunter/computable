@@ -4,6 +4,8 @@
 //! [`Binary`](crate::binary::Binary) and [`XBinary`](crate::binary::XBinary)
 //! values without requiring the Node/Computable infrastructure.
 
+use std::num::NonZeroU32;
+
 use num_bigint::BigInt;
 use num_traits::{One, Signed};
 
@@ -65,24 +67,28 @@ pub fn binary_pow(x: &Binary, n: u32) -> Binary {
 /// # Arguments
 ///
 /// * `x` - The base value (may be infinite)
-/// * `n` - The exponent (non-negative integer)
+/// * `n` - The exponent (positive integer, n >= 1)
 ///
 /// # Returns
 ///
 /// The result of x raised to the power n.
-// TODO: Use NonZeroU32 for the exponent to avoid handling infinity^0 (which is indeterminate).
-pub fn xbinary_pow(x: &XBinary, n: u32) -> XBinary {
+///
+/// # Note
+///
+/// Uses `NonZeroU32` for the exponent to avoid handling infinity^0 (which is indeterminate).
+pub fn xbinary_pow(x: &XBinary, n: NonZeroU32) -> XBinary {
+    let n_val = n.get();
     match x {
         XBinary::NegInf => {
             // (-∞)^n = +∞ for even n, -∞ for odd n
-            if n.is_multiple_of(2) {
+            if n_val.is_multiple_of(2) {
                 XBinary::PosInf
             } else {
                 XBinary::NegInf
             }
         }
         XBinary::PosInf => XBinary::PosInf,
-        XBinary::Finite(b) => XBinary::Finite(binary_pow(b, n)),
+        XBinary::Finite(b) => XBinary::Finite(binary_pow(b, n_val)),
     }
 }
 
@@ -172,25 +178,25 @@ mod tests {
     #[test]
     fn xbinary_pow_finite() {
         let x = xbin(3, 0);
-        let result = xbinary_pow(&x, 2);
+        let result = xbinary_pow(&x, NonZeroU32::new(2).expect("2 is non-zero"));
         assert_eq!(result, xbin(9, 0));
     }
 
     #[test]
     fn xbinary_pow_pos_inf() {
-        let result = xbinary_pow(&XBinary::PosInf, 5);
+        let result = xbinary_pow(&XBinary::PosInf, NonZeroU32::new(5).expect("5 is non-zero"));
         assert_eq!(result, XBinary::PosInf);
     }
 
     #[test]
     fn xbinary_pow_neg_inf_even() {
-        let result = xbinary_pow(&XBinary::NegInf, 4);
+        let result = xbinary_pow(&XBinary::NegInf, NonZeroU32::new(4).expect("4 is non-zero"));
         assert_eq!(result, XBinary::PosInf);
     }
 
     #[test]
     fn xbinary_pow_neg_inf_odd() {
-        let result = xbinary_pow(&XBinary::NegInf, 3);
+        let result = xbinary_pow(&XBinary::NegInf, NonZeroU32::new(3).expect("3 is non-zero"));
         assert_eq!(result, XBinary::NegInf);
     }
 

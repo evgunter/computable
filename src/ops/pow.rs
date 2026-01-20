@@ -4,6 +4,7 @@
 //! It computes bounds more efficiently than repeated multiplication by
 //! exploiting the monotonicity properties of power functions.
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use crate::binary::{Bounds, XBinary};
@@ -25,8 +26,9 @@ use crate::node::{Node, NodeOp};
 pub struct PowOp {
     /// The input node to raise to a power.
     pub inner: Arc<Node>,
-    /// The exponent (n in x^n). Must be >= 1 (n=0 is handled at the Computable level).
-    pub exponent: u32,
+    /// The exponent (n in x^n). Uses `NonZeroU32` to ensure n >= 1
+    /// (n=0 is handled at the Computable level).
+    pub exponent: NonZeroU32,
 }
 
 impl NodeOp for PowOp {
@@ -36,11 +38,11 @@ impl NodeOp for PowOp {
         let upper = &input_bounds.large();
 
         // Handle the trivial case of exponent = 1
-        if self.exponent == 1 {
+        if self.exponent.get() == 1 {
             return Ok(input_bounds);
         }
 
-        let is_even = self.exponent.is_multiple_of(2);
+        let is_even = self.exponent.get().is_multiple_of(2);
         
         let (result_lower, result_upper) = if is_even {
             compute_even_power_bounds(lower, upper, self.exponent)
@@ -73,7 +75,7 @@ impl NodeOp for PowOp {
 ///
 /// Since x^n is monotonically increasing for odd n, the output bounds
 /// are simply [lower^n, upper^n].
-fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: u32) -> (XBinary, XBinary) {
+fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> (XBinary, XBinary) {
     let result_lower = xbinary_pow(lower, n);
     let result_upper = xbinary_pow(upper, n);
     (result_lower, result_upper)
@@ -85,7 +87,7 @@ fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: u32) -> (XBinar
 /// - If [lower, upper] is entirely non-negative: bounds are [lower^n, upper^n]
 /// - If [lower, upper] is entirely non-positive: bounds are [upper^n, lower^n]
 /// - If [lower, upper] spans zero: bounds are [0, max(|lower|^n, |upper|^n)]
-fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: u32) -> (XBinary, XBinary) {
+fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> (XBinary, XBinary) {
     let lower_non_negative = !is_negative(lower);
     let upper_non_positive = !is_positive(upper);
 
