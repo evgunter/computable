@@ -6,12 +6,10 @@
 
 use std::sync::Arc;
 
-use num_traits::Signed;
-
-use crate::binary::{Binary, XBinary};
+use crate::binary::{Bounds, XBinary};
+use crate::binary_utils::power::{is_negative, is_positive, xbinary_max, xbinary_pow};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::binary::Bounds;
 
 /// Integer power operation.
 ///
@@ -111,64 +109,13 @@ fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: u32) -> (XBina
     }
 }
 
-/// Returns true if the XBinary value is negative (less than zero).
-fn is_negative(x: &XBinary) -> bool {
-    match x {
-        XBinary::NegInf => true,
-        XBinary::PosInf => false,
-        XBinary::Finite(b) => b.mantissa().is_negative(),
-    }
-}
-
-/// Returns true if the XBinary value is positive (greater than zero).
-fn is_positive(x: &XBinary) -> bool {
-    match x {
-        XBinary::NegInf => false,
-        XBinary::PosInf => true,
-        XBinary::Finite(b) => b.mantissa().is_positive(),
-    }
-}
-
-/// Returns the maximum of two XBinary values.
-fn xbinary_max(a: &XBinary, b: &XBinary) -> XBinary {
-    if a >= b { a.clone() } else { b.clone() }
-}
-
-/// Computes x^n for an XBinary value.
-fn xbinary_pow(x: &XBinary, n: u32) -> XBinary {
-    match x {
-        XBinary::NegInf => {
-            // (-∞)^n = +∞ for even n, -∞ for odd n
-            if n.is_multiple_of(2) {
-                XBinary::PosInf
-            } else {
-                XBinary::NegInf
-            }
-        }
-        XBinary::PosInf => XBinary::PosInf,
-        XBinary::Finite(b) => XBinary::Finite(binary_pow(b, n)),
-    }
-}
-
-/// Computes x^n for a Binary value using repeated multiplication.
-fn binary_pow(x: &Binary, n: u32) -> Binary {
-    if n == 0 {
-        return Binary::new(num_bigint::BigInt::from(1), num_bigint::BigInt::from(0));
-    }
-    
-    let mut result = x.clone();
-    for _ in 1..n {
-        result = result.mul(x);
-    }
-    result
-}
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use super::*;
-    use crate::binary::UBinary;
+    use crate::binary::{Binary, Bounds, UBinary};
+    use crate::binary_utils::power::binary_pow;
     use crate::computable::Computable;
     use crate::test_utils::{bin, ubin, xbin, unwrap_finite};
 

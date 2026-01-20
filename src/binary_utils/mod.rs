@@ -6,9 +6,10 @@
 //! # Modules
 //!
 //! - [`bisection`]: Binary search helper for iterative refinement
-//!
-//! TODO: Investigate if any pure-Binary operations from `ops/` should be moved here.
-//! Candidates might include helper functions that don't depend on Node/Computable
-//! infrastructure (e.g., power functions, polynomial evaluation).
+//! - [`power`]: Integer power operations for Binary and XBinary
+
+// TODO: Migrate from mod.rs to the newer Rust convention of using binary_utils.rs
+// with `#[path]` attributes or directory-named files.
 
 pub mod bisection;
+pub mod power;
