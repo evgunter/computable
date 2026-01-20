@@ -19,6 +19,12 @@ use super::Bounds;
 use super::FiniteBounds;
 use super::{Binary, UBinary, UXBinary, XBinary};
 
+// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
+// to reduce code duplication. Both functions follow a similar pattern (check sign, handle
+// zero-crossing, handle positive/negative intervals). This could potentially be unified
+// using generics over the bound types, though the different handling of infinities may
+// make this non-trivial.
+
 /// Returns a Binary value inside the finite bounds with the shortest normalized mantissa.
 ///
 /// This is useful for reducing precision accumulation during binary search / bisection.
