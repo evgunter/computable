@@ -38,7 +38,7 @@ use crate::node::{Node, NodeOp};
 
 /// Precision threshold for triggering bounds simplification.
 /// When total mantissa bits exceed this, we simplify to reduce memory usage.
-const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
+const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 64;
 
 /// Loosening fraction for bounds simplification.
 /// A value of 2 means we loosen by width/8, which is conservative.
