@@ -3,9 +3,6 @@
 //! This module provides integer power computation functions that operate on
 //! [`Binary`](crate::binary::Binary) and [`XBinary`](crate::binary::XBinary)
 //! values without requiring the Node/Computable infrastructure.
-//!
-//! These functions were extracted from `ops/pow.rs` and `ops/nth_root.rs` to
-//! allow reuse across the codebase and reduce code duplication.
 
 use num_bigint::BigInt;
 use num_traits::{One, Signed};
