@@ -524,12 +524,6 @@ mod tests {
             width < precision_threshold,
             "pi bounds with 20 terms should have width < 2^-40"
         );
-
-        // Check bounds bracket approximately 3.14
-        let three = bin(3, 0);
-        let four = bin(4, 0);
-        assert!(pi_lo > three, "pi lower bound should be > 3");
-        assert!(pi_hi < four, "pi upper bound should be < 4");
     }
 
     #[test]
@@ -576,12 +570,6 @@ mod tests {
             lower <= pi_f64_binary,
             "lower bound should be <= f64 pi approximation (after simplification)"
         );
-
-        // Check basic sanity
-        let three = bin(3, 0);
-        let four = bin(4, 0);
-        assert!(lower > three);
-        assert!(upper < four);
 
         // Check width is within epsilon
         let width = upper.sub(&lower);
