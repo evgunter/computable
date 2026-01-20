@@ -13,6 +13,10 @@ pub enum BinaryError {
     ReciprocalOverflow,
     /// Cannot create an unsigned binary from a negative mantissa.
     NegativeMantissa,
+    /// Cannot convert NaN to Binary.
+    Nan,
+    /// Cannot convert infinity to Binary (use XBinary instead).
+    Infinity,
 }
 
 impl fmt::Display for BinaryError {
@@ -22,6 +26,8 @@ impl fmt::Display for BinaryError {
             Self::NegativeMantissa => {
                 write!(f, "cannot create unsigned binary from negative mantissa")
             }
+            Self::Nan => write!(f, "cannot convert NaN to Binary"),
+            Self::Infinity => write!(f, "cannot convert infinity to Binary"),
         }
     }
 }
@@ -70,6 +76,11 @@ mod tests {
         assert_eq!(
             BinaryError::NegativeMantissa.to_string(),
             "cannot create unsigned binary from negative mantissa"
+        );
+        assert_eq!(BinaryError::Nan.to_string(), "cannot convert NaN to Binary");
+        assert_eq!(
+            BinaryError::Infinity.to_string(),
+            "cannot convert infinity to Binary"
         );
     }
 

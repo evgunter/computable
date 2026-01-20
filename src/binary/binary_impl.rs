@@ -8,7 +8,9 @@ use std::fmt;
 use std::ops::{Add, Mul, Neg, Sub};
 
 use num_bigint::{BigInt, BigUint};
-use num_traits::{Signed, Zero};
+use num_traits::{Float, Signed, Zero};
+
+use super::error::BinaryError;
 
 use crate::ordered_pair::Interval;
 
@@ -46,6 +48,35 @@ impl Binary {
     /// Returns a reference to the exponent.
     pub fn exponent(&self) -> &BigInt {
         &self.exponent
+    }
+
+    /// Converts an f64 to a Binary.
+    ///
+    /// Returns an error if the input is NaN or infinite (use XBinary for infinity).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use computable::Binary;
+    ///
+    /// let binary = Binary::from_f64(1.5).unwrap();
+    /// // 1.5 = 3 * 2^-1
+    /// assert_eq!(binary.mantissa(), &num_bigint::BigInt::from(3));
+    /// assert_eq!(binary.exponent(), &num_bigint::BigInt::from(-1));
+    /// ```
+    pub fn from_f64(value: f64) -> Result<Self, BinaryError> {
+        if value.is_nan() {
+            return Err(BinaryError::Nan);
+        }
+        if value.is_infinite() {
+            return Err(BinaryError::Infinity);
+        }
+        if value == 0.0 {
+            return Ok(Self::zero());
+        }
+        let (mantissa, exponent, sign) = value.integer_decode();
+        let signed_mantissa = BigInt::from(sign) * BigInt::from(mantissa);
+        Ok(Self::new(signed_mantissa, BigInt::from(exponent)))
     }
 
     /// Adds two Binary numbers.
@@ -358,5 +389,35 @@ mod tests {
         let zero = Binary::zero();
         let neg_zero = -zero.clone();
         assert_eq!(neg_zero, zero);
+    }
+
+    #[test]
+    fn binary_from_f64_converts_normal_values() {
+        // 1.5 = 3 * 2^-1
+        let result = Binary::from_f64(1.5).expect("should succeed");
+        assert_eq!(result.mantissa(), &BigInt::from(3));
+        assert_eq!(result.exponent(), &BigInt::from(-1));
+
+        // -2.0 = -1 * 2^1
+        let neg_result = Binary::from_f64(-2.0).expect("should succeed");
+        assert_eq!(neg_result.mantissa(), &BigInt::from(-1));
+        assert_eq!(neg_result.exponent(), &BigInt::from(1));
+    }
+
+    #[test]
+    fn binary_from_f64_handles_zero() {
+        let zero = Binary::from_f64(0.0).expect("should succeed");
+        assert!(zero.mantissa().is_zero());
+    }
+
+    #[test]
+    fn binary_from_f64_rejects_nan() {
+        assert_eq!(Binary::from_f64(f64::NAN), Err(BinaryError::Nan));
+    }
+
+    #[test]
+    fn binary_from_f64_rejects_infinity() {
+        assert_eq!(Binary::from_f64(f64::INFINITY), Err(BinaryError::Infinity));
+        assert_eq!(Binary::from_f64(f64::NEG_INFINITY), Err(BinaryError::Infinity));
     }
 }

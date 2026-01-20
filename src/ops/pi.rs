@@ -492,10 +492,8 @@ mod tests {
         // Convert f64 pi approximation to Binary for comparison.
         // Note: f64 PI = 3.14159265358979311... which is slightly LESS than true pi
         // (3.14159265358979323...) due to f64 rounding. The difference is ~1.2e-16.
-        let pi_f64_binary = match XBinary::from_f64(std::f64::consts::PI) {
-            Ok(XBinary::Finite(b)) => b,
-            _ => panic!("std::f64::consts::PI should convert to a finite Binary"),
-        };
+        let pi_f64_binary =
+            Binary::from_f64(std::f64::consts::PI).expect("PI should convert to Binary");
 
         // Check that bounds are ordered correctly
         assert!(pi_lo < pi_hi, "lower bound should be less than upper bound");
@@ -557,10 +555,8 @@ mod tests {
         // Convert f64 pi approximation to Binary for comparison.
         // Note: f64 PI = 3.14159265358979311... which is slightly LESS than true pi
         // (3.14159265358979323...) due to f64 rounding.
-        let pi_f64_binary = match XBinary::from_f64(std::f64::consts::PI) {
-            Ok(XBinary::Finite(b)) => b,
-            _ => panic!("std::f64::consts::PI should convert to a finite Binary"),
-        };
+        let pi_f64_binary =
+            Binary::from_f64(std::f64::consts::PI).expect("PI should convert to Binary");
 
         // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
         assert!(
