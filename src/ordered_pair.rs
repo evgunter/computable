@@ -58,6 +58,20 @@ where
         })
     }
 
+    /// Constructs an interval directly from a lower bound and width.
+    ///
+    /// This is more efficient than `new` when you already have the width computed,
+    /// as it avoids the round-trip of computing upper = lower + width only to have
+    /// `new` compute width = upper - lower again.
+    ///
+    /// # Arguments
+    ///
+    /// * `lower` - The lower bound of the interval
+    /// * `width` - The width of the interval (must be non-negative by the type system)
+    pub fn from_lower_and_width(lower: T, width: W) -> Self {
+        Self { lower, width }
+    }
+
     pub fn small(&self) -> &T {
         &self.lower
     }
