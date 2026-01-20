@@ -319,6 +319,7 @@ pub struct Interval {
 impl Interval {
     /// Creates a new interval [lo, hi].
     pub fn new(lo: Binary, hi: Binary) -> Self {
+        // TODO: no debug assert! this should be just like in Bounds
         debug_assert!(lo <= hi, "Interval lower bound must be <= upper bound");
         Self { lo, hi }
     }

@@ -107,7 +107,9 @@ impl UBinary {
     }
 
     /// Aligns the mantissas of two UBinary numbers to a common exponent.
-    fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigUint, BigUint, BigInt) {
+    /// Returns (lhs_mantissa, rhs_mantissa, common_exponent) where both mantissas
+    /// are shifted to the minimum exponent of the two inputs.
+    pub fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigUint, BigUint, BigInt) {
         let exponent = if lhs.exponent <= rhs.exponent {
             lhs.exponent.clone()
         } else {
