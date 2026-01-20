@@ -19,7 +19,6 @@ then, a computable number is represented as an element of $(X, X \to B, X \to X)
 for example, $\sqrt{2}$ could be represented as a computable number by setting $x$ to just be the current lower and upper bound (e.g. $x$ could be initialized as $(0, 2)$), with an $f$ which takes the midpoint between the lower and upper bounds, squares it, compares it to 2, and depending on the result replaces the upper or lower bound with the former midpoint.
 
 there are a few ways the implementation diverges from this abstraction; see [deviations from the formalism](#deviations-from-the-formalism) below.
-<!-- TODO: consider requiring refine_to rather than refine, so that it's possible to make smart decisions about how to prioritize increasing the precision of different parts of the answer in order to obtain a desired precision-->
 
 # features
 
