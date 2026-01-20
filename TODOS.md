@@ -283,14 +283,3 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 // TODO: ensure it is possible to create user-defined composed nodes.
 ```
 API extensibility feature.
-
----
-
-## Not a TODO (Meta-documentation)
-
-### Error handling documentation pattern
-**File:** `src/error.rs:9`
-```rust
-//!   type invariants. Always include a TODO comment about investigating whether the type
-```
-This describes how to write TODOs, not a TODO itself.
