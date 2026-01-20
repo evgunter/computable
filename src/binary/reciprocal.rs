@@ -30,24 +30,20 @@ pub enum ReciprocalRounding {
 ///
 /// # Arguments
 /// * `denominator` - A positive BigUint to take the reciprocal of
-/// * `precision_bits` - Number of bits of precision for the computation
+/// * `precision_bits` - Number of bits of precision for the computation (as usize for bit shifting)
 /// * `rounding` - Whether to round toward floor or ceiling
-///
-/// # Errors
-/// Returns `BinaryError::ReciprocalOverflow` if the precision is too large to represent.
 pub fn reciprocal_of_biguint(
     denominator: &BigUint,
-    precision_bits: u64,
+    precision_bits: usize,
     rounding: ReciprocalRounding,
-) -> Result<Binary, BinaryError> {
-    let shift = precision_bits_to_usize(&BigInt::from(precision_bits))?;
-    let numerator = BigUint::one() << shift;
+) -> Binary {
+    let numerator = BigUint::one() << precision_bits;
     let quotient = match rounding {
         ReciprocalRounding::Floor => numerator.div_floor(denominator),
         ReciprocalRounding::Ceil => (&numerator + denominator - BigUint::one()).div_floor(denominator),
     };
     let exponent = -BigInt::from(precision_bits);
-    Ok(Binary::new(BigInt::from(quotient), exponent))
+    Binary::new(BigInt::from(quotient), exponent)
 }
 
 /// Computes the reciprocal of the absolute value of an extended binary number.
@@ -126,8 +122,7 @@ mod tests {
     fn reciprocal_of_biguint_basic() {
         // 1/5 with precision 8
         let denom = BigUint::from(5u32);
-        let result = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Floor)
-            .expect("should succeed");
+        let result = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Floor);
 
         // 2^8 / 5 = 256 / 5 = 51 (floor)
         // Result is 51 * 2^-8
@@ -141,10 +136,8 @@ mod tests {
         // 1/3 with precision 8
         let denom = BigUint::from(3u32);
 
-        let floor = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Floor)
-            .expect("should succeed");
-        let ceil = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Ceil)
-            .expect("should succeed");
+        let floor = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Floor);
+        let ceil = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Ceil);
 
         // 2^8 / 3 = 256 / 3 = 85.33...
         // Floor = 85, Ceil = 86

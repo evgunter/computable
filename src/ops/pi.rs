@@ -244,7 +244,7 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
     // This causes the refinement loop to hang when requesting precision > 118 bits, because
     // the computed width (~2^-119) never reaches epsilon (e.g., 2^-128). Should make precision
     // adaptive based on the requested output precision.
-    let precision_bits: u64 = 128;
+    const PRECISION_BITS: usize = 128;
 
     // Determine the rounding direction for the reciprocal based on the overall rounding
     // direction and whether the term is positive or negative:
@@ -261,10 +261,7 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
 
     // Use magnitude() to convert positive BigInt to BigUint.
     // The denominator is always positive (product of positive coefficients and powers).
-    // This unwrap cannot fail because precision_bits is a constant 128, which is
-    // trivially representable as usize on any 64-bit system.
-    let unsigned_result = reciprocal_of_biguint(denominator.magnitude(), precision_bits, recip_rounding)
-        .unwrap_or_else(|_| unreachable!("128-bit precision is always valid"));
+    let unsigned_result = reciprocal_of_biguint(denominator.magnitude(), PRECISION_BITS, recip_rounding);
 
     // Apply sign based on whether this is a positive or negative term
     if is_positive_term {
@@ -286,6 +283,12 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
 fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
     use num_bigint::BigUint;
 
+    // TODO(correctness): Fixed 128-bit precision here has the same limitation as in
+    // divide_one_by_bigint: achievable accuracy is capped at ~118 bits, causing refinement
+    // to hang for higher precision requests. Should use adaptive precision matching the
+    // requested output precision.
+    const PRECISION_BITS: usize = 128;
+
     let exponent = 2 * num_terms + 1;
     let coeff = BigUint::from(exponent as u64); // 2n+1
 
@@ -297,17 +300,8 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
 
     let denominator = &coeff * &k_power; // (2n+1) * k^(2n+1)
 
-    // TODO(correctness): Fixed 128-bit precision here has the same limitation as in
-    // divide_one_by_bigint: achievable accuracy is capped at ~118 bits, causing refinement
-    // to hang for higher precision requests. Should use adaptive precision matching the
-    // requested output precision.
-    let precision_bits: u64 = 128;
-
     // Compute 1/denominator, rounding UP for conservative error bound.
-    // This unwrap cannot fail because precision_bits is a constant 128, which is
-    // trivially representable as usize on any 64-bit system.
-    reciprocal_of_biguint(&denominator, precision_bits, ReciprocalRounding::Ceil)
-        .unwrap_or_else(|_| unreachable!("128-bit precision is always valid"))
+    reciprocal_of_biguint(&denominator, PRECISION_BITS, ReciprocalRounding::Ceil)
 }
 
 //=============================================================================
