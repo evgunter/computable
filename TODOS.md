@@ -1,16 +1,5 @@
 # TODOs - Ranked by Ease of Completion
 
-## Tier 1: Quick Wins (Unblocked, straightforward)
-
-### <a id="mod-rs-convention"></a>mod-rs-convention: Migrate from mod.rs to newer Rust convention
-**File:** `src/binary_utils/mod.rs:11`
-```rust
-// TODO: Migrate from mod.rs to the newer Rust convention of using binary_utils.rs
-```
-Code organization update to follow modern Rust conventions.
-
----
-
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
 ### <a id="shortest-repr"></a>shortest-repr: Use shortest representation functions
