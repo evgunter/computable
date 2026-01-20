@@ -515,10 +515,15 @@ mod tests {
             "lower bound should be within 2^-50 of f64 pi approximation"
         );
 
-        // Check that the interval is reasonably tight (width < 1)
+        // Check that the interval is reasonably tight.
+        // With 20 Taylor series terms and 128-bit intermediate precision,
+        // we should easily achieve width < 2^-40 (about 12 decimal digits).
         let width = pi_hi.sub(&pi_lo);
-        let one = bin(1, 0);
-        assert!(width < one, "pi bounds should be tighter than width 1");
+        let precision_threshold = bin(1, -40);
+        assert!(
+            width < precision_threshold,
+            "pi bounds with 20 terms should have width < 2^-40"
+        );
 
         // Check bounds bracket approximately 3.14
         let three = bin(3, 0);
