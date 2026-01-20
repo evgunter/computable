@@ -6,9 +6,7 @@
 //! # Modules
 //!
 //! - [`bisection`]: Binary search helper for iterative refinement
-//!
-//! TODO: Investigate if any pure-Binary operations from `ops/` should be moved here.
-//! Candidates might include helper functions that don't depend on Node/Computable
-//! infrastructure (e.g., power functions, polynomial evaluation).
+//! - [`power`]: Integer power operations for Binary and XBinary
 
 pub mod bisection;
+pub mod power;

@@ -32,6 +32,7 @@ use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary_utils::bisection::{midpoint, BisectionComparison, bisection_step};
+use crate::binary_utils::power::binary_pow;
 use crate::binary::{Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -128,7 +129,7 @@ impl NodeOp for NthRootOp {
                 let target = s.target.clone();
                 let bounds = FiniteBounds::new(s.lower.clone(), s.upper.clone());
                 let result = bisection_step(bounds, |mid| {
-                    let mid_pow = power(mid, degree);
+                    let mid_pow = binary_pow(mid, degree);
                     match mid_pow.cmp(&target) {
                         std::cmp::Ordering::Less => BisectionComparison::Above,
                         std::cmp::Ordering::Equal => BisectionComparison::Exact,
@@ -342,18 +343,6 @@ fn initialize_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<Bise
     })
 }
 
-/// Computes x^n for a Binary number.
-fn power(x: &Binary, n: u32) -> Binary {
-    if n == 0 {
-        return Binary::new(BigInt::one(), BigInt::zero());
-    }
-    
-    let mut result = x.clone();
-    for _ in 1..n {
-        result = result.mul(x);
-    }
-    result
-}
 
 #[cfg(test)]
 mod tests {
@@ -565,10 +554,11 @@ mod tests {
 
     #[test]
     fn power_function() {
+        use crate::binary_utils::power::binary_pow;
         let x = bin(3, 0); // 3
-        assert_eq!(power(&x, 2), bin(9, 0)); // 3^2 = 9
-        assert_eq!(power(&x, 3), bin(27, 0)); // 3^3 = 27
-        assert_eq!(power(&x, 0), bin(1, 0)); // 3^0 = 1
+        assert_eq!(binary_pow(&x, 2), bin(9, 0)); // 3^2 = 9
+        assert_eq!(binary_pow(&x, 3), bin(27, 0)); // 3^3 = 27
+        assert_eq!(binary_pow(&x, 0), bin(1, 0)); // 3^0 = 1
     }
 
     #[test]
