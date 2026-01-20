@@ -9,12 +9,40 @@
 //!   type invariants. Always include a TODO comment about investigating whether the type
 //!   system could prevent the case from being representable in the first place.
 //!
-//! - **`debug_assert!(false, ...)`**: Use for cases that are currently unexpected but
-//!   might become valid in the future (e.g., extended real number support). Include a
-//!   comment explaining why the case is currently unexpected and under what circumstances
-//!   it might become valid.
+//! - **`detected_computable_with_infinite_value!(...)`**: Use for cases where code encounters
+//!   infinite values that are currently unexpected but might become valid in the future
+//!   (e.g., if we add extended real number support). This macro wraps `debug_assert!(false, ...)`
+//!   to provide a consistent way to flag these cases.
 
 use crate::binary::BinaryError;
+
+/// Macro to flag unexpected but potentially valid extended reals cases.
+///
+/// This is used to detect cases where code encounters infinite values that
+/// shouldn't occur currently but might become valid if we later support
+/// computations in the extended reals.
+///
+/// In debug builds, this triggers a panic to help identify bugs early.
+/// In release builds, this is a no-op.
+///
+/// # Arguments
+///
+/// * `$msg` - A description of what case was encountered (e.g., "lower input bound is PosInf")
+///
+/// # Example
+///
+/// ```ignore
+/// detected_computable_with_infinite_value!("lower input bound is PosInf");
+/// ```
+#[macro_export]
+macro_rules! detected_computable_with_infinite_value {
+    ($msg:expr) => {
+        debug_assert!(
+            false,
+            concat!($msg, " - unexpected but may be valid for extended reals")
+        )
+    };
+}
 use std::fmt;
 
 /// Errors that can occur during computable operations and refinement.

@@ -185,8 +185,16 @@ impl Computable {
         match std::num::NonZeroU32::new(exponent) {
             None => {
                 // x^0 = 1 for all x, including 0^0 = 1 by convention
-                // TODO: If Computable is extended to represent extended reals (including infinity),
-                // this could be problematic since infinity^0 is an indeterminate form.
+                // Check for infinite bounds - infinity^0 is an indeterminate form.
+                if let Ok(bounds) = self.node.get_bounds() {
+                    let has_infinite = matches!(bounds.small(), XBinary::NegInf | XBinary::PosInf)
+                        || matches!(&bounds.large(), XBinary::NegInf | XBinary::PosInf);
+                    if has_infinite {
+                        crate::detected_computable_with_infinite_value!(
+                            "input has infinite bounds for x^0 (infinity^0 is an indeterminate form)"
+                        );
+                    }
+                }
                 Computable::constant(Binary::new(
                     num_bigint::BigInt::from(1),
                     num_bigint::BigInt::from(0),
