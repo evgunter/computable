@@ -47,7 +47,7 @@ mod xbinary;
 pub use binary_impl::Binary;
 pub use error::{BinaryError, XBinaryError};
 pub use reciprocal::{
-    reciprocal_of_positive_bigint, reciprocal_rounded_abs_extended, ReciprocalRounding,
+    reciprocal_of_biguint, reciprocal_rounded_abs_extended, ReciprocalRounding,
 };
 pub use shortest::{margin_from_width, shortest_xbinary_in_bounds, simplify_bounds_if_needed};
 pub use ubinary::UBinary;

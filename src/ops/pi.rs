@@ -19,7 +19,7 @@ use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    margin_from_width, reciprocal_of_positive_bigint, simplify_bounds_if_needed, Binary, Bounds,
+    margin_from_width, reciprocal_of_biguint, simplify_bounds_if_needed, Binary, Bounds,
     ReciprocalRounding, XBinary,
 };
 use crate::computable::Computable;
@@ -232,7 +232,7 @@ fn arctan_recip_partial_sum(k: u64, num_terms: usize, rounding: RoundDir) -> Bin
 
 /// Computes 1/denominator as a Binary with directed rounding.
 ///
-/// Uses the shared `reciprocal_of_positive_bigint` function from the binary module.
+/// Uses the shared `reciprocal_of_biguint` function from the binary module.
 ///
 /// For interval arithmetic, we need to round in the correct direction based on
 /// whether this term contributes positively or negatively to the sum.
@@ -259,9 +259,11 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
         (RoundDir::Up, false) => ReciprocalRounding::Floor,
     };
 
+    // Use magnitude() to convert positive BigInt to BigUint.
+    // The denominator is always positive (product of positive coefficients and powers).
     // This unwrap cannot fail because precision_bits is a constant 128, which is
     // trivially representable as usize on any 64-bit system.
-    let unsigned_result = reciprocal_of_positive_bigint(denominator, precision_bits, recip_rounding)
+    let unsigned_result = reciprocal_of_biguint(denominator.magnitude(), precision_bits, recip_rounding)
         .unwrap_or_else(|_| unreachable!("128-bit precision is always valid"));
 
     // Apply sign based on whether this is a positive or negative term
@@ -274,7 +276,7 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
 
 /// Computes error bound for arctan(1/k) Taylor series after n terms.
 ///
-/// Uses the shared `reciprocal_of_positive_bigint` function from the binary module.
+/// Uses the shared `reciprocal_of_biguint` function from the binary module.
 ///
 /// For alternating series with decreasing terms, the error is bounded by
 /// the absolute value of the first omitted term:
@@ -282,11 +284,13 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
 ///
 /// We round UP (ceiling) to get a conservative (safe) error bound.
 fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
-    let exponent = 2 * num_terms + 1;
-    let coeff = BigInt::from(exponent); // 2n+1
+    use num_bigint::BigUint;
 
-    let k_big = BigInt::from(k);
-    let mut k_power = BigInt::one();
+    let exponent = 2 * num_terms + 1;
+    let coeff = BigUint::from(exponent as u64); // 2n+1
+
+    let k_big = BigUint::from(k);
+    let mut k_power = BigUint::one();
     for _ in 0..exponent {
         k_power *= &k_big;
     }
@@ -302,7 +306,7 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
     // Compute 1/denominator, rounding UP for conservative error bound.
     // This unwrap cannot fail because precision_bits is a constant 128, which is
     // trivially representable as usize on any 64-bit system.
-    reciprocal_of_positive_bigint(&denominator, precision_bits, ReciprocalRounding::Ceil)
+    reciprocal_of_biguint(&denominator, precision_bits, ReciprocalRounding::Ceil)
         .unwrap_or_else(|_| unreachable!("128-bit precision is always valid"))
 }
 

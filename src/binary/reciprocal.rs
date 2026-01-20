@@ -3,7 +3,7 @@
 //! This module provides functions for computing reciprocals of extended binary numbers
 //! with controlled precision and rounding.
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
@@ -20,40 +20,34 @@ pub enum ReciprocalRounding {
     Ceil,
 }
 
-/// Computes 1/denominator where denominator is a positive BigInt.
+/// Computes 1/denominator where denominator is a positive integer (BigUint).
 ///
 /// Returns `mantissa * 2^(-precision_bits)` where:
 /// - For `Floor`: `mantissa = floor(2^precision_bits / denominator)`
 /// - For `Ceil`: `mantissa = ceil(2^precision_bits / denominator)`
 ///
+/// Using `BigUint` enforces positivity through the type system.
+///
 /// # Arguments
-/// * `denominator` - A positive BigInt to take the reciprocal of
+/// * `denominator` - A positive BigUint to take the reciprocal of
 /// * `precision_bits` - Number of bits of precision for the computation
 /// * `rounding` - Whether to round toward floor or ceiling
 ///
 /// # Errors
 /// Returns `BinaryError::ReciprocalOverflow` if the precision is too large to represent.
-///
-/// # Panics
-/// Debug-asserts that denominator is positive.
-pub fn reciprocal_of_positive_bigint(
-    denominator: &BigInt,
+pub fn reciprocal_of_biguint(
+    denominator: &BigUint,
     precision_bits: u64,
     rounding: ReciprocalRounding,
 ) -> Result<Binary, BinaryError> {
-    debug_assert!(
-        denominator.is_positive(),
-        "reciprocal_of_positive_bigint requires positive denominator"
-    );
-
     let shift = precision_bits_to_usize(&BigInt::from(precision_bits))?;
-    let numerator = BigInt::one() << shift;
+    let numerator = BigUint::one() << shift;
     let quotient = match rounding {
         ReciprocalRounding::Floor => numerator.div_floor(denominator),
-        ReciprocalRounding::Ceil => numerator.div_ceil(denominator),
+        ReciprocalRounding::Ceil => (&numerator + denominator - BigUint::one()).div_floor(denominator),
     };
     let exponent = -BigInt::from(precision_bits);
-    Ok(Binary::new(quotient, exponent))
+    Ok(Binary::new(BigInt::from(quotient), exponent))
 }
 
 /// Computes the reciprocal of the absolute value of an extended binary number.
@@ -129,10 +123,10 @@ mod tests {
     use crate::test_utils::xbin;
 
     #[test]
-    fn reciprocal_of_positive_bigint_basic() {
+    fn reciprocal_of_biguint_basic() {
         // 1/5 with precision 8
-        let denom = BigInt::from(5);
-        let result = reciprocal_of_positive_bigint(&denom, 8, ReciprocalRounding::Floor)
+        let denom = BigUint::from(5u32);
+        let result = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Floor)
             .expect("should succeed");
 
         // 2^8 / 5 = 256 / 5 = 51 (floor)
@@ -143,13 +137,13 @@ mod tests {
     }
 
     #[test]
-    fn reciprocal_of_positive_bigint_rounding_modes() {
+    fn reciprocal_of_biguint_rounding_modes() {
         // 1/3 with precision 8
-        let denom = BigInt::from(3);
+        let denom = BigUint::from(3u32);
 
-        let floor = reciprocal_of_positive_bigint(&denom, 8, ReciprocalRounding::Floor)
+        let floor = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Floor)
             .expect("should succeed");
-        let ceil = reciprocal_of_positive_bigint(&denom, 8, ReciprocalRounding::Ceil)
+        let ceil = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Ceil)
             .expect("should succeed");
 
         // 2^8 / 3 = 256 / 3 = 85.33...
