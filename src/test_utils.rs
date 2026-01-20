@@ -62,7 +62,7 @@ pub fn unwrap_finite(input: &XBinary) -> Binary {
 pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
     match input {
         UXBinary::Finite(value) => value.clone(),
-        UXBinary::PosInf => {
+        UXBinary::Inf => {
             panic!("expected finite unsigned extended binary, got PosInf")
         }
     }

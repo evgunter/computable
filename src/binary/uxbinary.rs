@@ -23,7 +23,7 @@ pub enum UXBinary {
     /// A finite non-negative value.
     Finite(UBinary),
     /// Positive infinity.
-    PosInf,
+    Inf,
 }
 
 impl UXBinary {
@@ -41,7 +41,7 @@ impl UXBinary {
     pub fn try_from_xbinary(xbinary: &XBinary) -> Result<Self, BinaryError> {
         match xbinary {
             XBinary::NegInf => Err(BinaryError::NegativeMantissa),
-            XBinary::PosInf => Ok(Self::PosInf),
+            XBinary::PosInf => Ok(Self::Inf),
             XBinary::Finite(binary) => {
                 use num_traits::Signed;
                 if binary.mantissa().is_negative() {
@@ -54,16 +54,16 @@ impl UXBinary {
 
     /// Adds two extended unsigned binary numbers.
     pub fn add(&self, other: &Self) -> Self {
-        use UXBinary::{Finite, PosInf};
+        use UXBinary::{Finite, Inf};
         match (self, other) {
-            (PosInf, _) | (_, PosInf) => PosInf,
+            (Inf, _) | (_, Inf) => Inf,
             (Finite(lhs), Finite(rhs)) => Finite(lhs.add(rhs)),
         }
     }
 
     /// Multiplies two extended unsigned binary numbers.
     pub fn mul(&self, other: &Self) -> Self {
-        use UXBinary::{Finite, PosInf};
+        use UXBinary::{Finite, Inf};
         // 0 * anything = 0 (including 0 * infinity)
         if self.is_zero() || other.is_zero() {
             return Finite(UBinary::zero());
@@ -71,17 +71,17 @@ impl UXBinary {
         match (self, other) {
             (Finite(lhs), Finite(rhs)) => Finite(lhs.mul(rhs)),
             // PosInf * nonzero = PosInf
-            (PosInf, _) | (_, PosInf) => PosInf,
+            (Inf, _) | (_, Inf) => Inf,
         }
     }
 
     /// Subtracts another UXBinary from this one, saturating at zero.
     pub fn sub_saturating(&self, other: &Self) -> Self {
-        use UXBinary::{Finite, PosInf};
+        use UXBinary::{Finite, Inf};
         match (self, other) {
-            (PosInf, Finite(_)) => PosInf,
-            (PosInf, PosInf) => Finite(UBinary::zero()),
-            (Finite(_), PosInf) => Finite(UBinary::zero()),
+            (Inf, Finite(_)) => Inf,
+            (Inf, Inf) => Finite(UBinary::zero()),
+            (Finite(_), Inf) => Finite(UBinary::zero()),
             (Finite(lhs), Finite(rhs)) => Finite(lhs.sub_saturating(rhs)),
         }
     }
@@ -89,11 +89,11 @@ impl UXBinary {
 
 impl Ord for UXBinary {
     fn cmp(&self, other: &Self) -> Ordering {
-        use UXBinary::{Finite, PosInf};
+        use UXBinary::{Finite, Inf};
         match (self, other) {
-            (PosInf, PosInf) => Ordering::Equal,
-            (PosInf, _) => Ordering::Greater,
-            (_, PosInf) => Ordering::Less,
+            (Inf, Inf) => Ordering::Equal,
+            (Inf, _) => Ordering::Greater,
+            (_, Inf) => Ordering::Less,
             (Finite(lhs), Finite(rhs)) => lhs.cmp(rhs),
         }
     }
@@ -144,7 +144,7 @@ impl Unsigned for UXBinary {}
 impl From<UXBinary> for XBinary {
     fn from(uxbinary: UXBinary) -> Self {
         match uxbinary {
-            UXBinary::PosInf => XBinary::PosInf,
+            UXBinary::Inf => XBinary::PosInf,
             UXBinary::Finite(ubinary) => XBinary::Finite(ubinary.to_binary()),
         }
     }
@@ -162,10 +162,10 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
         use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
             // If either bound is infinite and they're different, width is infinite
-            (NegInf, PosInf) | (PosInf, NegInf) => UXBinary::PosInf,
+            (NegInf, PosInf) | (PosInf, NegInf) => UXBinary::Inf,
             (NegInf, NegInf) | (PosInf, PosInf) => UXBinary::zero(),
-            (NegInf, Finite(_)) | (Finite(_), PosInf) => UXBinary::PosInf,
-            (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::PosInf,
+            (NegInf, Finite(_)) | (Finite(_), PosInf) => UXBinary::Inf,
+            (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::Inf,
             (Finite(l), Finite(u)) => {
                 // Compute |u - l|
                 use num_traits::Signed;
@@ -195,7 +195,7 @@ impl fmt::Display for UXBinary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             UXBinary::Finite(ubinary) => write!(f, "{}", ubinary),
-            UXBinary::PosInf => write!(f, "+∞"),
+            UXBinary::Inf => write!(f, "+∞"),
         }
     }
 }
@@ -210,19 +210,19 @@ mod tests {
     #[test]
     fn uxbinary_zero_is_zero() {
         assert!(UXBinary::zero().is_zero());
-        assert!(!UXBinary::PosInf.is_zero());
+        assert!(!UXBinary::Inf.is_zero());
     }
 
     #[test]
     fn uxbinary_ordering_works() {
         let zero = UXBinary::zero();
         let one = UXBinary::Finite(ubin(1, 0));
-        let inf = UXBinary::PosInf;
+        let inf = UXBinary::Inf;
 
         assert!(zero < one);
         assert!(one < inf);
         assert!(zero < inf);
-        assert_eq!(inf, UXBinary::PosInf);
+        assert_eq!(inf, UXBinary::Inf);
     }
 
     #[test]
@@ -233,9 +233,9 @@ mod tests {
         assert_eq!(sum, UXBinary::Finite(ubin(3, 0)));
 
         // Adding infinity
-        let inf = UXBinary::PosInf;
-        assert_eq!(one.clone() + inf.clone(), UXBinary::PosInf);
-        assert_eq!(inf + one, UXBinary::PosInf);
+        let inf = UXBinary::Inf;
+        assert_eq!(one.clone() + inf.clone(), UXBinary::Inf);
+        assert_eq!(inf + one, UXBinary::Inf);
     }
 
     #[test]
@@ -250,8 +250,8 @@ mod tests {
         let saturated = one.sub_saturating(&two);
         assert_eq!(saturated, UXBinary::zero());
 
-        let inf = UXBinary::PosInf;
-        assert_eq!(inf.sub_saturating(&one), UXBinary::PosInf);
+        let inf = UXBinary::Inf;
+        assert_eq!(inf.sub_saturating(&one), UXBinary::Inf);
         assert_eq!(inf.sub_saturating(&inf), UXBinary::zero());
         assert_eq!(one.sub_saturating(&inf), UXBinary::zero());
     }
@@ -272,7 +272,7 @@ mod tests {
         let pos_inf = XBinary::PosInf;
         let result = UXBinary::try_from_xbinary(&pos_inf);
         assert!(result.is_ok());
-        assert_eq!(result.expect("should succeed"), UXBinary::PosInf);
+        assert_eq!(result.expect("should succeed"), UXBinary::Inf);
 
         // Negative infinity
         let neg_inf = XBinary::NegInf;
@@ -286,7 +286,7 @@ mod tests {
         let xb = XBinary::from(ubx);
         assert_eq!(xb, XBinary::Finite(bin(7, 3)));
 
-        assert_eq!(XBinary::from(UXBinary::PosInf), XBinary::PosInf);
+        assert_eq!(XBinary::from(UXBinary::Inf), XBinary::PosInf);
     }
 
     #[test]
@@ -314,11 +314,11 @@ mod tests {
         let pos_inf = XBinary::PosInf;
 
         // One infinite bound
-        assert_eq!(neg_inf.clone().abs_distance(one.clone()), UXBinary::PosInf);
-        assert_eq!(one.clone().abs_distance(pos_inf.clone()), UXBinary::PosInf);
+        assert_eq!(neg_inf.clone().abs_distance(one.clone()), UXBinary::Inf);
+        assert_eq!(one.clone().abs_distance(pos_inf.clone()), UXBinary::Inf);
 
         // Both infinite (different)
-        assert_eq!(neg_inf.clone().abs_distance(pos_inf.clone()), UXBinary::PosInf);
+        assert_eq!(neg_inf.clone().abs_distance(pos_inf.clone()), UXBinary::Inf);
 
         // Both infinite (same)
         assert_eq!(neg_inf.clone().abs_distance(neg_inf), UXBinary::zero());
@@ -333,10 +333,10 @@ mod tests {
         assert_eq!(product, UXBinary::Finite(ubin(3, 1)));
 
         // Zero times anything is zero
-        assert!((UXBinary::zero() * UXBinary::PosInf).is_zero());
+        assert!((UXBinary::zero() * UXBinary::Inf).is_zero());
         assert!((UXBinary::zero() * two.clone()).is_zero());
 
         // Infinity times nonzero is infinity
-        assert_eq!(UXBinary::PosInf * two, UXBinary::PosInf);
+        assert_eq!(UXBinary::Inf * two, UXBinary::Inf);
     }
 }

@@ -34,14 +34,14 @@ pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
 
 fn shortest_xbinary_in_positive_interval(lower: &UXBinary, width: &UXBinary) -> XBinary {
     match lower {
-        UXBinary::PosInf => XBinary::PosInf,
+        UXBinary::Inf => XBinary::PosInf,
         UXBinary::Finite(lm) => XBinary::Finite(shortest_binary_in_positive_interval(&lm, width).to_binary())
     }
 }
 
 fn shortest_binary_in_positive_interval(lower: &UBinary, width: &UXBinary) -> UBinary {
     match width {
-        UXBinary::PosInf => {
+        UXBinary::Inf => {
             let exponent = lower.exponent() + BigInt::from(lower.mantissa().bits());
             UBinary::new(BigUint::one(), exponent)
         }
@@ -58,8 +58,8 @@ fn shortest_binary_in_positive_interval(lower: &UBinary, width: &UXBinary) -> UB
 
 fn split_xbinary(value: &XBinary) -> (Sign, UXBinary) {
     match value {
-        XBinary::NegInf => (Sign::Minus, UXBinary::PosInf),
-        XBinary::PosInf => (Sign::Plus, UXBinary::PosInf),
+        XBinary::NegInf => (Sign::Minus, UXBinary::Inf),
+        XBinary::PosInf => (Sign::Plus, UXBinary::Inf),
         XBinary::Finite(v) => (v.mantissa().sign(), UXBinary::Finite(v.magnitude()))
     }
 }

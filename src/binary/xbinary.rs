@@ -50,8 +50,8 @@ impl XBinary {
     pub fn magnitude(&self) -> super::uxbinary::UXBinary {
         use super::uxbinary::UXBinary;
         match self {
-            Self::NegInf => UXBinary::PosInf,
-            Self::PosInf => UXBinary::PosInf,
+            Self::NegInf => UXBinary::Inf,
+            Self::PosInf => UXBinary::Inf,
             Self::Finite(value) => UXBinary::Finite(value.magnitude()),
         }
     }

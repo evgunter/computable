@@ -271,7 +271,7 @@ fn refiner_loop(
 /// Returns true if width <= epsilon.
 pub fn bounds_width_leq(bounds: &Bounds, epsilon: &UBinary) -> bool {
     match bounds.width() {
-        UXBinary::PosInf => false,
+        UXBinary::Inf => false,
         UXBinary::Finite(uwidth) => *uwidth <= *epsilon,
     }
 }
@@ -330,7 +330,7 @@ mod tests {
         let upper = bounds.large();
         let width = match bounds.width() {
             UXBinary::Finite(w) => w.clone(),
-            UXBinary::PosInf => panic!("expected finite width"),
+            UXBinary::Inf => panic!("expected finite width"),
         };
 
         assert!(bounds.small() <= &expected && &expected <= &upper);
