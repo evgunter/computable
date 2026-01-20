@@ -18,61 +18,40 @@ use super::{Binary, UBinary, UXBinary, XBinary};
 pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
     // NOTE: Bounds stores lower + width with UXBinary, so intervals like (-inf, -1]
     // cannot be represented because the width is +inf and large() becomes +inf.
-    // TODO: consider whether we need a representation that preserves finite upper bounds.
-    let lower = bounds.small();
-    let (lower_sign, lower_mag) = split_xbinary(lower);
-    let (upper_sign, upper_mag) = split_xbinary(&bounds.large());
-
-    match (lower_sign, upper_sign) {
-        (Sign::Minus, Sign::Plus)
-        | (Sign::Minus, Sign::NoSign)
-        | (Sign::NoSign, Sign::Plus)
-        | (Sign::NoSign, Sign::NoSign) => XBinary::zero(),
-        (Sign::Plus, Sign::Plus) => shortest_positive_bounds(&lower_mag, &upper_mag),
-        (Sign::Minus, Sign::Minus) => shortest_negative_bounds(&lower_mag, &upper_mag),
-        (Sign::Plus, Sign::NoSign)
-        | (Sign::NoSign, Sign::Minus)
-        | (Sign::Plus, Sign::Minus) => {
-            // TODO: Investigate if the type system can prevent unordered bounds from being
-            // constructed in the first place (e.g., by making Bounds enforce lower <= upper).
-            unreachable!("bounds are not ordered: lower sign {:?}, upper sign {:?}", lower_sign, upper_sign)
+    let (lower_sign, lower_mag) = split_xbinary(bounds.small());
+    match lower_sign {
+        Sign::NoSign => XBinary::zero(),
+        Sign::Plus => shortest_xbinary_in_positive_interval(&lower_mag, bounds.width()),
+        Sign::Minus => {
+            if bounds.large() >= XBinary::zero() {
+                XBinary::zero()
+            } else {
+                shortest_xbinary_in_positive_interval(&bounds.large().magnitude(), bounds.width()).neg()
+            }
         }
     }
 }
 
-fn shortest_binary_in_positive_interval(lower: &Binary, upper: &Binary) -> Option<Binary> {
-    if !lower.mantissa().is_positive() || !upper.mantissa().is_positive() {
-        return None;
+fn shortest_xbinary_in_positive_interval(lower: &UXBinary, width: &UXBinary) -> XBinary {
+    match lower {
+        UXBinary::PosInf => XBinary::PosInf,
+        UXBinary::Finite(lm) => XBinary::Finite(shortest_binary_in_positive_interval(&lm, width).to_binary())
     }
+}
 
-    // Scale to a shared exponent so we can reason about integer multiples of powers of two.
-    let base = if lower.exponent() <= upper.exponent() {
-        lower.exponent().clone()
-    } else {
-        upper.exponent().clone()
-    };
-    let lower_shift = BigUint::try_from(lower.exponent() - &base).ok()?;
-    let upper_shift = BigUint::try_from(upper.exponent() - &base).ok()?;
-    let lower_int = shift_left_bigint(lower.mantissa(), &lower_shift);
-    let upper_int = shift_left_bigint(upper.mantissa(), &upper_shift);
-
-    let max_pow2 = max_power_of_two_divisor(&lower_int, &upper_int);
-    let mut mantissa = div_ceil_pow2(&lower_int, max_pow2);
-    let mantissa_max = div_floor_pow2(&upper_int, max_pow2);
-    // TODO: prove by construction that mantissa <= mantissa_max when max_pow2 is maximal.
-    if mantissa > mantissa_max {
-        return None;
-    }
-    if mantissa.is_even() {
-        mantissa += 1;
-        // TODO: prove the odd adjustment cannot exceed mantissa_max when max_pow2 is maximal.
-        if mantissa > mantissa_max {
-            return None;
+fn shortest_binary_in_positive_interval(lower: &UBinary, width: &UXBinary) -> UBinary {
+    match width {
+        UXBinary::PosInf => {
+            let exponent = lower.exponent() + BigInt::from(lower.mantissa().bits());
+            UBinary::new(BigUint::one(), exponent)
+        }
+        UXBinary::Finite(wm) => {
+            // TODO: we want to take lower and then cancel out as many mantissa bits as possible by adding at most wm.
+            // to do this we compare lower and lower + wm by shifting them both to have the same exponent as lower.
+            // then we can find the largest bit where the mantissas differ and only take the part of the mantissa before that (shifting the exponent accordingly)
+            todo!()
         }
     }
-
-    let exponent = base + BigInt::from(max_pow2);
-    Some(Binary::new(mantissa, exponent))
 }
 
 fn shortest_power_of_two_at_least(lower: &Binary) -> Option<Binary> {
@@ -181,56 +160,6 @@ fn split_xbinary(value: &XBinary) -> (Sign, UXBinary) {
                     (Sign::Minus, UXBinary::Finite(magnitude))
                 }
             }
-        }
-    }
-}
-
-fn shortest_positive_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBinary {
-    match (lower_mag, upper_mag) {
-        (UXBinary::PosInf, UXBinary::PosInf) => XBinary::PosInf,
-        (UXBinary::PosInf, UXBinary::Finite(_)) => {
-            // TODO: Investigate if the type system can prevent unordered bounds.
-            unreachable!("positive bounds are not ordered: lower is +∞ but upper is finite")
-        }
-        (UXBinary::Finite(lower_val), UXBinary::PosInf) => {
-            let lower_binary = lower_val.to_binary();
-            shortest_power_of_two_at_least(&lower_binary)
-                .map(XBinary::Finite)
-                // TODO: Investigate if the type system can ensure positive bounds have positive values.
-                .unwrap_or_else(|| unreachable!("positive lower bound unexpectedly non-positive"))
-        }
-        (UXBinary::Finite(lower_val), UXBinary::Finite(upper_val)) => {
-            let lower_binary = lower_val.to_binary();
-            let upper_binary = upper_val.to_binary();
-            shortest_binary_in_positive_interval(&lower_binary, &upper_binary)
-                .map(XBinary::Finite)
-                // TODO: Investigate if the type system can ensure valid intervals always have odd mantissa solutions.
-                .unwrap_or_else(|| unreachable!("positive interval had no valid odd mantissa"))
-        }
-    }
-}
-
-fn shortest_negative_bounds(lower_mag: &UXBinary, upper_mag: &UXBinary) -> XBinary {
-    match (lower_mag, upper_mag) {
-        (UXBinary::PosInf, UXBinary::PosInf) => XBinary::NegInf,
-        (UXBinary::PosInf, UXBinary::Finite(upper_val)) => {
-            let upper_binary = upper_val.to_binary().neg();
-            shortest_power_of_two_at_most(&upper_binary)
-                .map(XBinary::Finite)
-                // TODO: Investigate if the type system can ensure negative bounds have negative values.
-                .unwrap_or_else(|| unreachable!("negative upper bound unexpectedly non-negative"))
-        }
-        (UXBinary::Finite(lower_val), UXBinary::Finite(upper_val)) => {
-            let lower_binary = lower_val.to_binary();
-            let upper_binary = upper_val.to_binary();
-            shortest_binary_in_positive_interval(&upper_binary, &lower_binary)
-                .map(|value| XBinary::Finite(value.neg()))
-                // TODO: Investigate if the type system can ensure valid intervals always have odd mantissa solutions.
-                .unwrap_or_else(|| unreachable!("negative interval had no valid odd mantissa"))
-        }
-        (UXBinary::Finite(_), UXBinary::PosInf) => {
-            // TODO: Investigate if the type system can prevent unordered bounds.
-            unreachable!("negative bounds are not ordered: lower is finite but upper magnitude is +∞")
         }
     }
 }

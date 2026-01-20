@@ -212,6 +212,7 @@ fn arctan_recip_partial_sum(k: u64, num_terms: usize, rounding: RoundDir) -> Bin
     sum
 }
 
+// TODO: does this have any overlap with the `inv` function? can they be unified or at least share common code?
 /// Computes 1/denominator as a Binary with directed rounding.
 ///
 /// For interval arithmetic, we need to round in the correct direction based on
