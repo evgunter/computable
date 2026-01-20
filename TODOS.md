@@ -16,6 +16,13 @@ More rigorous comparison.
 ```
 Same pattern as [pi-binary-cmp](#pi-binary-cmp).
 
+### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
+**File:** `src/ops/pi.rs:575`
+```rust
+// TODO: should this go with `neg` tests? is this actually needed or redundant?
+```
+Evaluate and either move or remove.
+
 ### <a id="binary-ops-location"></a>binary-ops-location: Investigate Binary operations location
 **File:** `src/binary_utils/mod.rs:10`
 ```rust

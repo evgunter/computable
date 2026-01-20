@@ -572,6 +572,7 @@ mod tests {
         assert_eq!(result.hi, bin(-1, 0));
     }
 
+    // TODO: should this go with `neg` tests? is this actually needed or redundant?
     #[test]
     fn interval_negation() {
         let a = Interval::new(bin(1, 0), bin(3, 0)); // [1, 3]
