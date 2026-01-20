@@ -3,7 +3,7 @@
 //! This module provides functions for computing reciprocals of extended binary numbers
 //! with controlled precision and rounding.
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
@@ -18,6 +18,32 @@ pub enum ReciprocalRounding {
     Floor,
     /// Round toward positive infinity.
     Ceil,
+}
+
+/// Computes 1/denominator where denominator is a positive integer (BigUint).
+///
+/// Returns `mantissa * 2^(-precision_bits)` where:
+/// - For `Floor`: `mantissa = floor(2^precision_bits / denominator)`
+/// - For `Ceil`: `mantissa = ceil(2^precision_bits / denominator)`
+///
+/// Using `BigUint` enforces positivity through the type system.
+///
+/// # Arguments
+/// * `denominator` - A positive BigUint to take the reciprocal of
+/// * `precision_bits` - Number of bits of precision for the computation (as usize for bit shifting)
+/// * `rounding` - Whether to round toward floor or ceiling
+pub fn reciprocal_of_biguint(
+    denominator: &BigUint,
+    precision_bits: usize,
+    rounding: ReciprocalRounding,
+) -> Binary {
+    let numerator = BigUint::one() << precision_bits;
+    let quotient = match rounding {
+        ReciprocalRounding::Floor => numerator.div_floor(denominator),
+        ReciprocalRounding::Ceil => (&numerator + denominator - BigUint::one()).div_floor(denominator),
+    };
+    let exponent = -BigInt::from(precision_bits);
+    Binary::new(BigInt::from(quotient), exponent)
 }
 
 /// Computes the reciprocal of the absolute value of an extended binary number.
@@ -91,6 +117,39 @@ mod tests {
 
     use super::*;
     use crate::test_utils::xbin;
+
+    #[test]
+    fn reciprocal_of_biguint_basic() {
+        // 1/5 with precision 8
+        let denom = BigUint::from(5u32);
+        let result = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Floor);
+
+        // 2^8 / 5 = 256 / 5 = 51 (floor)
+        // Result is 51 * 2^-8
+        // After normalization (51 is odd), mantissa = 51, exponent = -8
+        assert_eq!(result.mantissa(), &BigInt::from(51));
+        assert_eq!(result.exponent(), &BigInt::from(-8));
+    }
+
+    #[test]
+    fn reciprocal_of_biguint_rounding_modes() {
+        // 1/3 with precision 8
+        let denom = BigUint::from(3u32);
+
+        let floor = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Floor);
+        let ceil = reciprocal_of_biguint(&denom, 8, ReciprocalRounding::Ceil);
+
+        // 2^8 / 3 = 256 / 3 = 85.33...
+        // Floor = 85, Ceil = 86
+        // After normalization: 85 (odd), 43 * 2^1 = 86
+        assert_eq!(floor.mantissa(), &BigInt::from(85));
+        assert_eq!(floor.exponent(), &BigInt::from(-8));
+        assert_eq!(ceil.mantissa(), &BigInt::from(43));
+        assert_eq!(ceil.exponent(), &BigInt::from(-7)); // 43 * 2^-7 = 86 * 2^-8
+
+        // Ceil should be > Floor since 1/3 is not exactly representable
+        assert!(ceil > floor);
+    }
 
     #[test]
     fn reciprocal_of_infinity_is_zero() {

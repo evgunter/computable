@@ -23,13 +23,6 @@ Same pattern as [pi-binary-cmp](#pi-binary-cmp).
 ```
 Code organization review.
 
-### <a id="inv-pi-unify"></a>inv-pi-unify: Unify inv and pi_inv_sum code
-**File:** `src/ops/pi.rs:230`
-```rust
-// TODO: does this have any overlap with the `inv` function? can they be unified or at least share common code?
-```
-Potential code deduplication.
-
 ### <a id="bounds-construct"></a>bounds-construct: Construct Bounds directly
 **File:** `src/binary/shortest.rs:192`
 ```rust
