@@ -7,7 +7,8 @@
 //!
 //! # Main Functions
 //!
-//! - [`shortest_xbinary_in_bounds`]: Find the shortest representation strictly within bounds
+//! - [`shortest_binary_in_finite_bounds`]: Find the shortest representation within finite bounds
+//! - [`shortest_xbinary_in_bounds`]: Find the shortest representation strictly within extended bounds
 //! - [`simplify_bounds`]: Simplify bounds by finding shorter representations for both
 //!   the lower bound and width (matching how `Bounds` stores data internally)
 
@@ -15,10 +16,54 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
 
 use super::Bounds;
+use super::FiniteBounds;
 use super::{Binary, UBinary, UXBinary, XBinary};
 
-// TODO: use these functions to make binary-search-based refinement not need to represent intervals that have so many bits of precision
-// by replacing the midpoint with shortest_xbinary_in_bounds (falling back to the midpoint if it returned one of the original endpoints)
+// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
+// to reduce code duplication. Both functions follow a similar pattern (check sign, handle
+// zero-crossing, handle positive/negative intervals). This could potentially be unified
+// using generics over the bound types, though the different handling of infinities may
+// make this non-trivial.
+
+/// Returns a Binary value inside the finite bounds with the shortest normalized mantissa.
+///
+/// This is useful for reducing precision accumulation during binary search / bisection.
+/// When used as a split point instead of the midpoint, the resulting bounds will have
+/// shorter mantissas, reducing memory usage and computation time.
+///
+/// # Arguments
+///
+/// * `bounds` - Finite bounds (no infinities) to find the shortest value within
+///
+/// # Returns
+///
+/// A `Binary` value that lies strictly inside the bounds and has the shortest possible
+/// mantissa. If the bounds have zero width, returns the single value in the bounds.
+pub fn shortest_binary_in_finite_bounds(bounds: &FiniteBounds) -> Binary {
+    let lower = bounds.small();
+    let upper = bounds.large();
+
+    match (lower.mantissa().sign(), upper.mantissa().sign()) {
+        // Interval spans zero - zero is the shortest representation
+        (Sign::Minus, Sign::Plus) | (Sign::Minus, Sign::NoSign) | (Sign::NoSign, Sign::Plus) => {
+            Binary::zero()
+        }
+        // Both bounds are non-negative (lower >= 0)
+        (Sign::NoSign, Sign::NoSign) | (Sign::Plus, Sign::Plus) | (Sign::NoSign, _) | (Sign::Plus, _) => {
+            // Use magnitude() to get UBinary directly, and bounds.width() for the width
+            shortest_binary_in_positive_interval(&lower.magnitude(), &UXBinary::Finite(bounds.width().clone()))
+                .to_binary()
+        }
+        // Both bounds are negative (upper <= 0)
+        (Sign::Minus, Sign::Minus) => {
+            // For negative interval [lower, upper] where lower < upper < 0:
+            // Map to positive interval [|upper|, |lower|] and negate the result
+            shortest_binary_in_positive_interval(&upper.magnitude(), &UXBinary::Finite(bounds.width().clone()))
+                .to_binary()
+                .neg()
+        }
+    }
+}
 
 /// Returns an XBinary value inside the bounds with the shortest normalized mantissa.
 /// infinities are only returned if the bounds do not contain any finite numbers; this shouldn't happen currently but it might be valid in the future.
@@ -463,5 +508,96 @@ mod tests {
         // Most importantly: correctness is preserved
         assert!(simplified.small() <= bounds.small());
         assert!(simplified.large() >= bounds.large());
+    }
+
+    // Tests for shortest_binary_in_finite_bounds
+
+    #[test]
+    fn shortest_binary_in_finite_bounds_positive_interval() {
+        // Interval [1, 3] - shortest value should be 2 (mantissa = 1, exponent = 1)
+        let bounds = FiniteBounds::new(bin(1, 0), bin(3, 0));
+        let shortest = shortest_binary_in_finite_bounds(&bounds);
+        assert_eq!(shortest, bin(1, 1)); // 1 * 2^1 = 2
+
+        // Verify the result is within bounds
+        assert!(shortest >= *bounds.small());
+        assert!(shortest <= bounds.large());
+    }
+
+    #[test]
+    fn shortest_binary_in_finite_bounds_negative_interval() {
+        // Interval [-3, -1] - shortest value should be -2 (mantissa = -1, exponent = 1)
+        let bounds = FiniteBounds::new(bin(-3, 0), bin(-1, 0));
+        let shortest = shortest_binary_in_finite_bounds(&bounds);
+        assert_eq!(shortest, bin(-1, 1)); // -1 * 2^1 = -2
+
+        // Verify the result is within bounds
+        assert!(shortest >= *bounds.small());
+        assert!(shortest <= bounds.large());
+    }
+
+    #[test]
+    fn shortest_binary_in_finite_bounds_spanning_zero() {
+        // Interval [-1, 3] - shortest value should be 0
+        let bounds = FiniteBounds::new(bin(-1, 0), bin(3, 0));
+        let shortest = shortest_binary_in_finite_bounds(&bounds);
+        assert_eq!(shortest, bin(0, 0));
+
+        // Verify the result is within bounds
+        assert!(shortest >= *bounds.small());
+        assert!(shortest <= bounds.large());
+    }
+
+    #[test]
+    fn shortest_binary_in_finite_bounds_zero_width() {
+        // Interval [5, 5] - single point, should return that point
+        let bounds = FiniteBounds::new(bin(5, 0), bin(5, 0));
+        let shortest = shortest_binary_in_finite_bounds(&bounds);
+        assert_eq!(shortest, bin(5, 0));
+    }
+
+    #[test]
+    fn shortest_binary_in_finite_bounds_after_bisection() {
+        // Simulate what happens during sqrt(4) bisection
+        let four = bin(1, 2);
+        let mut lower = bin(0, 0);
+        let mut upper = bin(4, 0);
+
+        // Do some bisection steps
+        for _ in 0..10 {
+            let mid = midpoint_between(&lower, &upper);
+            let mid_sq = mid.clone() * mid.clone();
+            if mid_sq <= four {
+                lower = mid;
+            } else {
+                upper = mid;
+            }
+        }
+
+        // After bisection, we should have high-precision bounds around 2
+        let bounds = FiniteBounds::new(lower.clone(), upper.clone());
+        let shortest = shortest_binary_in_finite_bounds(&bounds);
+
+        // Verify the result is within bounds
+        assert!(
+            shortest >= lower,
+            "shortest {} should be >= lower {}",
+            shortest, lower
+        );
+        assert!(
+            shortest <= upper,
+            "shortest {} should be <= upper {}",
+            shortest, upper
+        );
+
+        // The shortest representation should ideally be 2 (mantissa = 1, exponent = 1)
+        // or at least have fewer mantissa bits than the bounds
+        let shortest_bits = shortest.mantissa().magnitude().bits();
+        let lower_bits = lower.mantissa().magnitude().bits();
+        assert!(
+            shortest_bits <= lower_bits,
+            "shortest ({} bits) should have <= bits than lower ({} bits)",
+            shortest_bits, lower_bits
+        );
     }
 }

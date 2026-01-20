@@ -66,7 +66,7 @@ pub mod test_utils;
 
 // Re-export public API
 pub use binary::{
-    shortest_xbinary_in_bounds, Binary, BinaryError, FiniteBounds, UBinary, UXBinary, XBinary,
+    shortest_binary_in_finite_bounds, shortest_xbinary_in_bounds, Binary, BinaryError, FiniteBounds, UBinary, UXBinary, XBinary,
     XBinaryError,
 };
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
