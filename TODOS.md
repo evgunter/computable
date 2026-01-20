@@ -16,13 +16,6 @@ More rigorous comparison.
 ```
 Same pattern as [pi-binary-cmp](#pi-binary-cmp).
 
-### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
-**File:** `src/ops/pi.rs:575`
-```rust
-// TODO: should this go with `neg` tests? is this actually needed or redundant?
-```
-Evaluate and either move or remove.
-
 ### <a id="binary-ops-location"></a>binary-ops-location: Investigate Binary operations location
 **File:** `src/binary_utils/mod.rs:10`
 ```rust
@@ -88,7 +81,7 @@ Algorithm improvement.
 ```rust
 // TODO: make this into FiniteBounds instead, using the same paradigm as the Bounds type
 ```
-Refactor to reduce code duplication. **Blocks:** [interval-debug-assert](#interval-debug-assert)
+Refactor to reduce code duplication. **Blocks:** [interval-debug-assert](#interval-debug-assert), [pi-neg-test](#pi-neg-test)
 
 ### <a id="sin-sus-comment"></a>sin-sus-comment: Investigate suspicious comment
 **File:** `src/ops/sin.rs:312`
@@ -258,6 +251,14 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 //! async/event-driven model described in the README (see TODO in refinement.rs)
 ```
 **Blocked by:** [async-refinement](#async-refinement)
+
+### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
+**File:** `src/ops/pi.rs:575`
+```rust
+// TODO: should this go with `neg` tests? is this actually needed or redundant?
+```
+Evaluate and either move or remove. Once Interval is refactored to FiniteBounds, this test should be moved or removed accordingly.
+**Blocked by:** [interval-finitebounds](#interval-finitebounds)
 
 ### <a id="interval-debug-assert"></a>interval-debug-assert: Remove debug_assert from Interval::new
 **File:** `src/ops/pi.rs:338`
