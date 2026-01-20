@@ -56,6 +56,7 @@ pub use xbinary::XBinary;
 
 // BigInt/BigUint trait implementations for ordered_pair compatibility
 use num_bigint::{BigInt, BigUint};
+use num_traits::{One, Zero};
 
 use crate::ordered_pair::{AbsDistance, AddWidth, Interval, Unsigned};
 
@@ -70,8 +71,133 @@ pub type Bounds = Interval<XBinary, UXBinary>;
 ///
 /// Unlike [`Bounds`], this type guarantees that both bounds are finite
 /// (no infinities). This is useful for algorithms like bisection that
-/// require finite intervals.
+/// require finite intervals, and for interval arithmetic in computations
+/// like pi and sin.
+///
+// TODO: Investigate code deduplication between FiniteBounds and Bounds. Both types
+// are Interval<T, W> with different type parameters and have similar interval arithmetic
+// needs. Consider whether the interval_add, interval_sub, interval_neg, scale_positive,
+// scale_bigint, midpoint, and comparison methods could be generalized to work on any
+// Interval<T, W> where T and W satisfy appropriate trait bounds.
 pub type FiniteBounds = Interval<Binary, UBinary>;
+
+//=============================================================================
+// Interval arithmetic methods for FiniteBounds
+//=============================================================================
+
+impl FiniteBounds {
+    /// Creates a point interval [x, x] with zero width.
+    pub fn point(x: Binary) -> Self {
+        Self::from_lower_and_width(x, UBinary::zero())
+    }
+
+    /// Returns the lower bound of the interval.
+    ///
+    /// This is a convenience alias for `small()`.
+    pub fn lo(&self) -> &Binary {
+        self.small()
+    }
+
+    /// Returns the upper bound of the interval.
+    ///
+    /// This is a convenience method that computes `lower + width`.
+    pub fn hi(&self) -> Binary {
+        self.large()
+    }
+
+    /// Returns the width of the interval as a Binary (for compatibility with existing code).
+    pub fn width_as_binary(&self) -> Binary {
+        self.width().to_binary()
+    }
+
+    /// Interval addition: [a,b] + [c,d] = [a+c, b+d]
+    ///
+    /// Width of result = width(self) + width(other)
+    pub fn interval_add(&self, other: &Self) -> Self {
+        let new_lower = self.lo().add(other.lo());
+        let new_width = self.width().add(other.width());
+        Self::from_lower_and_width(new_lower, new_width)
+    }
+
+    /// Interval subtraction: [a,b] - [c,d] = [a-d, b-c]
+    ///
+    /// Note: The result lower bound is `self.lo - other.hi`,
+    /// and the result upper bound is `self.hi - other.lo`.
+    /// Width of result = width(self) + width(other)
+    pub fn interval_sub(&self, other: &Self) -> Self {
+        // [a, b] - [c, d] = [a - d, b - c]
+        // lower = a - d = self.lo - other.hi = self.lo - (other.lo + other.width)
+        let other_hi = other.hi();
+        let new_lower = self.lo().sub(&other_hi);
+        // width = (b - c) - (a - d) = b - c - a + d = (b - a) + (d - c) = width(self) + width(other)
+        let new_width = self.width().add(other.width());
+        Self::from_lower_and_width(new_lower, new_width)
+    }
+
+    /// Interval negation: -[a,b] = [-b, -a]
+    pub fn interval_neg(&self) -> Self {
+        // -[a, b] = [-b, -a]
+        // new_lower = -b = -(a + width) = -a - width
+        // new_upper = -a
+        // new_width = -a - (-b) = b - a = original width
+        let new_lower = self.hi().neg();
+        Self::from_lower_and_width(new_lower, self.width().clone())
+    }
+
+    /// Interval multiplication by a non-negative scalar k: k * [a,b] = [k*a, k*b]
+    pub fn scale_positive(&self, k: &UBinary) -> Self {
+        // k * [a, b] = [k*a, k*b]
+        // width = k*b - k*a = k * (b - a) = k * width
+        let k_binary = k.to_binary();
+        let new_lower = self.lo().mul(&k_binary);
+        let new_width = self.width().mul(k);
+        Self::from_lower_and_width(new_lower, new_width)
+    }
+
+    /// Interval multiplication by a BigInt (can be negative).
+    ///
+    /// If k >= 0: k * [a,b] = [k*a, k*b]
+    /// If k < 0: k * [a,b] = [k*b, k*a] = -|k| * [-b, -a] = -|k| * neg([a,b])
+    pub fn scale_bigint(&self, k: &BigInt) -> Self {
+        use num_traits::Signed;
+
+        let abs_k = UBinary::new(k.magnitude().clone(), BigInt::zero());
+
+        if k.is_negative() {
+            // k * [a,b] = -|k| * [a,b] = |k| * (-[a,b]) = |k| * [-b, -a]
+            self.interval_neg().scale_positive(&abs_k)
+        } else {
+            self.scale_positive(&abs_k)
+        }
+    }
+
+    /// Returns the midpoint of the interval: (lo + hi) / 2
+    pub fn midpoint(&self) -> Binary {
+        let sum = self.lo().add(&self.hi());
+        // Divide by 2 by decrementing exponent
+        Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
+    }
+
+    /// Checks if this interval contains a point.
+    pub fn contains(&self, point: &Binary) -> bool {
+        self.lo() <= point && *point <= self.hi()
+    }
+
+    /// Checks if this interval is entirely less than another.
+    pub fn entirely_less_than(&self, other: &Self) -> bool {
+        self.hi() < *other.lo()
+    }
+
+    /// Checks if this interval is entirely greater than another.
+    pub fn entirely_greater_than(&self, other: &Self) -> bool {
+        *self.lo() > other.hi()
+    }
+
+    /// Checks if this interval overlaps with another.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        !(self.entirely_less_than(other) || self.entirely_greater_than(other))
+    }
+}
 
 impl Unsigned for BigUint {}
 

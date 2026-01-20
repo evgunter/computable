@@ -47,12 +47,12 @@ Type constraint addition.
 ```
 Algorithm improvement.
 
-### <a id="interval-finitebounds"></a>interval-finitebounds: Convert Interval to FiniteBounds
-**File:** `src/ops/pi.rs:311`
+### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
+**File:** `src/ops/pi.rs:496`
 ```rust
-// TODO: use FiniteBounds instead, using the same paradigm as the Bounds type
+// TODO: should this go with `neg` tests? is this actually needed or redundant?
 ```
-Refactor to reduce code duplication. **Blocks:** [interval-debug-assert](#interval-debug-assert), [pi-neg-test](#pi-neg-test)
+Evaluate and either move or remove the interval negation test.
 
 ### <a id="sin-sus-comment"></a>sin-sus-comment: Investigate suspicious comment
 **File:** `src/ops/sin.rs:312`
@@ -222,21 +222,6 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 //! async/event-driven model described in the README (see TODO in refinement.rs)
 ```
 **Blocked by:** [async-refinement](#async-refinement)
-
-### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
-**File:** `src/ops/pi.rs:586`
-```rust
-// TODO: should this go with `neg` tests? is this actually needed or redundant?
-```
-Evaluate and either move or remove. Once Interval is refactored to FiniteBounds, this test should be moved or removed accordingly.
-**Blocked by:** [interval-finitebounds](#interval-finitebounds)
-
-### <a id="interval-debug-assert"></a>interval-debug-assert: Remove debug_assert from Interval::new
-**File:** `src/ops/pi.rs:323`
-```rust
-// TODO: no debug assert! this should be just like in Bounds
-```
-**Blocked by:** [interval-finitebounds](#interval-finitebounds)
 
 ### <a id="refiners-stop"></a>refiners-stop: Allow refiners to stop individually
 **File:** `src/refinement.rs:130`
