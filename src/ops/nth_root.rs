@@ -124,12 +124,11 @@ impl NodeOp for NthRootOp {
                 Ok(true)
             }
             Some(s) => {
-                // Perform one bisection step using normalized bounds + midpoint strategy
+                // Perform one bisection step using midpoint strategy
                 let degree = self.degree.get();
                 let target = s.target.clone();
                 let bounds = FiniteBounds::new(s.lower.clone(), s.upper.clone());
-                let normalized = normalize_bounds(&bounds)?;
-                let result = bisection_step_midpoint(normalized, |mid| {
+                let result = bisection_step_midpoint(bounds, |mid| {
                     let mid_pow = binary_pow(mid, degree);
                     match mid_pow.cmp(&target) {
                         std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -327,10 +326,15 @@ fn initialize_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<Bise
         // For target >= 1, the root is <= target, so use target as upper bound
         actual_target.clone()
     };
-    
+
+    // Normalize bounds once at initialization to ensure bisection automatically
+    // selects shortest representations at each step
+    let initial_bounds = FiniteBounds::new(bisection_lower, bisection_upper);
+    let normalized = normalize_bounds(&initial_bounds)?;
+
     Ok(BisectionState {
-        lower: bisection_lower,
-        upper: bisection_upper,
+        lower: normalized.small().clone(),
+        upper: normalized.large(),
         target: actual_target,
         negate_result,
     })

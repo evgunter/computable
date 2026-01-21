@@ -181,7 +181,8 @@ pub fn normalize_bounds(bounds: &FiniteBounds) -> Result<FiniteBounds, crate::er
     let width_bits = width_ubinary.mantissa().bits();
 
     let is_already_normalized = *width_ubinary.mantissa() == BigUint::one()
-        && lower.exponent() == width_ubinary.exponent();
+        && (lower.exponent() == width_ubinary.exponent()
+            || lower.mantissa().is_zero()); // Zero is compatible with any exponent
 
     let target_exp = if is_already_normalized {
         width_ubinary.exponent().clone()
@@ -591,5 +592,37 @@ mod tests {
         assert_eq!(normalized.large(), original.large());
         assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
         assert_eq!(normalized.width().exponent(), &BigInt::from(-3));
+    }
+
+    #[test]
+    fn normalize_bounds_is_idempotent() {
+        // Test that normalize_bounds(normalize_bounds(x)) == normalize_bounds(x)
+
+        // Test with various bounds
+        let test_cases = vec![
+            FiniteBounds::new(bin(1, 0), bin(4, 0)),           // [1, 4]
+            FiniteBounds::new(bin(123, -5), bin(125, -5)),     // fractional
+            FiniteBounds::new(bin(-10, 0), bin(-5, 0)),        // negative
+            FiniteBounds::new(bin(7, -2), bin(9, -2)),         // mixed
+        ];
+
+        for original in test_cases {
+            let normalized_once = normalize_bounds(&original).expect("first normalization failed");
+            let normalized_twice = normalize_bounds(&normalized_once).expect("second normalization failed");
+
+            // Normalizing twice should give the same result as normalizing once
+            assert_eq!(
+                normalized_once.small(),
+                normalized_twice.small(),
+                "Idempotency failed for lower bound of {:?}",
+                original
+            );
+            assert_eq!(
+                normalized_once.large(),
+                normalized_twice.large(),
+                "Idempotency failed for upper bound of {:?}",
+                original
+            );
+        }
     }
 }
