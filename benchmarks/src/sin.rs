@@ -6,7 +6,7 @@ use rand::rngs::StdRng;
 use rand::Rng;
 
 use crate::balanced_sum::balanced_sum;
-use crate::common::{binary_from_f64, midpoint};
+use crate::common::{binary_from_f64, try_finite_bounds, midpoint};
 
 pub const SIN_SAMPLE_COUNT: usize = 100;
 pub const SIN_PRECISION_BITS: i64 = 32;
@@ -49,15 +49,6 @@ pub fn run_sin_benchmark(rng: &mut StdRng) {
         .expect("refine_to should succeed");
     let computable_duration = computable_start.elapsed();
 
-    let computable_midpoint = midpoint(&bounds);
-    let computable_width = bounds.width().clone();
-
-    let sin_error = {
-        let float_as_binary = binary_from_f64(float_sum);
-        let diff = float_as_binary.sub(&computable_midpoint);
-        diff.magnitude()
-    };
-
     let sin_slowdown = computable_duration.as_secs_f64() / float_duration.as_secs_f64();
     let per_call = computable_duration / SIN_SAMPLE_COUNT as u32;
 
@@ -72,7 +63,22 @@ pub fn run_sin_benchmark(rng: &mut StdRng) {
     println!("per sin() call:  {:?}", per_call);
     println!("slowdown factor: {:.2}x", sin_slowdown);
     println!("float value:         {}", binary_from_f64(float_sum));
-    println!("computable midpoint: {}", computable_midpoint);
-    println!("computable width: {}", computable_width);
-    println!("abs(float - midpoint): {}", sin_error);
+
+    match try_finite_bounds(&bounds) {
+        Some(finite) => {
+            let computable_midpoint = midpoint(&finite);
+            let computable_width = bounds.width().clone();
+            let sin_error = {
+                let float_as_binary = binary_from_f64(float_sum);
+                let diff = float_as_binary.sub(&computable_midpoint);
+                diff.magnitude()
+            };
+            println!("computable midpoint: {}", computable_midpoint);
+            println!("computable width: {}", computable_width);
+            println!("abs(float - midpoint): {}", sin_error);
+        }
+        None => {
+            println!("computable bounds: infinite (cannot compute midpoint)");
+        }
+    }
 }

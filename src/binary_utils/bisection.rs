@@ -89,11 +89,60 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
     Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
 }
 
+// TODO: this doesn't need to take exponent as a BigInt since we don't really do that anywhere else.
+// switch it to whatever's convenient for its callers once they're integrated
+
+/// Creates normalized bounds suitable for midpoint-based bisection.
+///
+/// If the lower bound and width can be written as a pair of binary numbers
+/// with integer mantissa and the same exponent, and the mantissa of the width is 1,
+/// then binary search will choose the shortest representation in the interval automatically.
+/// This means that binary search is guaranteed to find an exact answer if it exists.
+/// (this condition is equivalent to having the bounds be represented as just a binary prefix)
+///
+/// # Arguments
+///
+/// * `mantissa` - The mantissa of the lower bound (should be an integer)
+/// * `exponent` - The shared exponent for both the lower bound and width
+///
+/// # Returns
+///
+/// [`FiniteBounds`] with lower = `mantissa * 2^exponent` and width = `1 * 2^exponent`.
+///
+/// # Example
+///
+/// ```
+/// use computable::binary_utils::bisection::bounds_from_normalized;
+/// use num_bigint::BigInt;
+///
+/// // Create bounds with lower = 3 * 2^(-1) = 1.5 and width = 1 * 2^(-1) = 0.5
+/// // This gives the interval [1.5, 2.0]
+/// let bounds = bounds_from_normalized(BigInt::from(3), BigInt::from(-1));
+///
+/// // The width should be 1 * 2^(-1)
+/// assert_eq!(*bounds.width().mantissa(), 1u32.into());
+/// assert_eq!(*bounds.width().exponent(), BigInt::from(-1));
+/// ```
+pub fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBounds {
+    use num_bigint::BigUint;
+    use crate::binary::UBinary;
+
+    let lower = Binary::new(mantissa, exponent.clone());
+    let width = UBinary::new(BigUint::one(), exponent);
+    FiniteBounds::from_lower_and_width(lower, width)
+}
+
 /// Selects the midpoint as the split point.
 ///
 /// This is the traditional bisection strategy.
+/// Computes lower + width/2 to avoid redundant operations.
 fn select_midpoint(bounds: &FiniteBounds) -> Binary {
-    midpoint(bounds.small(), &bounds.large())
+    let half_width = bounds.width().to_binary();
+    let half_width_shifted = Binary::new(
+        half_width.mantissa().clone(),
+        half_width.exponent() - BigInt::one(),
+    );
+    bounds.small().add(&half_width_shifted)
 }
 
 /// Selects the shortest representation as the split point, falling back to midpoint.
@@ -109,7 +158,7 @@ fn select_shortest(bounds: &FiniteBounds) -> Binary {
     // If the shortest representation equals an endpoint, fall back to the midpoint
     // to ensure progress (we need a point strictly between the bounds)
     if shortest == *lower || shortest == upper {
-        midpoint(lower, &upper)
+        select_midpoint(bounds)
     } else {
         shortest
     }
@@ -414,5 +463,63 @@ mod tests {
         // Both should pick 2 as the split point
         assert_eq!(result1.small(), result2.small());
         assert_eq!(result1.large(), result2.large());
+    }
+
+    #[test]
+    fn bounds_from_normalized_creates_correct_width() {
+        use num_bigint::BigUint;
+
+        // Create bounds with lower = 1.5 (3 * 2^-1) and width = 2^-10
+        // Express 1.5 with exponent -10: 1.5 = 3 * 2^-1 = (3 << 9) * 2^-10
+        let bounds = super::bounds_from_normalized(BigInt::from(3 << 9), BigInt::from(-10));
+
+        // Check that lower bound is 1.5
+        assert_eq!(bounds.small(), &bin(3, -1));
+
+        // Check that width is 1 * 2^(-10)
+        assert_eq!(bounds.width().mantissa(), &BigUint::from(1u32));
+        assert_eq!(bounds.width().exponent(), &BigInt::from(-10));
+
+        // Check that upper bound is 1.5 + 2^(-10) = ((3 << 9) + 1) * 2^-10
+        assert_eq!(bounds.large(), bin((3 << 9) + 1, -10));
+    }
+
+    #[test]
+    fn bounds_from_normalized_with_integer_lower() {
+        use num_bigint::BigUint;
+
+        // Create bounds with lower = 5 and width = 2^-8
+        // Express 5 with exponent -8: 5 = (5 << 8) * 2^-8
+        let bounds = super::bounds_from_normalized(BigInt::from(5 << 8), BigInt::from(-8));
+
+        // Check that lower bound is 5
+        assert_eq!(bounds.small(), &bin(5, 0));
+
+        // Check that width is 1 * 2^(-8) = 1/256
+        assert_eq!(bounds.width().mantissa(), &BigUint::from(1u32));
+        assert_eq!(bounds.width().exponent(), &BigInt::from(-8));
+
+        // Check that upper bound is 5 + 1/256 = ((5 << 8) + 1) * 2^-8
+        assert_eq!(bounds.large(), bin((5 << 8) + 1, -8));
+    }
+
+    #[test]
+    fn bounds_from_normalized_can_be_used_for_bisection() {
+        // Create normalized bounds: lower = 1, width = 2^-10
+        // Express 1 with exponent -10: 1 = (1 << 10) * 2^-10
+        let bounds = super::bounds_from_normalized(BigInt::from(1 << 10), BigInt::from(-10));
+
+        // Perform one bisection step
+        let target = bin(5, -2); // 1.25, which should be in our interval [1, 1 + 1/1024]
+        let result = bisection_step_midpoint(bounds, |mid| {
+            match mid.cmp(&target) {
+                std::cmp::Ordering::Less => BisectionComparison::Above,
+                std::cmp::Ordering::Equal => BisectionComparison::Exact,
+                std::cmp::Ordering::Greater => BisectionComparison::Below,
+            }
+        });
+
+        // Should have narrowed the interval
+        assert!(result.width() < &super::bounds_from_normalized(BigInt::from(1 << 10), BigInt::from(-10)).width().clone());
     }
 }

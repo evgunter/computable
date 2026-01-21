@@ -5,7 +5,7 @@ use rand::rngs::StdRng;
 use rand::Rng;
 
 use crate::balanced_sum::balanced_sum;
-use crate::common::{binary_from_f64, midpoint, BenchmarkResult, ComputableResult};
+use crate::common::{binary_from_f64, try_finite_bounds, midpoint, BenchmarkResult, ComputableResult};
 
 pub const COMPLEX_SAMPLE_COUNT: usize = 5_000;
 
@@ -42,10 +42,11 @@ fn complex_computable(inputs: &[(f64, f64, f64, f64)]) -> ComputableResult {
     let total = balanced_sum(terms);
 
     let bounds = total.bounds().expect("bounds should succeed");
+    let finite = try_finite_bounds(&bounds).expect("bounds should be finite for arithmetic operations");
 
     ComputableResult {
         duration: start.elapsed(),
-        midpoint: midpoint(&bounds),
+        midpoint: midpoint(&finite),
         width: bounds.width().clone(),
     }
 }

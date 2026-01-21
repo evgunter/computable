@@ -29,6 +29,7 @@ use crate::binary::BinaryError;
 ///
 /// * `$msg` - A description of what case was encountered (e.g., "lower input bound is PosInf")
 ///
+/// TODO: why is the doctest ignored? does it not like macro_rules or something
 /// # Example
 ///
 /// ```ignore

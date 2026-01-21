@@ -5,7 +5,7 @@ use rand::rngs::StdRng;
 use rand::Rng;
 
 use crate::balanced_sum::balanced_sum;
-use crate::common::{binary_from_f64, midpoint, BenchmarkResult, ComputableResult};
+use crate::common::{binary_from_f64, try_finite_bounds, midpoint, BenchmarkResult, ComputableResult};
 
 pub const SUMMATION_SAMPLE_COUNT: usize = 200_000;
 
@@ -28,10 +28,11 @@ fn summation_computable(base: f64, inputs: &[Computable]) -> ComputableResult {
     terms.extend(inputs.iter().cloned());
     let total = balanced_sum(terms);
     let bounds = total.bounds().expect("bounds should succeed");
+    let finite = try_finite_bounds(&bounds).expect("bounds should be finite for arithmetic operations");
 
     ComputableResult {
         duration: start.elapsed(),
-        midpoint: midpoint(&bounds),
+        midpoint: midpoint(&finite),
         width: bounds.width().clone(),
     }
 }
@@ -60,7 +61,8 @@ pub fn run_summation_benchmark(rng: &mut StdRng) {
     let baseless_sum_computable = {
         let sum = balanced_sum(summation_inputs_computable.clone());
         let bounds = sum.bounds().expect("bounds should succeed");
-        midpoint(&bounds)
+        let finite = try_finite_bounds(&bounds).expect("bounds should be finite for arithmetic operations");
+        midpoint(&finite)
     };
 
     let float_minus_base = summation_float_result.value - summation_base;

@@ -23,6 +23,8 @@ pub fn balanced_sum(mut values: Vec<Computable>) -> Computable {
         values = next;
     }
 
+    // TODO: why doesn't clippy complain about this expect?
+
     values
         .pop()
         .expect("values should contain at least one element")

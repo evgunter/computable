@@ -9,7 +9,7 @@ use computable::{pi, pi_bounds_at_precision, Binary, Computable, UBinary};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, Signed, Zero};
 
-use crate::common::{binary_from_f64, finite_binary, midpoint};
+use crate::common::{binary_from_f64, finite_binary, try_finite_bounds, midpoint};
 
 /// Precision levels to test (in bits)
 // TODO: Re-enable 128+ bit precision levels once the fixed 128-bit intermediate precision
@@ -55,21 +55,26 @@ fn benchmark_pi_refinement() {
         // TODO: can we avoid using unwrap?
         let bounds = final_bounds.unwrap();
 
-        let width = bounds.width();
-        let mid = midpoint(&bounds);
-
-        // Compare to known pi digits (converting f64 to Binary for comparison)
-        let pi_binary = binary_from_f64(std::f64::consts::PI);
-        let error = mid.sub(&pi_binary).magnitude();
-
         println!(
             "Precision: {} bits (epsilon = 2^-{})",
             precision_bits, precision_bits
         );
         println!("  Average time: {:?}", avg_duration);
-        println!("  Width: {}", width);
-        println!("  Midpoint: {}", mid);
-        println!("  |midpoint - pi|: {}", error);
+        println!("  Width: {}", bounds.width());
+
+        match try_finite_bounds(&bounds) {
+            Some(finite) => {
+                let mid = midpoint(&finite);
+                // Compare to known pi digits (converting f64 to Binary for comparison)
+                let pi_binary = binary_from_f64(std::f64::consts::PI);
+                let error = mid.sub(&pi_binary).magnitude();
+                println!("  Midpoint: {}", mid);
+                println!("  |midpoint - pi|: {}", error);
+            }
+            None => {
+                println!("  Bounds are infinite (cannot compute midpoint)");
+            }
+        }
         println!();
     }
 }
@@ -128,7 +133,8 @@ fn benchmark_pi_arithmetic() {
         .refine_to_default(epsilon.clone())
         .expect("2pi computation should succeed");
     let duration = start.elapsed();
-    let mid = midpoint(&bounds);
+    let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+    let mid = midpoint(&finite);
     let expected = binary_from_f64(2.0 * std::f64::consts::PI);
     println!("  Time: {:?}", duration);
     println!("  Midpoint: {}", mid);
@@ -144,7 +150,8 @@ fn benchmark_pi_arithmetic() {
         .refine_to_default(epsilon.clone())
         .expect("pi/2 computation should succeed");
     let duration = start.elapsed();
-    let mid = midpoint(&bounds);
+    let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+    let mid = midpoint(&finite);
     let expected = binary_from_f64(std::f64::consts::FRAC_PI_2);
     println!("  Time: {:?}", duration);
     println!("  Midpoint: {}", mid);
@@ -159,7 +166,8 @@ fn benchmark_pi_arithmetic() {
         .refine_to_default(epsilon.clone())
         .expect("pi^2 computation should succeed");
     let duration = start.elapsed();
-    let mid = midpoint(&bounds);
+    let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+    let mid = midpoint(&finite);
     let expected = binary_from_f64(std::f64::consts::PI * std::f64::consts::PI);
     println!("  Time: {:?}", duration);
     println!("  Midpoint: {}", mid);
@@ -174,7 +182,8 @@ fn benchmark_pi_arithmetic() {
         .refine_to_default(epsilon.clone())
         .expect("1/pi computation should succeed");
     let duration = start.elapsed();
-    let mid = midpoint(&bounds);
+    let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+    let mid = midpoint(&finite);
     let expected = binary_from_f64(1.0 / std::f64::consts::PI);
     println!("  Time: {:?}", duration);
     println!("  Midpoint: {}", mid);

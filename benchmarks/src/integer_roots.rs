@@ -11,7 +11,7 @@ use rand::rngs::StdRng;
 use rand::Rng;
 
 use crate::balanced_sum::balanced_sum;
-use crate::common::{binary_from_f64, midpoint};
+use crate::common::{binary_from_f64, try_finite_bounds, midpoint};
 use crate::UXBinary;
 
 pub const INTEGER_ROOTS_SAMPLE_COUNT: usize = 1_000;
@@ -72,9 +72,11 @@ fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResu
         .refine_to_default(epsilon)
         .expect("refine_to should succeed");
 
+    let finite = try_finite_bounds(&bounds).expect("bounds should be finite for nth_root operations");
+
     IntegerRootsComputableResult {
         duration: start.elapsed(),
-        midpoint: midpoint(&bounds),
+        midpoint: midpoint(&finite),
         width: bounds.width().clone(),
     }
 }
