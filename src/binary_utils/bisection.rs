@@ -161,25 +161,45 @@ pub fn normalize_bounds(bounds: &FiniteBounds) -> FiniteBounds {
     use num_traits::Signed;
 
     let lower = bounds.small();
-    let width = bounds.width().to_binary();
+    let width_ubinary = bounds.width();
 
-    // Get the exponent we'll use (from the width)
-    let exp = width.exponent().clone();
+    // The exponent must be large enough that the width fits in one unit:
+    // 2^e >= width, so e >= log2(width)
+    // For width = m * 2^exp where m has b bits: log2(width) < exp + b
+    // We use e = exp + b to ensure 2^e > width (or 2^e >= width if m is a power of 2)
+    //
+    // However, if width mantissa is 1 AND lower is representable at width's exponent
+    // (i.e., already normalized), we can use that exponent directly.
+    use num_bigint::BigUint;
+    use num_traits::One;
+    let width_bits = width_ubinary.mantissa().bits();
 
-    // Shift lower to have the same exponent
-    // lower_mantissa = lower * 2^(-exp) = lower.mantissa * 2^(lower.exponent - exp)
-    let shift = lower.exponent() - &exp;
+    let is_already_normalized = *width_ubinary.mantissa() == BigUint::one()
+        && lower.exponent() == width_ubinary.exponent();
+
+    let target_exp = if is_already_normalized {
+        width_ubinary.exponent().clone()
+    } else {
+        // Add 1 extra to account for rounding when flooring the lower bound
+        width_ubinary.exponent() + BigInt::from(width_bits as i64) + BigInt::one()
+    };
+
+    // Floor the lower bound to this exponent
+    // lower_floored = floor(lower / 2^target_exp) * 2^target_exp
+    let shift = lower.exponent() - &target_exp;
     let lower_mantissa = if shift.is_zero() {
         lower.mantissa().clone()
     } else if shift.is_positive() {
-        // Shift left
+        // Shift left (no rounding needed)
         lower.mantissa() << shift.magnitude().to_usize().expect("shift too large")
     } else {
-        // Shift right (floor division for normalization)
+        // Shift right (floor toward -∞)
+        // For negative numbers, arithmetic right shift rounds toward -∞
+        // For positive numbers, it also rounds toward -∞ (rounds down)
         lower.mantissa() >> shift.magnitude().to_usize().expect("shift too large")
     };
 
-    bounds_from_normalized(lower_mantissa, exp)
+    bounds_from_normalized(lower_mantissa, target_exp)
 }
 
 /// Selects the midpoint as the split point.
@@ -466,5 +486,100 @@ mod tests {
 
         // Should have narrowed the interval
         assert!(result.width() < &super::bounds_from_normalized(BigInt::from(1 << 10), BigInt::from(-10)).width().clone());
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_simple() {
+        use num_bigint::BigUint;
+
+        // Simple case: [1, 2]
+        let original = FiniteBounds::new(bin(1, 0), bin(2, 0));
+        let normalized = normalize_bounds(&original);
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_fractional() {
+        use num_bigint::BigUint;
+
+        // Fractional bounds: [0.25, 0.75] = [1 * 2^-2, 3 * 2^-2]
+        let original = FiniteBounds::new(bin(1, -2), bin(3, -2));
+        let normalized = normalize_bounds(&original);
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_mixed_exponents() {
+        use num_bigint::BigUint;
+
+        // Bounds with different exponents: [5 * 2^0, 11 * 2^-1] = [5, 5.5]
+        let original = FiniteBounds::new(bin(5, 0), bin(11, -1));
+        let normalized = normalize_bounds(&original);
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_large_mantissas() {
+        use num_bigint::BigUint;
+
+        // Bounds with large mantissas: [123 * 2^-5, 125 * 2^-5]
+        let original = FiniteBounds::new(bin(123, -5), bin(125, -5));
+        let normalized = normalize_bounds(&original);
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_negative() {
+        use num_bigint::BigUint;
+
+        // Negative bounds: [-3, -1]
+        let original = FiniteBounds::new(bin(-3, 0), bin(-1, 0));
+        let normalized = normalize_bounds(&original);
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_preserves_already_normalized() {
+        use num_bigint::BigUint;
+
+        // Already normalized: [5 * 2^-3, 6 * 2^-3] with width = 1 * 2^-3
+        let original = FiniteBounds::new(bin(5, -3), bin(6, -3));
+        let normalized = normalize_bounds(&original);
+
+        // Should be exactly equal for already-normalized bounds
+        assert_eq!(normalized.small(), original.small());
+        assert_eq!(normalized.large(), original.large());
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+        assert_eq!(normalized.width().exponent(), &BigInt::from(-3));
     }
 }
