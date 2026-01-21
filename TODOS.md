@@ -16,13 +16,14 @@ Investigate why the doctest for the macro is ignored and fix if possible.
 ```
 Investigate why clippy isn't catching this expect usage.
 
-### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
-**File:** `src/binary/shortest.rs:22`
+### <a id="bisection-benchmark"></a>bisection-benchmark: Compare midpoint vs shortest-representation bisection
+**File:** `benchmarks/src/integer_roots.rs:1`
 ```rust
-// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
-// to reduce code duplication.
+// TODO: Add comparison benchmark between midpoint-based bisection (bisection_step_midpoint)
+// and shortest-representation bisection (bisection_step) to measure the precision
+// accumulation reduction and any performance differences.
 ```
-Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
+Benchmark to validate that the shortest-representation bisection strategy reduces precision accumulation without significant performance cost.
 
 
 ## Tier 2: Medium Effort (Unblocked, requires some work)
