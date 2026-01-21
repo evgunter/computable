@@ -85,10 +85,7 @@ pub fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
 /// Refines bounds by collapsing them to their midpoint.
 pub fn interval_refine(state: Bounds) -> Bounds {
     let midpoint = midpoint_between(state.small(), &state.large());
-    Bounds::new(
-        XBinary::Finite(midpoint.clone()),
-        XBinary::Finite(midpoint),
-    )
+    Bounds::new(XBinary::Finite(midpoint.clone()), XBinary::Finite(midpoint))
 }
 
 /// Creates a Computable that represents an interval [lower, upper] and refines to its midpoint.

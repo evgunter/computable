@@ -10,12 +10,12 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
 
+use crate::binary::Bounds;
 use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PowOp, SinOp};
-use crate::binary::Bounds;
-use crate::refinement::{bounds_width_leq, RefinementGraph};
+use crate::refinement::{RefinementGraph, bounds_width_leq};
 
 use parking_lot::RwLock;
 
@@ -62,20 +62,22 @@ impl Computable {
     /// Refines this computable until the bounds width is at most epsilon.
     ///
     /// # Arguments
-    /// * `epsilon` - Maximum width for the returned bounds
+    /// * `epsilon` - Maximum width for the returned bounds. May be zero to request
+    ///   exact bounds (width = 0).
     ///
     /// # Type Parameters
     /// * `MAX_REFINEMENT_ITERATIONS` - Maximum number of refinement iterations
+    ///
+    /// # Warning
+    /// Setting `epsilon = 0` will only succeed for values that can be represented
+    /// exactly in binary (e.g., integers, dyadic rationals like 1/2 or 3/4).
+    /// For values that cannot be exactly represented (e.g., 1/3, sqrt(2), pi),
+    /// refinement will never achieve zero width and will return
+    /// [`ComputableError::MaxRefinementIterations`] after exhausting the iteration limit.
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         &self,
         epsilon: UBinary,
     ) -> Result<Bounds, ComputableError> {
-        // TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
-        // (e.g. as-is, sqrt(4) may never refine to a width of 0 because we just use binary search)
-        if epsilon.mantissa().is_zero() {
-            return Err(ComputableError::NonpositiveEpsilon);
-        }
-
         loop {
             let bounds = self.node.get_bounds()?;
             if bounds_width_leq(&bounds, &epsilon) {
@@ -306,10 +308,7 @@ mod tests {
         let bounds = computable.bounds().expect("bounds should succeed");
         assert_eq!(
             bounds,
-            Bounds::new(
-                XBinary::Finite(value.clone()),
-                XBinary::Finite(value)
-            )
+            Bounds::new(XBinary::Finite(value.clone()), XBinary::Finite(value))
         );
     }
 
@@ -328,8 +327,8 @@ mod tests {
         let upper = bounds.large();
         let upper = unwrap_finite(&upper);
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
-        let expected_binary = XBinary::from_f64(expected)
-            .expect("expected value should convert to extended binary");
+        let expected_binary =
+            XBinary::from_f64(expected).expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon.to_binary();
 
@@ -354,8 +353,8 @@ mod tests {
         let upper = bounds.large();
         let upper = unwrap_finite(&upper);
         let expected = 2.0_f64 * 2.0_f64.sqrt();
-        let expected_binary = XBinary::from_f64(expected)
-            .expect("expected value should convert to extended binary");
+        let expected_binary =
+            XBinary::from_f64(expected).expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon.to_binary();
 

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use computable::{Binary, Bounds, UXBinary, XBinary};
+use computable::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
 use num_bigint::BigInt;
 use num_traits::One;
 
@@ -37,11 +37,24 @@ pub fn finite_binary(value: &XBinary) -> Binary {
     }
 }
 
+/// Tries to extract finite bounds from Bounds, returning None if either endpoint is infinite.
+pub fn try_finite_bounds(bounds: &Bounds) -> Option<FiniteBounds> {
+    match (bounds.small(), bounds.large()) {
+        (XBinary::Finite(lower), XBinary::Finite(upper)) => {
+            Some(FiniteBounds::new(lower.clone(), upper))
+        }
+        _ => None,
+    }
+}
+
+// TODO: remove all the implementations in other files of `midpoint` or `midpoint_between` etc and just use one implementation
+// (in the main module not benchmarks) which does the + width/2 strategy rather than redundantly computing the upper bound by
+// adding width to lower and then averaging that with lower
+
 /// Computes the midpoint of bounds.
-pub fn midpoint(bounds: &Bounds) -> Binary {
-    let lower = finite_binary(bounds.small());
-    let upper = finite_binary(&bounds.large());
-    let sum = lower.add(&upper);
-    let half = Binary::new(BigInt::one(), BigInt::from(-1));
-    sum.mul(&half)
+pub fn midpoint(bounds: &FiniteBounds) -> Binary {
+    let lower = bounds.small();
+    let width = bounds.width().to_binary();
+    let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
+    lower.add(&half_width)
 }

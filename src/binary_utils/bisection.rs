@@ -7,19 +7,29 @@
 //!
 //! # Functions
 //!
-//! - [`bisection_step`]: Uses shortest representation strategy (recommended for long refinements)
-//! - [`bisection_step_midpoint`]: Uses traditional midpoint strategy
-//! - [`bisection_step_with`]: Generic version with custom split point selection
+//! - [`bisection_step_midpoint`]: Performs bisection using midpoint strategy
+//! - [`bounds_from_normalized`]: Creates normalized bounds for optimal midpoint bisection
+//! - [`normalize_bounds`]: Converts arbitrary bounds to normalized form
+//!
+//! # Normalized Bounds Strategy
+//!
+//! When bounds are in normalized form (lower and width share the same exponent with integer
+//! mantissas, and width's mantissa is 1), midpoint bisection automatically selects the
+//! shortest representation at each step. This eliminates the need for explicit shortest-
+//! representation searches.
+//!
+//! Use [`bounds_from_normalized`] to create bounds in normalized form, or [`normalize_bounds`]
+//! to convert existing bounds.
 //!
 //! # Usage
 //!
-//! The [`bisection_step`] function performs a single step of binary search.
+//! The [`bisection_step_midpoint`] function performs a single step of binary search.
 //! It's designed to be called repeatedly by the refinement infrastructure
 //! (e.g., `refine_to_default`), which controls the iteration count.
 //!
 //! ```
 //! use computable::{Binary, FiniteBounds};
-//! use computable::binary_utils::bisection::{BisectionComparison, bisection_step};
+//! use computable::binary_utils::bisection::{BisectionComparison, bisection_step_midpoint};
 //! use num_bigint::BigInt;
 //! use num_traits::Zero;
 //!
@@ -33,7 +43,7 @@
 //!
 //! // Perform bisection steps until we find exact match or reach desired precision
 //! for _ in 0..20 {
-//!     bounds = bisection_step(bounds, |mid| {
+//!     bounds = bisection_step_midpoint(bounds, |mid| {
 //!         let mid_sq = mid.mul(mid);
 //!         match mid_sq.cmp(&target) {
 //!             std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -51,9 +61,9 @@
 //! ```
 
 use num_bigint::BigInt;
-use num_traits::One;
+use num_traits::{One, ToPrimitive, Zero};
 
-use crate::binary::{Binary, FiniteBounds, shortest_binary_in_finite_bounds};
+use crate::binary::{Binary, FiniteBounds};
 
 /// Result of comparing a test value against the target in a binary search.
 ///
@@ -89,105 +99,144 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
     Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
 }
 
+// TODO: this doesn't need to take exponent as a BigInt since we don't really do that anywhere else.
+// switch it to whatever's convenient for its callers once they're integrated
+
+/// Creates normalized bounds suitable for midpoint-based bisection.
+///
+/// If the lower bound and width can be written as a pair of binary numbers
+/// with integer mantissa and the same exponent, and the mantissa of the width is 1,
+/// then binary search will choose the shortest representation in the interval automatically.
+/// This means that binary search is guaranteed to find an exact answer if it exists.
+/// (this condition is equivalent to having the bounds be represented as just a binary prefix)
+///
+/// # Arguments
+///
+/// * `mantissa` - The mantissa of the lower bound (should be an integer)
+/// * `exponent` - The shared exponent for both the lower bound and width
+///
+/// # Returns
+///
+/// [`FiniteBounds`] with lower = `mantissa * 2^exponent` and width = `1 * 2^exponent`.
+///
+/// # Example
+///
+/// ```
+/// use computable::binary_utils::bisection::bounds_from_normalized;
+/// use num_bigint::BigInt;
+///
+/// // Create bounds with lower = 3 * 2^(-1) = 1.5 and width = 1 * 2^(-1) = 0.5
+/// // This gives the interval [1.5, 2.0]
+/// let bounds = bounds_from_normalized(BigInt::from(3), BigInt::from(-1));
+///
+/// // The width should be 1 * 2^(-1)
+/// assert_eq!(*bounds.width().mantissa(), 1u32.into());
+/// assert_eq!(*bounds.width().exponent(), BigInt::from(-1));
+/// ```
+pub fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBounds {
+    use crate::binary::UBinary;
+    use num_bigint::BigUint;
+
+    let lower = Binary::new(mantissa, exponent.clone());
+    let width = UBinary::new(BigUint::one(), exponent);
+    FiniteBounds::from_lower_and_width(lower, width)
+}
+
+/// Converts arbitrary finite bounds to normalized form.
+///
+/// Takes any finite bounds and returns normalized bounds that contain the original interval.
+/// The normalized bounds have the property that lower and width share the same exponent
+/// with integer mantissas, and width's mantissa is 1.
+///
+/// This may slightly expand the interval to achieve normalization.
+///
+/// # Arguments
+///
+/// * `bounds` - The finite bounds to normalize
+///
+/// # Returns
+///
+/// [`Result`] containing [`FiniteBounds`] in normalized form that contains the input bounds,
+/// or a [`ComputableError::InfiniteBounds`] if the exponent shift is too large.
+///
+/// # Errors
+///
+/// Returns [`ComputableError::InfiniteBounds`] if the exponent shift required for normalization
+/// is too large to represent (doesn't fit in `usize`).
+pub fn normalize_bounds(
+    bounds: &FiniteBounds,
+) -> Result<FiniteBounds, crate::error::ComputableError> {
+    use num_traits::Signed;
+
+    let lower = bounds.small();
+    let width_ubinary = bounds.width();
+
+    // The exponent must be large enough that the width fits in one unit:
+    // 2^e >= width, so e >= log2(width)
+    // For width = m * 2^exp where m has b bits: log2(width) < exp + b
+    // We use e = exp + b to ensure 2^e > width (or 2^e >= width if m is a power of 2)
+    //
+    // However, if width mantissa is 1 AND lower is representable at width's exponent
+    // (i.e., already normalized), we can use that exponent directly.
+    use num_bigint::BigUint;
+    use num_traits::One;
+    let width_bits = width_ubinary.mantissa().bits();
+
+    let is_already_normalized = *width_ubinary.mantissa() == BigUint::one()
+        && (lower.exponent() == width_ubinary.exponent() || lower.mantissa().is_zero()); // Zero is compatible with any exponent
+
+    let target_exp = if is_already_normalized {
+        width_ubinary.exponent().clone()
+    } else {
+        // Add 1 extra to account for rounding when flooring the lower bound
+        width_ubinary.exponent() + BigInt::from(width_bits as i64) + BigInt::one()
+    };
+
+    // Floor the lower bound to this exponent
+    // lower_floored = floor(lower / 2^target_exp) * 2^target_exp
+    let shift = lower.exponent() - &target_exp;
+    let lower_mantissa = if shift.is_zero() {
+        lower.mantissa().clone()
+    } else if shift.is_positive() {
+        // Shift left (no rounding needed)
+        let shift_amount = shift
+            .magnitude()
+            .to_usize()
+            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
+        lower.mantissa() << shift_amount
+    } else {
+        // Shift right (floor toward -∞)
+        // For negative numbers, arithmetic right shift rounds toward -∞
+        // For positive numbers, it also rounds toward -∞ (rounds down)
+        let shift_amount = shift
+            .magnitude()
+            .to_usize()
+            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
+        lower.mantissa() >> shift_amount
+    };
+
+    Ok(bounds_from_normalized(lower_mantissa, target_exp))
+}
+
 /// Selects the midpoint as the split point.
 ///
 /// This is the traditional bisection strategy.
+/// Computes lower + width/2 to avoid redundant operations.
 fn select_midpoint(bounds: &FiniteBounds) -> Binary {
-    midpoint(bounds.small(), &bounds.large())
+    let half_width = bounds.width().to_binary();
+    let half_width_shifted = Binary::new(
+        half_width.mantissa().clone(),
+        half_width.exponent() - BigInt::one(),
+    );
+    bounds.small().add(&half_width_shifted)
 }
 
-/// Selects the shortest representation as the split point, falling back to midpoint.
+/// Performs a single step of binary search using the midpoint strategy.
 ///
-/// This strategy reduces precision accumulation by preferring split points with
-/// shorter mantissa representations. Falls back to midpoint if the shortest
-/// representation equals an endpoint (to ensure progress).
-fn select_shortest(bounds: &FiniteBounds) -> Binary {
-    let lower = bounds.small();
-    let upper = bounds.large();
-    let shortest = shortest_binary_in_finite_bounds(bounds);
-
-    // If the shortest representation equals an endpoint, fall back to the midpoint
-    // to ensure progress (we need a point strictly between the bounds)
-    if shortest == *lower || shortest == upper {
-        midpoint(lower, &upper)
-    } else {
-        shortest
-    }
-}
-
-/// Performs a single step of binary search using a custom split point selection strategy.
-///
-/// This is the core bisection function that allows customizing how the split point
-/// is chosen. Use [`bisection_step`] or [`bisection_step_midpoint`] for common cases.
-///
-/// # Arguments
-///
-/// * `bounds` - The current bounds interval
-/// * `select_split` - A function that selects the split point given the current bounds
-/// * `compare` - A function that compares the split point to the target value
-///   and returns whether the target is above, below, or exactly at the split point
-///
-/// # Returns
-///
-/// New [`FiniteBounds`] after the bisection step. If an exact match was found,
-/// the bounds will have zero width (i.e., `bounds.width().is_zero()` is true).
-///
-/// # Behavior
-///
-/// - If `compare` returns `Above`: the target is above the split point, so
-///   the new interval is [split, upper]
-/// - If `compare` returns `Below`: the target is below the split point, so
-///   the new interval is [lower, split]
-/// - If `compare` returns `Exact`: the split point is exactly the target,
-///   so both bounds are set to the split point (width becomes zero)
-pub fn bisection_step_with<S, C>(bounds: FiniteBounds, select_split: S, compare: C) -> FiniteBounds
-where
-    S: FnOnce(&FiniteBounds) -> Binary,
-    C: FnOnce(&Binary) -> BisectionComparison,
-{
-    let lower = bounds.small().clone();
-    let upper = bounds.large();
-    let split = select_split(&bounds);
-
-    match compare(&split) {
-        BisectionComparison::Above => FiniteBounds::new(split, upper),
-        BisectionComparison::Below => FiniteBounds::new(lower, split),
-        BisectionComparison::Exact => FiniteBounds::new(split.clone(), split),
-    }
-}
-
-/// Performs a single step of binary search using the shortest representation strategy.
-///
-/// This function uses `shortest_binary_in_finite_bounds` to find a split point with
-/// a shorter mantissa representation. This prevents the exponential growth of mantissa
-/// bits that would occur with naive midpoint bisection, where each step can double
-/// the number of mantissa bits.
-///
-/// Falls back to midpoint if the shortest representation equals an endpoint.
-///
-/// # Arguments
-///
-/// * `bounds` - The current bounds interval
-/// * `compare` - A function that compares the split point to the target value
-///   and returns whether the target is above, below, or exactly at the split point
-///
-/// # Returns
-///
-/// New [`FiniteBounds`] after the bisection step. If an exact match was found,
-/// the bounds will have zero width (i.e., `bounds.width().is_zero()` is true).
-pub fn bisection_step<C>(bounds: FiniteBounds, compare: C) -> FiniteBounds
-where
-    C: FnOnce(&Binary) -> BisectionComparison,
-{
-    bisection_step_with(bounds, select_shortest, compare)
-}
-
-/// Performs a single step of binary search using the traditional midpoint strategy.
-///
-/// This is the classic bisection approach that always splits at the midpoint.
-/// Note that this can cause precision accumulation over many iterations, as each
-/// step may double the number of mantissa bits. For long-running refinements,
-/// consider using [`bisection_step`] instead.
+/// This is the standard bisection approach that splits at the midpoint.
+/// For best results, use [`normalize_bounds`] to convert your initial bounds to
+/// normalized form, which ensures midpoint bisection automatically selects the
+/// shortest representation at each step.
 ///
 /// # Arguments
 ///
@@ -199,11 +248,28 @@ where
 ///
 /// New [`FiniteBounds`] after the bisection step. If an exact match was found,
 /// the bounds will have zero width (i.e., `bounds.width().is_zero()` is true).
+///
+/// # Behavior
+///
+/// - If `compare` returns `Above`: the target is above the midpoint, so
+///   the new interval is [midpoint, upper]
+/// - If `compare` returns `Below`: the target is below the midpoint, so
+///   the new interval is [lower, midpoint]
+/// - If `compare` returns `Exact`: the midpoint is exactly the target,
+///   so both bounds are set to the midpoint (width becomes zero)
 pub fn bisection_step_midpoint<C>(bounds: FiniteBounds, compare: C) -> FiniteBounds
 where
     C: FnOnce(&Binary) -> BisectionComparison,
 {
-    bisection_step_with(bounds, select_midpoint, compare)
+    let lower = bounds.small().clone();
+    let upper = bounds.large();
+    let mid = select_midpoint(&bounds);
+
+    match compare(&mid) {
+        BisectionComparison::Above => FiniteBounds::new(mid, upper),
+        BisectionComparison::Below => FiniteBounds::new(lower, mid.clone()),
+        BisectionComparison::Exact => FiniteBounds::new(mid.clone(), mid),
+    }
 }
 
 #[cfg(test)]
@@ -236,7 +302,7 @@ mod tests {
         let lower = bin(0, 0);
         let upper = bin(4, 0);
         let bounds = FiniteBounds::new(lower, upper.clone());
-        let result = bisection_step(bounds, |_mid| {
+        let result = bisection_step_midpoint(bounds, |_mid| {
             // Pretend target is above the midpoint (2)
             BisectionComparison::Above
         });
@@ -250,7 +316,7 @@ mod tests {
         let lower = bin(0, 0);
         let upper = bin(4, 0);
         let bounds = FiniteBounds::new(lower.clone(), upper);
-        let result = bisection_step(bounds, |_mid| {
+        let result = bisection_step_midpoint(bounds, |_mid| {
             // Pretend target is below the midpoint (2)
             BisectionComparison::Below
         });
@@ -264,7 +330,7 @@ mod tests {
         let lower = bin(0, 0);
         let upper = bin(4, 0);
         let bounds = FiniteBounds::new(lower, upper);
-        let result = bisection_step(bounds, |_mid| BisectionComparison::Exact);
+        let result = bisection_step_midpoint(bounds, |_mid| BisectionComparison::Exact);
         assert_eq!(result.small(), &bin(2, 0));
         assert_eq!(result.large(), bin(2, 0));
         assert!(result.width().is_zero());
@@ -280,7 +346,7 @@ mod tests {
         let mut bounds = FiniteBounds::new(lower, upper);
 
         for _ in 0..50 {
-            bounds = bisection_step(bounds, |mid| {
+            bounds = bisection_step_midpoint(bounds, |mid| {
                 let mid_sq = mid.mul(mid);
                 match mid_sq.cmp(&target) {
                     std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -309,7 +375,7 @@ mod tests {
         let mut bounds = FiniteBounds::new(lower.clone(), upper.clone());
 
         for _ in 0..10 {
-            bounds = bisection_step(bounds, |mid| {
+            bounds = bisection_step_midpoint(bounds, |mid| {
                 let mid_sq = mid.mul(mid);
                 match mid_sq.cmp(&target) {
                     std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -343,7 +409,7 @@ mod tests {
         // With 5 iterations, should halve the interval 5 times
         // Starting width: 1024, final width: 1024 / 2^5 = 32
         for _ in 0..5 {
-            bounds = bisection_step(bounds, |_mid| BisectionComparison::Above);
+            bounds = bisection_step_midpoint(bounds, |_mid| BisectionComparison::Above);
         }
 
         // After 5 iterations always going Above, we should have narrowed
@@ -381,38 +447,191 @@ mod tests {
     }
 
     #[test]
-    fn bisection_step_with_custom_selector() {
-        // Test the generic bisection_step_with using a custom selector
-        let lower = bin(0, 0);
-        let upper = bin(4, 0);
-        let bounds = FiniteBounds::new(lower.clone(), upper.clone());
+    fn bounds_from_normalized_creates_correct_width() {
+        use num_bigint::BigUint;
 
-        // Custom selector that always returns the midpoint
-        let result = bisection_step_with(
-            bounds,
-            |b| midpoint(b.small(), &b.large()),
-            |_| BisectionComparison::Above,
-        );
+        // Create bounds with lower = 1.5 (3 * 2^-1) and width = 2^-10
+        // Express 1.5 with exponent -10: 1.5 = 3 * 2^-1 = (3 << 9) * 2^-10
+        let bounds = super::bounds_from_normalized(BigInt::from(3 << 9), BigInt::from(-10));
 
-        // Should have used midpoint (2) as split point
-        assert_eq!(result.small(), &bin(2, 0));
-        assert_eq!(result.large(), upper);
+        // Check that lower bound is 1.5
+        assert_eq!(bounds.small(), &bin(3, -1));
+
+        // Check that width is 1 * 2^(-10)
+        assert_eq!(bounds.width().mantissa(), &BigUint::from(1u32));
+        assert_eq!(bounds.width().exponent(), &BigInt::from(-10));
+
+        // Check that upper bound is 1.5 + 2^(-10) = ((3 << 9) + 1) * 2^-10
+        assert_eq!(bounds.large(), bin((3 << 9) + 1, -10));
     }
 
     #[test]
-    fn bisection_strategies_produce_same_result_for_simple_bounds() {
-        // For simple bounds like [0, 4], both strategies should pick the same split point (2)
-        let lower = bin(0, 0);
-        let upper = bin(4, 0);
+    fn bounds_from_normalized_with_integer_lower() {
+        use num_bigint::BigUint;
 
-        let bounds1 = FiniteBounds::new(lower.clone(), upper.clone());
-        let bounds2 = FiniteBounds::new(lower, upper);
+        // Create bounds with lower = 5 and width = 2^-8
+        // Express 5 with exponent -8: 5 = (5 << 8) * 2^-8
+        let bounds = super::bounds_from_normalized(BigInt::from(5 << 8), BigInt::from(-8));
 
-        let result1 = bisection_step(bounds1, |_| BisectionComparison::Above);
-        let result2 = bisection_step_midpoint(bounds2, |_| BisectionComparison::Above);
+        // Check that lower bound is 5
+        assert_eq!(bounds.small(), &bin(5, 0));
 
-        // Both should pick 2 as the split point
-        assert_eq!(result1.small(), result2.small());
-        assert_eq!(result1.large(), result2.large());
+        // Check that width is 1 * 2^(-8) = 1/256
+        assert_eq!(bounds.width().mantissa(), &BigUint::from(1u32));
+        assert_eq!(bounds.width().exponent(), &BigInt::from(-8));
+
+        // Check that upper bound is 5 + 1/256 = ((5 << 8) + 1) * 2^-8
+        assert_eq!(bounds.large(), bin((5 << 8) + 1, -8));
+    }
+
+    #[test]
+    fn bounds_from_normalized_can_be_used_for_bisection() {
+        // Create normalized bounds: lower = 1, width = 2^-10
+        // Express 1 with exponent -10: 1 = (1 << 10) * 2^-10
+        let bounds = super::bounds_from_normalized(BigInt::from(1 << 10), BigInt::from(-10));
+
+        // Perform one bisection step
+        let target = bin(5, -2); // 1.25, which should be in our interval [1, 1 + 1/1024]
+        let result = bisection_step_midpoint(bounds, |mid| match mid.cmp(&target) {
+            std::cmp::Ordering::Less => BisectionComparison::Above,
+            std::cmp::Ordering::Equal => BisectionComparison::Exact,
+            std::cmp::Ordering::Greater => BisectionComparison::Below,
+        });
+
+        // Should have narrowed the interval
+        assert!(
+            result.width()
+                < &super::bounds_from_normalized(BigInt::from(1 << 10), BigInt::from(-10))
+                    .width()
+                    .clone()
+        );
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_simple() {
+        use num_bigint::BigUint;
+
+        // Simple case: [1, 2]
+        let original = FiniteBounds::new(bin(1, 0), bin(2, 0));
+        let normalized = normalize_bounds(&original).expect("normalization failed");
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_fractional() {
+        use num_bigint::BigUint;
+
+        // Fractional bounds: [0.25, 0.75] = [1 * 2^-2, 3 * 2^-2]
+        let original = FiniteBounds::new(bin(1, -2), bin(3, -2));
+        let normalized = normalize_bounds(&original).expect("normalization failed");
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_mixed_exponents() {
+        use num_bigint::BigUint;
+
+        // Bounds with different exponents: [5 * 2^0, 11 * 2^-1] = [5, 5.5]
+        let original = FiniteBounds::new(bin(5, 0), bin(11, -1));
+        let normalized = normalize_bounds(&original).expect("normalization failed");
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_large_mantissas() {
+        use num_bigint::BigUint;
+
+        // Bounds with large mantissas: [123 * 2^-5, 125 * 2^-5]
+        let original = FiniteBounds::new(bin(123, -5), bin(125, -5));
+        let normalized = normalize_bounds(&original).expect("normalization failed");
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_contains_original_negative() {
+        use num_bigint::BigUint;
+
+        // Negative bounds: [-3, -1]
+        let original = FiniteBounds::new(bin(-3, 0), bin(-1, 0));
+        let normalized = normalize_bounds(&original).expect("normalization failed");
+
+        // Normalized bounds should contain original bounds
+        assert!(normalized.small() <= original.small());
+        assert!(normalized.large() >= original.large());
+
+        // Normalized bounds should have unit width mantissa
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+    }
+
+    #[test]
+    fn normalize_bounds_preserves_already_normalized() {
+        use num_bigint::BigUint;
+
+        // Already normalized: [5 * 2^-3, 6 * 2^-3] with width = 1 * 2^-3
+        let original = FiniteBounds::new(bin(5, -3), bin(6, -3));
+        let normalized = normalize_bounds(&original).expect("normalization failed");
+
+        // Should be exactly equal for already-normalized bounds
+        assert_eq!(normalized.small(), original.small());
+        assert_eq!(normalized.large(), original.large());
+        assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
+        assert_eq!(normalized.width().exponent(), &BigInt::from(-3));
+    }
+
+    #[test]
+    fn normalize_bounds_is_idempotent() {
+        // Test that normalize_bounds(normalize_bounds(x)) == normalize_bounds(x)
+
+        // Test with various bounds
+        let test_cases = vec![
+            FiniteBounds::new(bin(1, 0), bin(4, 0)),       // [1, 4]
+            FiniteBounds::new(bin(123, -5), bin(125, -5)), // fractional
+            FiniteBounds::new(bin(-10, 0), bin(-5, 0)),    // negative
+            FiniteBounds::new(bin(7, -2), bin(9, -2)),     // mixed
+        ];
+
+        for original in test_cases {
+            let normalized_once = normalize_bounds(&original).expect("first normalization failed");
+            let normalized_twice =
+                normalize_bounds(&normalized_once).expect("second normalization failed");
+
+            // Normalizing twice should give the same result as normalizing once
+            assert_eq!(
+                normalized_once.small(),
+                normalized_twice.small(),
+                "Idempotency failed for lower bound of {:?}",
+                original
+            );
+            assert_eq!(
+                normalized_once.large(),
+                normalized_twice.large(),
+                "Idempotency failed for upper bound of {:?}",
+                original
+            );
+        }
     }
 }

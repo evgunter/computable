@@ -1,0 +1,1 @@
+read through the codebase and identify any cases (outside of tests) where using type system cleverly could prevent (a) using expect, panic, unreachable, etc; (b) returning a Result type; or (c) performing the same check twice. mark each new case with a TODO and add the TODO to TODOS.md.

@@ -31,9 +31,13 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary_utils::bisection::{midpoint, BisectionComparison, bisection_step};
+use crate::binary::{
+    Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed,
+};
+use crate::binary_utils::bisection::{
+    BisectionComparison, bisection_step_midpoint, midpoint, normalize_bounds,
+};
 use crate::binary_utils::power::binary_pow;
-use crate::binary::{Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -59,13 +63,13 @@ pub struct NthRootOp {
     /// The root degree (n in x^(1/n)). Guaranteed to be >= 1 by the type system.
     pub degree: NonZeroU32,
     /// Current bisection state: tracks the interval for the root.
-    /// 
+    ///
     /// This is `None` until the first refinement step, which initializes it from
     /// the input bounds. We use `Option` because initialization requires calling
     /// `inner.get_bounds()` which can fail, but node construction (via `nth_root()`)
     /// is not supposed to be fallible. By deferring initialization to the first
     /// `refine_step()` call, we can propagate errors through the normal Result path.
-    /// 
+    ///
     /// Each refinement step halves this interval via bisection.
     pub bisection_state: RwLock<Option<BisectionState>>,
 }
@@ -88,7 +92,7 @@ impl NodeOp for NthRootOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let state = self.bisection_state.read();
-        
+
         match &*state {
             None => {
                 // Return initial conservative bounds based on input
@@ -116,19 +120,22 @@ impl NodeOp for NthRootOp {
     fn refine_step(&self) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.bisection_state.write();
-        
+
         match &mut *state {
             None => {
                 // Initialize the bisection state from input bounds
-                *state = Some(initialize_bisection_state(&input_bounds, self.degree.get())?);
+                *state = Some(initialize_nth_root_bisection_state(
+                    &input_bounds,
+                    self.degree.get(),
+                )?);
                 Ok(true)
             }
             Some(s) => {
-                // Perform one bisection step using the generic helper
+                // Perform one bisection step using midpoint strategy
                 let degree = self.degree.get();
                 let target = s.target.clone();
                 let bounds = FiniteBounds::new(s.lower.clone(), s.upper.clone());
-                let result = bisection_step(bounds, |mid| {
+                let result = bisection_step_midpoint(bounds, |mid| {
                     let mid_pow = binary_pow(mid, degree);
                     match mid_pow.cmp(&target) {
                         std::cmp::Ordering::Less => BisectionComparison::Above,
@@ -153,7 +160,7 @@ impl NodeOp for NthRootOp {
 }
 
 /// Computes initial conservative bounds for the n-th root.
-/// 
+///
 /// Computes lower and upper output bounds separately, which allows handling
 /// mixed finite/infinite input bounds (e.g., getting a finite lower output
 /// bound even when upper input is PosInf).
@@ -161,18 +168,22 @@ fn compute_initial_bounds(input_bounds: &Bounds, degree: u32) -> Result<Bounds, 
     let lower_input = input_bounds.small();
     let upper_input = &input_bounds.large();
     let is_even = degree.is_multiple_of(2);
-    
+
     let lower_output = compute_output_lower_bound(lower_input, is_even, degree)?;
     let upper_output = compute_output_upper_bound(upper_input, is_even, degree)?;
-    
+
     Ok(Bounds::new(lower_output, upper_output))
 }
 
 /// Computes a lower bound for the n-th root output from the lower input bound.
-/// 
+///
 /// For odd roots of negative values: cbrt(x) = -cbrt(|x|), so to get a LOWER
 /// bound on cbrt(x), we need an UPPER bound on cbrt(|x|), then negate.
-fn compute_output_lower_bound(lower_input: &XBinary, is_even: bool, degree: u32) -> Result<XBinary, ComputableError> {
+fn compute_output_lower_bound(
+    lower_input: &XBinary,
+    is_even: bool,
+    degree: u32,
+) -> Result<XBinary, ComputableError> {
     match lower_input {
         XBinary::NegInf => {
             // Lower input is -∞
@@ -213,10 +224,14 @@ fn compute_output_lower_bound(lower_input: &XBinary, is_even: bool, degree: u32)
 }
 
 /// Computes an upper bound for the n-th root output from the upper input bound.
-/// 
+///
 /// For odd roots of negative values: cbrt(x) = -cbrt(|x|), so to get an UPPER
 /// bound on cbrt(x), we need a LOWER bound on cbrt(|x|), then negate.
-fn compute_output_upper_bound(upper_input: &XBinary, is_even: bool, degree: u32) -> Result<XBinary, ComputableError> {
+fn compute_output_upper_bound(
+    upper_input: &XBinary,
+    is_even: bool,
+    degree: u32,
+) -> Result<XBinary, ComputableError> {
     match upper_input {
         XBinary::PosInf => Ok(XBinary::PosInf),
         XBinary::NegInf => {
@@ -255,58 +270,57 @@ fn compute_root_upper_bound(x: &Binary, _degree: u32) -> Binary {
     } else {
         x.clone()
     };
-    
-    if abs_x > one {
-        abs_x
-    } else {
-        one
-    }
+
+    if abs_x > one { abs_x } else { one }
 }
 
 /// Computes a lower bound for the n-th root of a positive value.
 /// Returns a value <= x^(1/n).
 fn compute_root_lower_bound(x: &Binary, _degree: u32) -> Binary {
     // Conservative lower bound: min(1, |x|) for x > 0, 0 otherwise
+    // TODO: use Binary::abs() -> UBinary to encode non-negativity and avoid repeated checks
     if x.mantissa().is_zero() || x.mantissa().is_negative() {
         return Binary::zero();
     }
-    
+
     let one = Binary::new(BigInt::one(), BigInt::zero());
-    if x < &one {
-        x.clone()
-    } else {
-        one
-    }
+    if x < &one { x.clone() } else { one }
 }
 
-/// Initializes the bisection state from the input bounds.
-fn initialize_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<BisectionState, ComputableError> {
+/// Initializes the bisection state for nth root computation.
+///
+/// Takes the midpoint of input bounds as the target value, then sets up initial
+/// bisection bounds to find the nth root of that target.
+fn initialize_nth_root_bisection_state(
+    input_bounds: &Bounds,
+    degree: u32,
+) -> Result<BisectionState, ComputableError> {
     let lower = input_bounds.small();
     let upper = &input_bounds.large();
-    
+
     // Get the target value - use midpoint for intervals, exact for points
     let target = match (lower, upper) {
         (XBinary::Finite(l), XBinary::Finite(u)) => midpoint(l, u),
         _ => return Err(ComputableError::InfiniteBounds),
     };
-    
+
     let is_even = degree.is_multiple_of(2);
-    
+
     // Handle negative targets for even roots
     if is_even && target.mantissa().is_negative() {
         return Err(ComputableError::DomainError);
     }
-    
+
     // For odd roots of negative values, compute root of |target| and negate
     let (actual_target, negate_result) = if !is_even && target.mantissa().is_negative() {
         (target.neg(), true)
     } else {
         (target.clone(), false)
     };
-    
+
     // Initial bounds for bisection: [0 or small, max(1, target)]
     let one = Binary::new(BigInt::one(), BigInt::zero());
-    
+
     let bisection_lower = if actual_target.mantissa().is_zero() {
         Binary::zero()
     } else if actual_target < one {
@@ -316,7 +330,7 @@ fn initialize_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<Bise
         // For target >= 1, the root is <= target, so use 1 as lower bound
         one.clone()
     };
-    
+
     let bisection_upper = if actual_target.mantissa().is_zero() {
         Binary::zero()
     } else if actual_target < one {
@@ -326,15 +340,19 @@ fn initialize_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<Bise
         // For target >= 1, the root is <= target, so use target as upper bound
         actual_target.clone()
     };
-    
+
+    // Normalize bounds once at initialization to ensure bisection automatically
+    // selects shortest representations at each step
+    let initial_bounds = FiniteBounds::new(bisection_lower, bisection_upper);
+    let normalized = normalize_bounds(&initial_bounds)?;
+
     Ok(BisectionState {
-        lower: bisection_lower,
-        upper: bisection_upper,
+        lower: normalized.small().clone(),
+        upper: normalized.large(),
         target: actual_target,
         negate_result,
     })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -363,12 +381,15 @@ mod tests {
         assert!(
             lower <= *expected && *expected <= upper,
             "Expected {} to be in bounds [{}, {}]",
-            expected, lower, upper
+            expected,
+            lower,
+            upper
         );
         assert!(
             width <= *epsilon,
             "Width {} should be <= epsilon {}",
-            width, epsilon
+            width,
+            epsilon
         );
     }
 
@@ -542,22 +563,5 @@ mod tests {
         assert!(lower <= bin(-2, 0));
         // Upper output bound should be >= cbrt(27) = 3
         assert!(upper >= bin(3, 0));
-    }
-
-    #[test]
-    fn power_function() {
-        use crate::binary_utils::power::binary_pow;
-        let x = bin(3, 0); // 3
-        assert_eq!(binary_pow(&x, 2), bin(9, 0)); // 3^2 = 9
-        assert_eq!(binary_pow(&x, 3), bin(27, 0)); // 3^3 = 27
-        assert_eq!(binary_pow(&x, 0), bin(1, 0)); // 3^0 = 1
-    }
-
-    #[test]
-    fn midpoint_function() {
-        let lower = bin(2, 0);
-        let upper = bin(4, 0);
-        let mid = midpoint(&lower, &upper);
-        assert_eq!(mid, bin(3, 0));
     }
 }

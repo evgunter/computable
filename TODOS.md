@@ -2,12 +2,19 @@
 
 ## Tier 1: Easy
 
-### <a id="epsilon-zero"></a>epsilon-zero: Allow epsilon = 0 with proper checks
-**File:** `src/computable.rs:73`
+### <a id="error-doctest"></a>error-doctest: Fix or investigate ignored doctest
+**File:** `src/error.rs:32`
 ```rust
-// TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
+/// TODO: why is the doctest ignored? does it not like macro_rules or something
 ```
-Now unblocked after shortest-repr implementation.
+Investigate why the doctest for the macro is ignored and fix if possible.
+
+### <a id="clippy-expect"></a>clippy-expect: Investigate missing clippy warning
+**File:** `benchmarks/src/balanced_sum.rs:26`
+```rust
+// TODO: why doesn't clippy complain about this expect?
+```
+Investigate why clippy isn't catching this expect usage.
 
 ### <a id="bisection-benchmark"></a>bisection-benchmark: Compare midpoint vs shortest-representation bisection
 **File:** `benchmarks/src/integer_roots.rs:1`
@@ -20,6 +27,50 @@ Benchmark to validate that the shortest-representation bisection strategy reduce
 
 
 ## Tier 2: Medium Effort (Unblocked, requires some work)
+
+### <a id="midpoint-dedup"></a>midpoint-dedup: Consolidate midpoint implementations
+**File:** `benchmarks/src/common.rs:50`
+```rust
+// TODO: remove all the implementations in other files of `midpoint` or `midpoint_between` etc and just use one implementation
+```
+Multiple implementations of midpoint calculation exist across the codebase. Consolidate into a single implementation in the main module using the + width/2 strategy.
+
+### <a id="interval-test-helper-dedup"></a>interval-test-helper-dedup: Consolidate interval test helpers
+**File:** `src/ops/pow.rs:135`, `src/ops/nth_root.rs:509`, `src/ops/arithmetic.rs:117`
+```rust
+// Multiple test files define their own interval_computable helper functions
+```
+Multiple test modules have their own `interval_computable` helper that creates a Computable with interval bounds. The main difference is whether they refine to midpoint or not. Consider consolidating into `test_utils` with a parameter to control refinement behavior, or at least add comments explaining why each version exists.
+
+### <a id="bisection-bigint"></a>bisection-bigint: Change exponent parameter type
+**File:** `src/binary_utils/bisection.rs:102`
+```rust
+// TODO: this doesn't need to take exponent as a BigInt since we don't really do that anywhere else.
+```
+Switch exponent parameter to a more convenient type for its callers once they're integrated.
+
+### <a id="test-macro"></a>test-macro: Create test boilerplate macro
+**File:** `src/refinement.rs:279`
+```rust
+// TODO: make a macro for basically
+// mod tests {
+//     #![allow(clippy::expect_used, clippy::panic)]
+```
+Create a macro for test module boilerplate with ratchet tests for clippy::expect_used and clippy::panic (they should NEVER be allowed in the code except in tests).
+
+### <a id="shortest-module-eval"></a>shortest-module-eval: Evaluate if shortest module is still needed
+**File:** `src/binary/shortest.rs:15`
+```rust
+//! # TODO: Evaluate if this module is still needed
+```
+With the introduction of `bounds_from_normalized` in the bisection module, it may be possible to avoid needing explicit shortest-representation searches. Evaluate if this module is only needed for cases where bounds cannot be normalized initially.
+
+### <a id="shortest-refinement"></a>shortest-refinement: Fix refinement progress tracking
+**File:** `src/binary/shortest.rs:271`
+```rust
+// TODO: all the cases that use this seem to not be tracking refinement progress properly.
+```
+Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
 
 ### <a id="nonzero-benchmark"></a>nonzero-benchmark: Use NonZeroU32 directly in benchmark
 **File:** `benchmarks/src/integer_roots.rs:35`
@@ -41,6 +92,22 @@ Replace with proper error handling.
 // TODO: can we use the type system to ensure that this is non-negative?
 ```
 Type constraint addition.
+
+### <a id="binary-abs-method"></a>binary-abs-method: Add Binary::abs() -> UBinary method
+**Files:** `src/ops/sin.rs:236`, `src/ops/sin.rs:683`, `src/ops/nth_root.rs:270`
+```rust
+// TODO: add Binary::abs() -> UBinary method to avoid repeated is_negative checks and encode
+// non-negativity in the type system
+```
+Multiple locations compute absolute value with `if x.mantissa().is_negative() { x.neg() } else { x.clone() }`. Adding an `abs()` method that returns `UBinary` would (a) avoid repeated sign checks, (b) encode non-negativity at the type level, and (c) reduce code duplication.
+
+### <a id="precision-option-type"></a>precision-option-type: Use Option for initialization state
+**File:** `src/ops/inv.rs:59`
+```rust
+// TODO: use Option<NonZeroOrPositiveBigInt> to encode "not initialized" vs "initialized"
+// at the type level, avoiding is_zero() check and making initialization state explicit
+```
+Currently checks `if precision.is_zero()` to determine if initialization is needed. Using `Option<NonZero...>` would encode this state in the type system, eliminating the runtime check.
 
 ### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy
 **File:** `src/ops/inv.rs:27`
@@ -80,6 +147,20 @@ Correctness issue.
 ---
 
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
+
+### <a id="bounds-dedup"></a>bounds-dedup: Deduplicate FiniteBounds and Bounds
+**File:** `src/binary.rs:77`
+```rust
+// TODO: Investigate code deduplication between FiniteBounds and Bounds. Both types
+```
+Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters and have similar interval arithmetic needs. Consider whether the interval_add, interval_sub, interval_neg, scale_positive, scale_bigint, midpoint, and comparison methods could be generalized to work on any `Interval<T, W>` where T and W satisfy appropriate trait bounds.
+
+### <a id="inv-bounds-order"></a>inv-bounds-order: Type system for bounds ordering
+**File:** `src/ops/inv.rs:113`
+```rust
+// TODO: can the type system ensure that the bounds remain ordered?
+```
+Use the type system to prevent invalid bounds ordering rather than runtime checks.
 
 ### <a id="sin-truncation-tracking"></a>sin-truncation-tracking: Fix truncation precision tracking
 **File:** `src/ops/sin.rs:565`

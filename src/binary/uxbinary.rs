@@ -175,11 +175,9 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
                 } else {
                     diff
                 };
-                UXBinary::Finite(
-                    UBinary::try_from_binary(&non_negative).unwrap_or_else(|_| {
-                        unreachable!("absolute value of difference should always be non-negative")
-                    }),
-                )
+                UXBinary::Finite(UBinary::try_from_binary(&non_negative).unwrap_or_else(|_| {
+                    unreachable!("absolute value of difference should always be non-negative")
+                }))
             }
         }
     }

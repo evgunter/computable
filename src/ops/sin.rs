@@ -26,7 +26,9 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{margin_from_width, simplify_bounds_if_needed, Binary, Bounds, FiniteBounds, XBinary};
+use crate::binary::{
+    Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed,
+};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -39,8 +41,7 @@ const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
 const MARGIN_SHIFT: u32 = 3;
 
 use super::pi::{
-    half_pi_interval_at_precision, pi_interval_at_precision,
-    two_pi_interval_at_precision,
+    half_pi_interval_at_precision, pi_interval_at_precision, two_pi_interval_at_precision,
 };
 
 /// Sine operation with Taylor series refinement.
@@ -150,7 +151,10 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
 
     // Compute sin bounds based on the reduction result
     let (result_lo, result_hi) = match reduced_result {
-        ReductionResult::InRange { interval, sign_flip } => {
+        ReductionResult::InRange {
+            interval,
+            sign_flip,
+        } => {
             // FiniteBounds is fully within [-pi/2, pi/2], use Taylor series
             let (sin_lo, sin_hi) = compute_sin_on_monotonic_interval(&interval, n);
             if sign_flip {
@@ -212,7 +216,10 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
 #[derive(Debug)]
 enum ReductionResult {
     /// FiniteBounds is fully in [-pi/2, pi/2], can use Taylor directly
-    InRange { interval: FiniteBounds, sign_flip: bool },
+    InRange {
+        interval: FiniteBounds,
+        sign_flip: bool,
+    },
     /// FiniteBounds contains pi/2 (sin maximum), provides minimum sin value
     ContainsMax { sin_min: Binary },
     /// FiniteBounds contains -pi/2 (sin minimum), provides maximum sin value
@@ -220,7 +227,10 @@ enum ReductionResult {
     /// FiniteBounds contains both critical points
     ContainsBoth,
     /// FiniteBounds spans multiple branches after reduction
-    SpansMultipleBranches { overall_lo: Binary, overall_hi: Binary },
+    SpansMultipleBranches {
+        overall_lo: Binary,
+        overall_hi: Binary,
+    },
 }
 
 /// Computes required pi precision based on input magnitude and Taylor terms.
@@ -233,6 +243,8 @@ enum ReductionResult {
 fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: usize) -> u64 {
     // Estimate k = |x| / (2*pi) using a rough approximation
     // We use the larger magnitude endpoint
+    // TODO: add Binary::abs() -> UBinary method to avoid repeated is_negative checks and encode
+    // non-negativity in the type system
     let abs_lo = if lower.mantissa().is_negative() {
         lower.neg()
     } else {
@@ -265,7 +277,9 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
     // Precision for final answer: depends on Taylor series precision
     // Taylor error ~= 2^(-taylor_terms * some_factor)
     // We want pi error to be smaller than this
-    let precision_for_answer = (taylor_terms as u64).saturating_mul(3).saturating_add(log2_k);
+    let precision_for_answer = (taylor_terms as u64)
+        .saturating_mul(3)
+        .saturating_add(log2_k);
 
     // Take max, with reasonable bounds
     let precision = precision_for_branch.max(precision_for_answer);
@@ -353,7 +367,7 @@ fn reduce_to_half_pi_range_interval(
 
     // Now determine which branch(es) the reduced interval falls into
     let neg_half_pi = half_pi.interval_neg(); // [-pi/2_hi, -pi/2_lo]
-    let neg_pi = pi.interval_neg();           // [-pi_hi, -pi_lo]
+    let neg_pi = pi.interval_neg(); // [-pi_hi, -pi_lo]
 
     // Key comparisons using conservative bounds:
     // To check if interval is entirely in [-pi/2, pi/2]:
@@ -518,7 +532,6 @@ fn compute_sin_bounds_for_point_with_pi(
     }
 }
 
-
 /// Computes k = round(x / period).
 fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     let mx = x.mantissa();
@@ -679,6 +692,7 @@ fn taylor_sin_partial_sum(x: &Binary, n: usize, rounding: RoundingDirection) -> 
 /// Always rounds UP to be conservative.
 fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
     // Compute |x|^(2n+1)
+    // TODO: use Binary::abs() -> UBinary to avoid repeated is_negative checks
     let abs_x = if x.mantissa().is_negative() {
         x.neg()
     } else {
@@ -794,7 +808,9 @@ mod tests {
     use super::*;
     use crate::binary::UBinary;
     use crate::computable::Computable;
-    use crate::test_utils::{bin, ubin, xbin, unwrap_finite, unwrap_finite_uxbinary, interval_midpoint_computable};
+    use crate::test_utils::{
+        bin, interval_midpoint_computable, ubin, unwrap_finite, unwrap_finite_uxbinary, xbin,
+    };
 
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
@@ -948,12 +964,7 @@ mod tests {
     fn sin_with_infinite_input_bounds() {
         let unbounded = Computable::new(
             0usize,
-            |_| {
-                Ok(Bounds::new(
-                    XBinary::NegInf,
-                    XBinary::PosInf,
-                ))
-            },
+            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| state + 1,
         );
         let sin_unbounded = unbounded.sin();
@@ -994,12 +1005,12 @@ mod tests {
         // Test that directed rounding produces well-ordered bounds that contain the true value.
 
         let test_cases = [
-            bin(1, -2),   // 0.25
-            bin(1, 0),    // 1.0
-            bin(3, 0),    // 3.0
-            bin(-1, 0),   // -1.0
-            bin(5, -1),   // 2.5
-            bin(-3, -1),  // -1.5
+            bin(1, -2),  // 0.25
+            bin(1, 0),   // 1.0
+            bin(3, 0),   // 3.0
+            bin(-1, 0),  // -1.0
+            bin(5, -1),  // 2.5
+            bin(-3, -1), // -1.5
         ];
 
         let neg_one = bin(-1, 0);
@@ -1013,19 +1024,23 @@ mod tests {
             assert!(
                 lower <= upper,
                 "Lower bound {} should be <= upper bound {} for x = {}",
-                lower, upper, x
+                lower,
+                upper,
+                x
             );
 
             // Verify bounds are within sin's range [-1, 1]
             assert!(
                 lower >= neg_one,
                 "Lower bound {} should be >= -1 for x = {}",
-                lower, x
+                lower,
+                x
             );
             assert!(
                 upper <= one,
                 "Upper bound {} should be <= 1 for x = {}",
-                upper, x
+                upper,
+                x
             );
         }
     }
@@ -1045,7 +1060,8 @@ mod tests {
         assert!(
             width10 < width5,
             "Bounds with 10 terms (width {}) should be tighter than 5 terms (width {})",
-            width10, width5
+            width10,
+            width5
         );
     }
 
@@ -1093,7 +1109,8 @@ mod tests {
         assert!(
             sum_down <= sum_up,
             "Rounding down {} should produce <= rounding up {}",
-            sum_down, sum_up
+            sum_down,
+            sum_up
         );
     }
 
@@ -1133,7 +1150,9 @@ mod tests {
         assert!(
             lower <= expected_value.add(&tolerance) && expected_value.sub(&tolerance) <= upper,
             "sin(100) bounds [{}, {}] should be within tolerance of expected value {}",
-            lower, upper, expected_value
+            lower,
+            upper,
+            expected_value
         );
     }
 
@@ -1160,7 +1179,8 @@ mod tests {
         assert!(
             lower <= zero && zero <= upper,
             "sin(pi) bounds [{}, {}] should contain zero",
-            lower, upper
+            lower,
+            upper
         );
     }
 }

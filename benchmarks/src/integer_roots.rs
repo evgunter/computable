@@ -1,18 +1,14 @@
-// TODO: Add comparison benchmark between midpoint-based bisection (bisection_step_midpoint)
-// and shortest-representation bisection (bisection_step) to measure the precision
-// accumulation reduction and any performance differences.
-
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
 use computable::{Binary, Computable, UBinary};
 use num_bigint::BigInt;
-use rand::rngs::StdRng;
 use rand::Rng;
+use rand::rngs::StdRng;
 
-use crate::balanced_sum::balanced_sum;
-use crate::common::{binary_from_f64, midpoint};
 use crate::UXBinary;
+use crate::balanced_sum::balanced_sum;
+use crate::common::{binary_from_f64, midpoint, try_finite_bounds};
 
 pub const INTEGER_ROOTS_SAMPLE_COUNT: usize = 1_000;
 
@@ -72,9 +68,12 @@ fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResu
         .refine_to_default(epsilon)
         .expect("refine_to should succeed");
 
+    let finite =
+        try_finite_bounds(&bounds).expect("bounds should be finite for nth_root operations");
+
     IntegerRootsComputableResult {
         duration: start.elapsed(),
-        midpoint: midpoint(&bounds),
+        midpoint: midpoint(&finite),
         width: bounds.width().clone(),
     }
 }
@@ -106,10 +105,7 @@ pub fn run_integer_roots_benchmark(rng: &mut StdRng) {
     println!("samples: {INTEGER_ROOTS_SAMPLE_COUNT}");
     println!("epsilon: 1");
     println!("root degrees: 2 (sqrt), 3 (cbrt), 4, 5, 6");
-    println!(
-        "float time:      {:?}",
-        integer_roots_float_result.duration
-    );
+    println!("float time:      {:?}", integer_roots_float_result.duration);
     println!(
         "computable time: {:?}",
         integer_roots_computable_result.duration

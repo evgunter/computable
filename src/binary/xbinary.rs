@@ -237,9 +237,18 @@ mod tests {
             Err(XBinaryError::Binary(BinaryError::Nan))
         ));
         // Infinities are converted to XBinary's infinity variants
-        assert_eq!(XBinary::from_f64(f64::INFINITY).expect("should succeed"), XBinary::PosInf);
-        assert_eq!(XBinary::from_f64(f64::NEG_INFINITY).expect("should succeed"), XBinary::NegInf);
-        assert_eq!(XBinary::from_f64(0.0).expect("should succeed"), XBinary::zero());
+        assert_eq!(
+            XBinary::from_f64(f64::INFINITY).expect("should succeed"),
+            XBinary::PosInf
+        );
+        assert_eq!(
+            XBinary::from_f64(f64::NEG_INFINITY).expect("should succeed"),
+            XBinary::NegInf
+        );
+        assert_eq!(
+            XBinary::from_f64(0.0).expect("should succeed"),
+            XBinary::zero()
+        );
     }
 
     #[test]

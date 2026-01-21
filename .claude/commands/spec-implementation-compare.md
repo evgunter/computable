@@ -1,0 +1,1 @@
+read README.md, then thoroughly review the codebase to see if there are (a) any discrepancies between the description in the README and the implementation, or (b) any cases where the README meaningfully underspecifies the behavior in the implementation. create TODOs for each of your findings, marked with TODO(spec-mismatch) or TODO(spec-underspecifies)

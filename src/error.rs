@@ -29,6 +29,7 @@ use crate::binary::BinaryError;
 ///
 /// * `$msg` - A description of what case was encountered (e.g., "lower input bound is PosInf")
 ///
+/// TODO: why is the doctest ignored? does it not like macro_rules or something
 /// # Example
 ///
 /// ```ignore
@@ -48,8 +49,6 @@ use std::fmt;
 /// Errors that can occur during computable operations and refinement.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ComputableError {
-    /// Epsilon must be positive for refinement.
-    NonpositiveEpsilon,
     /// Computed bounds are not in correct order (lower > upper).
     InvalidBoundsOrder,
     /// Refinement produced worse bounds than before.
@@ -73,7 +72,6 @@ pub enum ComputableError {
 impl fmt::Display for ComputableError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NonpositiveEpsilon => write!(f, "epsilon must be positive"),
             Self::InvalidBoundsOrder => write!(f, "computed bounds are not ordered"),
             Self::BoundsWorsened => write!(f, "refinement produced worse bounds"),
             Self::StateUnchanged => write!(f, "refinement did not change state"),
@@ -86,7 +84,10 @@ impl fmt::Display for ComputableError {
             }
             Self::Binary(err) => write!(f, "{err}"),
             Self::DomainError => write!(f, "input is outside the domain of the operation"),
-            Self::InfiniteBounds => write!(f, "input bounds are infinite where finite bounds are required"),
+            Self::InfiniteBounds => write!(
+                f,
+                "input bounds are infinite where finite bounds are required"
+            ),
         }
     }
 }

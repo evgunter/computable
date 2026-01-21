@@ -19,8 +19,8 @@ use num_traits::One;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    margin_from_width, reciprocal_of_biguint, simplify_bounds_if_needed, Binary, Bounds,
-    FiniteBounds, ReciprocalRounding, UBinary, XBinary,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, XBinary, margin_from_width,
+    reciprocal_of_biguint, simplify_bounds_if_needed,
 };
 use crate::computable::Computable;
 use crate::error::ComputableError;
@@ -239,7 +239,11 @@ fn arctan_recip_partial_sum(k: u64, num_terms: usize, rounding: RoundDir) -> Bin
 ///
 /// - For positive terms: round down gives lower bound, round up gives upper bound
 /// - For negative terms: we negate, so round up gives lower bound (more negative), etc.
-fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_term: bool) -> Binary {
+fn divide_one_by_bigint(
+    denominator: &BigInt,
+    rounding: RoundDir,
+    is_positive_term: bool,
+) -> Binary {
     // TODO(correctness): Fixed 128-bit precision caps the achievable accuracy to ~118 bits.
     // This causes the refinement loop to hang when requesting precision > 118 bits, because
     // the computed width (~2^-119) never reaches epsilon (e.g., 2^-128). Should make precision
@@ -261,7 +265,8 @@ fn divide_one_by_bigint(denominator: &BigInt, rounding: RoundDir, is_positive_te
 
     // Use magnitude() to convert positive BigInt to BigUint.
     // The denominator is always positive (product of positive coefficients and powers).
-    let unsigned_result = reciprocal_of_biguint(denominator.magnitude(), PRECISION_BITS, recip_rounding);
+    let unsigned_result =
+        reciprocal_of_biguint(denominator.magnitude(), PRECISION_BITS, recip_rounding);
 
     // Apply sign based on whether this is a positive or negative term
     if is_positive_term {
@@ -303,7 +308,6 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
     // Compute 1/denominator, rounding UP for conservative error bound.
     reciprocal_of_biguint(&denominator, PRECISION_BITS, ReciprocalRounding::Ceil)
 }
-
 
 /// Returns pi as a FiniteBounds interval with specified precision.
 pub fn pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
@@ -405,10 +409,7 @@ mod tests {
         let width_5 = pi_hi_5.sub(&pi_lo_5);
         let width_20 = pi_hi_20.sub(&pi_lo_20);
 
-        assert!(
-            width_20 < width_5,
-            "more terms should give tighter bounds"
-        );
+        assert!(width_20 < width_5, "more terms should give tighter bounds");
     }
 
     #[test]
@@ -452,7 +453,9 @@ mod tests {
         let threshold = bin(1, -(PRECISION_BITS as i64 - 1));
         assert!(
             width < threshold,
-            "{} bits of precision should give width < 2^-{}", PRECISION_BITS, PRECISION_BITS - 1
+            "{} bits of precision should give width < 2^-{}",
+            PRECISION_BITS,
+            PRECISION_BITS - 1
         );
     }
 

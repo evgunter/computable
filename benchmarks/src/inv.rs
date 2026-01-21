@@ -2,11 +2,11 @@ use std::time::Instant;
 
 use computable::{Computable, UBinary};
 use num_bigint::BigInt;
-use rand::rngs::StdRng;
 use rand::Rng;
+use rand::rngs::StdRng;
 
 use crate::balanced_sum::balanced_sum;
-use crate::common::{binary_from_f64, midpoint};
+use crate::common::{binary_from_f64, midpoint, try_finite_bounds};
 
 pub const INV_SAMPLE_COUNT: usize = 100;
 pub const INV_PRECISION_BITS: i64 = 256;
@@ -41,7 +41,8 @@ pub fn run_inv_benchmark(rng: &mut StdRng) {
         .expect("refine_to should succeed");
     let computable_duration = computable_start.elapsed();
 
-    let computable_midpoint = midpoint(&bounds);
+    let finite = try_finite_bounds(&bounds).expect("bounds should be finite for inv operations");
+    let computable_midpoint = midpoint(&finite);
     let computable_width = bounds.width().clone();
 
     let inv_error = {
