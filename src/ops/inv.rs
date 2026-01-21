@@ -56,6 +56,8 @@ impl NodeOp for InvOp {
         // Once the TODO above is implemented (reusing precision calculation state),
         // this should be changed back to linear increment to avoid unnecessary
         // computation to higher precision than requested.
+        // TODO: use Option<NonZeroOrPositiveBigInt> to encode "not initialized" vs "initialized"
+        // at the type level, avoiding is_zero() check and making initialization state explicit
         if precision.is_zero() {
             *precision = BigInt::from(INV_INITIAL_PRECISION_BITS);
         } else {

@@ -92,6 +92,22 @@ Replace with proper error handling.
 ```
 Type constraint addition.
 
+### <a id="binary-abs-method"></a>binary-abs-method: Add Binary::abs() -> UBinary method
+**Files:** `src/ops/sin.rs:236`, `src/ops/sin.rs:683`, `src/ops/nth_root.rs:270`
+```rust
+// TODO: add Binary::abs() -> UBinary method to avoid repeated is_negative checks and encode
+// non-negativity in the type system
+```
+Multiple locations compute absolute value with `if x.mantissa().is_negative() { x.neg() } else { x.clone() }`. Adding an `abs()` method that returns `UBinary` would (a) avoid repeated sign checks, (b) encode non-negativity at the type level, and (c) reduce code duplication.
+
+### <a id="precision-option-type"></a>precision-option-type: Use Option for initialization state
+**File:** `src/ops/inv.rs:59`
+```rust
+// TODO: use Option<NonZeroOrPositiveBigInt> to encode "not initialized" vs "initialized"
+// at the type level, avoiding is_zero() check and making initialization state explicit
+```
+Currently checks `if precision.is_zero()` to determine if initialization is needed. Using `Option<NonZero...>` would encode this state in the type system, eliminating the runtime check.
+
 ### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy
 **File:** `src/ops/inv.rs:27`
 ```rust

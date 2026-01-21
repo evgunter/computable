@@ -233,6 +233,8 @@ enum ReductionResult {
 fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: usize) -> u64 {
     // Estimate k = |x| / (2*pi) using a rough approximation
     // We use the larger magnitude endpoint
+    // TODO: add Binary::abs() -> UBinary method to avoid repeated is_negative checks and encode
+    // non-negativity in the type system
     let abs_lo = if lower.mantissa().is_negative() {
         lower.neg()
     } else {
@@ -679,6 +681,7 @@ fn taylor_sin_partial_sum(x: &Binary, n: usize, rounding: RoundingDirection) -> 
 /// Always rounds UP to be conservative.
 fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
     // Compute |x|^(2n+1)
+    // TODO: use Binary::abs() -> UBinary to avoid repeated is_negative checks
     let abs_x = if x.mantissa().is_negative() {
         x.neg()
     } else {
