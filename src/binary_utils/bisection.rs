@@ -10,6 +10,15 @@
 //! - [`bisection_step`]: Uses shortest representation strategy (recommended for long refinements)
 //! - [`bisection_step_midpoint`]: Uses traditional midpoint strategy
 //! - [`bisection_step_with`]: Generic version with custom split point selection
+//! - [`bounds_from_normalized`]: Creates normalized bounds for optimal midpoint bisection
+//!
+//! # Choosing a Strategy
+//!
+//! If you can initialize bounds using [`bounds_from_normalized`], use [`bisection_step_midpoint`]:
+//! normalized bounds ensure midpoint bisection automatically selects shortest representations.
+//!
+//! If your bounds are computed dynamically (e.g., based on a target value), use [`bisection_step`]:
+//! it actively searches for shortest representations at each step.
 //!
 //! # Usage
 //!
@@ -150,6 +159,12 @@ fn select_midpoint(bounds: &FiniteBounds) -> Binary {
 /// This strategy reduces precision accumulation by preferring split points with
 /// shorter mantissa representations. Falls back to midpoint if the shortest
 /// representation equals an endpoint (to ensure progress).
+///
+/// # Note
+///
+/// If you can initialize your bounds using `bounds_from_normalized`, you can use
+/// `bisection_step_midpoint` instead of `bisection_step`, as midpoint bisection on
+/// normalized bounds automatically selects the shortest representation at each step.
 fn select_shortest(bounds: &FiniteBounds) -> Binary {
     let lower = bounds.small();
     let upper = bounds.large();

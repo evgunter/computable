@@ -125,6 +125,9 @@ impl NodeOp for NthRootOp {
             }
             Some(s) => {
                 // Perform one bisection step using the generic helper
+                // TODO: Consider using bounds_from_normalized + bisection_step_midpoint instead.
+                // This would require converting the initial bounds to normalized form, which
+                // may not be straightforward given the bounds are computed from the target value.
                 let degree = self.degree.get();
                 let target = s.target.clone();
                 let bounds = FiniteBounds::new(s.lower.clone(), s.upper.clone());

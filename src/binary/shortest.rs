@@ -11,6 +11,14 @@
 //! - [`shortest_xbinary_in_bounds`]: Find the shortest representation strictly within extended bounds
 //! - [`simplify_bounds`]: Simplify bounds by finding shorter representations for both
 //!   the lower bound and width (matching how `Bounds` stores data internally)
+//!
+//! # TODO: Evaluate if this module is still needed
+//!
+//! With the introduction of `bounds_from_normalized` in the bisection module, it may be possible
+//! to avoid needing explicit shortest-representation searches. When bounds are initialized in
+//! normalized form (lower and width share same exponent, width mantissa = 1), midpoint bisection
+//! automatically selects the shortest representation at each step. This module may only be needed
+//! for cases where bounds cannot be normalized initially, or for the `simplify_bounds` operation.
 
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
