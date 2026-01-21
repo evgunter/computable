@@ -110,6 +110,7 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
         (lower_bound, upper_bound)
     };
 
+    // TODO: can the type system ensure that the bounds remain ordered?
     Bounds::new_checked(lower_bound, upper_bound).map_err(|_| ComputableError::InvalidBoundsOrder)
 }
 

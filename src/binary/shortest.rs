@@ -268,6 +268,12 @@ pub fn bounds_precision(bounds: &Bounds) -> u64 {
     lower_bits + upper_bits
 }
 
+// TODO: all the cases that use this seem to not be tracking refinement progress properly.
+// i don't expect to see this in cases where we don't use the previous bounds to calculate the new bounds;
+// i think it's likely that what's happening in the cases where this is used now is that we're requesting
+// too much precision for bounds on a wide interval.
+// also in the longer term i think this function may not be necessary
+
 /// Simplifies bounds if they exceed a precision threshold.
 ///
 /// This is the recommended function for use in refinement loops. It only
