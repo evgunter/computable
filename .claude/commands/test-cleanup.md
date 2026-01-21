@@ -1,0 +1,1 @@
+look for tests which are redundant, which would be better placed in a different file (e.g. because the function they test was moved), or which are questionably useful, and fix them. if it's not completely obvious how to fix the test, just make a TODO about it and add it to TODOS.md
