@@ -1,7 +1,3 @@
-// TODO: Add comparison benchmark between midpoint-based bisection (bisection_step_midpoint)
-// and shortest-representation bisection (bisection_step) to measure the precision
-// accumulation reduction and any performance differences.
-
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
