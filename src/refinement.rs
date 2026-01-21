@@ -344,6 +344,25 @@ mod tests {
     }
 
     #[test]
+    fn refine_to_with_zero_epsilon_on_non_exact_value_returns_max_iterations() {
+        // 1/3 cannot be represented exactly in binary, so epsilon=0 should
+        // eventually hit max iterations rather than hanging forever.
+        let one = Computable::constant(bin(1, 0));
+        let three = Computable::constant(bin(3, 0));
+        let one_third = one / three;
+
+        let epsilon = ubin(0, 0);
+        // Use a small max iterations count to keep the test fast
+        let result = one_third.refine_to::<10>(epsilon);
+
+        assert!(
+            matches!(result, Err(ComputableError::MaxRefinementIterations { max: 10 })),
+            "expected MaxRefinementIterations error for non-exact value with epsilon=0, got {:?}",
+            result
+        );
+    }
+
+    #[test]
     fn refine_to_returns_refined_state() {
         let computable = interval_midpoint_computable(0, 2);
         let epsilon = ubin(1, -1);
