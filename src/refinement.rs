@@ -285,6 +285,7 @@ mod tests {
     use crate::computable::Computable;
     use crate::error::ComputableError;
     use crate::test_utils::{bin, ubin, xbin, unwrap_finite, interval_midpoint_computable, midpoint_between, interval_refine};
+    use num_traits::Zero;
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
@@ -312,11 +313,53 @@ mod tests {
     // --- tests for different results of refinement (mostly errors) ---
 
     #[test]
-    fn refine_to_rejects_zero_epsilon() {
+    fn refine_to_accepts_zero_epsilon_for_exact_values() {
+        // A computable that collapses to a single point (width = 0) after refinement
         let computable = interval_midpoint_computable(0, 2);
         let epsilon = ubin(0, 0);
-        let result = computable.refine_to_default(epsilon);
-        assert!(matches!(result, Err(ComputableError::NonpositiveEpsilon)));
+        let bounds = computable
+            .refine_to_default(epsilon)
+            .expect("refine_to with epsilon=0 should succeed when bounds converge exactly");
+
+        // After refinement, bounds should be exactly [1, 1]
+        assert_eq!(bounds.small(), &xbin(1, 0));
+        assert_eq!(bounds.large(), xbin(1, 0));
+
+        // Width should be exactly zero
+        assert!(matches!(bounds.width(), UXBinary::Finite(w) if w.mantissa().is_zero()));
+    }
+
+    #[test]
+    fn refine_to_with_zero_epsilon_on_constant_succeeds_immediately() {
+        // A constant computable already has exact bounds (width = 0)
+        let computable = Computable::constant(bin(42, 0));
+        let epsilon = ubin(0, 0);
+        let bounds = computable
+            .refine_to_default(epsilon)
+            .expect("refine_to with epsilon=0 should succeed for constants");
+
+        // Bounds should be exactly [42, 42]
+        assert_eq!(bounds.small(), &xbin(42, 0));
+        assert_eq!(bounds.large(), xbin(42, 0));
+    }
+
+    #[test]
+    fn refine_to_with_zero_epsilon_on_non_exact_value_returns_max_iterations() {
+        // 1/3 cannot be represented exactly in binary, so epsilon=0 should
+        // eventually hit max iterations rather than hanging forever.
+        let one = Computable::constant(bin(1, 0));
+        let three = Computable::constant(bin(3, 0));
+        let one_third = one / three;
+
+        let epsilon = ubin(0, 0);
+        // Use a small max iterations count to keep the test fast
+        let result = one_third.refine_to::<10>(epsilon);
+
+        assert!(
+            matches!(result, Err(ComputableError::MaxRefinementIterations { max: 10 })),
+            "expected MaxRefinementIterations error for non-exact value with epsilon=0, got {:?}",
+            result
+        );
     }
 
     #[test]

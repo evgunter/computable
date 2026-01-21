@@ -2,13 +2,6 @@
 
 ## Tier 1: Easy
 
-### <a id="epsilon-zero"></a>epsilon-zero: Allow epsilon = 0 with proper checks
-**File:** `src/computable.rs:73`
-```rust
-// TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
-```
-Now unblocked after shortest-repr implementation.
-
 ### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
 **File:** `src/binary/shortest.rs:22`
 ```rust

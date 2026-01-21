@@ -62,20 +62,22 @@ impl Computable {
     /// Refines this computable until the bounds width is at most epsilon.
     ///
     /// # Arguments
-    /// * `epsilon` - Maximum width for the returned bounds
+    /// * `epsilon` - Maximum width for the returned bounds. May be zero to request
+    ///   exact bounds (width = 0).
     ///
     /// # Type Parameters
     /// * `MAX_REFINEMENT_ITERATIONS` - Maximum number of refinement iterations
+    ///
+    /// # Warning
+    /// Setting `epsilon = 0` will only succeed for values that can be represented
+    /// exactly in binary (e.g., integers, dyadic rationals like 1/2 or 3/4).
+    /// For values that cannot be exactly represented (e.g., 1/3, sqrt(2), pi),
+    /// refinement will never achieve zero width and will return
+    /// [`ComputableError::MaxRefinementIterations`] after exhausting the iteration limit.
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         &self,
         epsilon: UBinary,
     ) -> Result<Bounds, ComputableError> {
-        // TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
-        // (e.g. as-is, sqrt(4) may never refine to a width of 0 because we just use binary search)
-        if epsilon.mantissa().is_zero() {
-            return Err(ComputableError::NonpositiveEpsilon);
-        }
-
         loop {
             let bounds = self.node.get_bounds()?;
             if bounds_width_leq(&bounds, &epsilon) {
