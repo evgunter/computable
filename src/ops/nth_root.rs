@@ -560,13 +560,4 @@ mod tests {
         assert_eq!(binary_pow(&x, 3), bin(27, 0)); // 3^3 = 27
         assert_eq!(binary_pow(&x, 0), bin(1, 0)); // 3^0 = 1
     }
-
-    // TODO: i think this is redundant with the tests in bisection.rs
-    #[test]
-    fn midpoint_function() {
-        let lower = bin(2, 0);
-        let upper = bin(4, 0);
-        let mid = midpoint(&lower, &upper);
-        assert_eq!(mid, bin(3, 0));
-    }
 }

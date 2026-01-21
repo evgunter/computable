@@ -2,13 +2,6 @@
 
 ## Tier 1: Easy
 
-### <a id="nth-root-test-redundant"></a>nth-root-test-redundant: Remove redundant midpoint test
-**File:** `src/ops/nth_root.rs:564`
-```rust
-// TODO: i think this is redundant with the tests in bisection.rs
-```
-Verify the test is covered elsewhere and remove if redundant.
-
 ### <a id="error-doctest"></a>error-doctest: Fix or investigate ignored doctest
 **File:** `src/error.rs:32`
 ```rust
