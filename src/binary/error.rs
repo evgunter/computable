@@ -86,7 +86,10 @@ mod tests {
 
     #[test]
     fn xbinary_error_display() {
-        assert_eq!(XBinaryError::Nan.to_string(), "cannot convert NaN to XBinary");
+        assert_eq!(
+            XBinaryError::Nan.to_string(),
+            "cannot convert NaN to XBinary"
+        );
         assert_eq!(
             XBinaryError::IndeterminateForm.to_string(),
             "indeterminate form (e.g., infinity - infinity)"
@@ -101,6 +104,9 @@ mod tests {
     fn binary_error_converts_to_xbinary_error() {
         let binary_err = BinaryError::NegativeMantissa;
         let xbinary_err: XBinaryError = binary_err.into();
-        assert!(matches!(xbinary_err, XBinaryError::Binary(BinaryError::NegativeMantissa)));
+        assert!(matches!(
+            xbinary_err,
+            XBinaryError::Binary(BinaryError::NegativeMantissa)
+        ));
     }
 }

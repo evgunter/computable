@@ -40,7 +40,9 @@ pub fn reciprocal_of_biguint(
     let numerator = BigUint::one() << precision_bits;
     let quotient = match rounding {
         ReciprocalRounding::Floor => numerator.div_floor(denominator),
-        ReciprocalRounding::Ceil => (&numerator + denominator - BigUint::one()).div_floor(denominator),
+        ReciprocalRounding::Ceil => {
+            (&numerator + denominator - BigUint::one()).div_floor(denominator)
+        }
     };
     let exponent = -BigInt::from(precision_bits);
     Binary::new(BigInt::from(quotient), exponent)
@@ -155,12 +157,17 @@ mod tests {
     fn reciprocal_of_infinity_is_zero() {
         let precision = BigInt::from(10);
 
-        let result = reciprocal_rounded_abs_extended(&XBinary::PosInf, &precision, ReciprocalRounding::Floor)
-            .expect("should succeed");
+        let result = reciprocal_rounded_abs_extended(
+            &XBinary::PosInf,
+            &precision,
+            ReciprocalRounding::Floor,
+        )
+        .expect("should succeed");
         assert!(result.is_zero());
 
-        let result = reciprocal_rounded_abs_extended(&XBinary::NegInf, &precision, ReciprocalRounding::Ceil)
-            .expect("should succeed");
+        let result =
+            reciprocal_rounded_abs_extended(&XBinary::NegInf, &precision, ReciprocalRounding::Ceil)
+                .expect("should succeed");
         assert!(result.is_zero());
     }
 
@@ -205,10 +212,12 @@ mod tests {
         let pos_value = xbin(1, 2); // 4
         let precision = BigInt::from(8);
 
-        let neg_result = reciprocal_rounded_abs_extended(&neg_value, &precision, ReciprocalRounding::Floor)
-            .expect("should succeed");
-        let pos_result = reciprocal_rounded_abs_extended(&pos_value, &precision, ReciprocalRounding::Floor)
-            .expect("should succeed");
+        let neg_result =
+            reciprocal_rounded_abs_extended(&neg_value, &precision, ReciprocalRounding::Floor)
+                .expect("should succeed");
+        let pos_result =
+            reciprocal_rounded_abs_extended(&pos_value, &precision, ReciprocalRounding::Floor)
+                .expect("should succeed");
 
         assert_eq!(neg_result, pos_result);
     }

@@ -134,8 +134,8 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
 /// assert_eq!(*bounds.width().exponent(), BigInt::from(-1));
 /// ```
 pub fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBounds {
-    use num_bigint::BigUint;
     use crate::binary::UBinary;
+    use num_bigint::BigUint;
 
     let lower = Binary::new(mantissa, exponent.clone());
     let width = UBinary::new(BigUint::one(), exponent);
@@ -163,7 +163,9 @@ pub fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBound
 ///
 /// Returns [`ComputableError::InfiniteBounds`] if the exponent shift required for normalization
 /// is too large to represent (doesn't fit in `usize`).
-pub fn normalize_bounds(bounds: &FiniteBounds) -> Result<FiniteBounds, crate::error::ComputableError> {
+pub fn normalize_bounds(
+    bounds: &FiniteBounds,
+) -> Result<FiniteBounds, crate::error::ComputableError> {
     use num_traits::Signed;
 
     let lower = bounds.small();
@@ -181,8 +183,7 @@ pub fn normalize_bounds(bounds: &FiniteBounds) -> Result<FiniteBounds, crate::er
     let width_bits = width_ubinary.mantissa().bits();
 
     let is_already_normalized = *width_ubinary.mantissa() == BigUint::one()
-        && (lower.exponent() == width_ubinary.exponent()
-            || lower.mantissa().is_zero()); // Zero is compatible with any exponent
+        && (lower.exponent() == width_ubinary.exponent() || lower.mantissa().is_zero()); // Zero is compatible with any exponent
 
     let target_exp = if is_already_normalized {
         width_ubinary.exponent().clone()
@@ -198,14 +199,18 @@ pub fn normalize_bounds(bounds: &FiniteBounds) -> Result<FiniteBounds, crate::er
         lower.mantissa().clone()
     } else if shift.is_positive() {
         // Shift left (no rounding needed)
-        let shift_amount = shift.magnitude().to_usize()
+        let shift_amount = shift
+            .magnitude()
+            .to_usize()
             .ok_or(crate::error::ComputableError::InfiniteBounds)?;
         lower.mantissa() << shift_amount
     } else {
         // Shift right (floor toward -∞)
         // For negative numbers, arithmetic right shift rounds toward -∞
         // For positive numbers, it also rounds toward -∞ (rounds down)
-        let shift_amount = shift.magnitude().to_usize()
+        let shift_amount = shift
+            .magnitude()
+            .to_usize()
             .ok_or(crate::error::ComputableError::InfiniteBounds)?;
         lower.mantissa() >> shift_amount
     };
@@ -487,16 +492,19 @@ mod tests {
 
         // Perform one bisection step
         let target = bin(5, -2); // 1.25, which should be in our interval [1, 1 + 1/1024]
-        let result = bisection_step_midpoint(bounds, |mid| {
-            match mid.cmp(&target) {
-                std::cmp::Ordering::Less => BisectionComparison::Above,
-                std::cmp::Ordering::Equal => BisectionComparison::Exact,
-                std::cmp::Ordering::Greater => BisectionComparison::Below,
-            }
+        let result = bisection_step_midpoint(bounds, |mid| match mid.cmp(&target) {
+            std::cmp::Ordering::Less => BisectionComparison::Above,
+            std::cmp::Ordering::Equal => BisectionComparison::Exact,
+            std::cmp::Ordering::Greater => BisectionComparison::Below,
         });
 
         // Should have narrowed the interval
-        assert!(result.width() < &super::bounds_from_normalized(BigInt::from(1 << 10), BigInt::from(-10)).width().clone());
+        assert!(
+            result.width()
+                < &super::bounds_from_normalized(BigInt::from(1 << 10), BigInt::from(-10))
+                    .width()
+                    .clone()
+        );
     }
 
     #[test]
@@ -600,15 +608,16 @@ mod tests {
 
         // Test with various bounds
         let test_cases = vec![
-            FiniteBounds::new(bin(1, 0), bin(4, 0)),           // [1, 4]
-            FiniteBounds::new(bin(123, -5), bin(125, -5)),     // fractional
-            FiniteBounds::new(bin(-10, 0), bin(-5, 0)),        // negative
-            FiniteBounds::new(bin(7, -2), bin(9, -2)),         // mixed
+            FiniteBounds::new(bin(1, 0), bin(4, 0)),       // [1, 4]
+            FiniteBounds::new(bin(123, -5), bin(125, -5)), // fractional
+            FiniteBounds::new(bin(-10, 0), bin(-5, 0)),    // negative
+            FiniteBounds::new(bin(7, -2), bin(9, -2)),     // mixed
         ];
 
         for original in test_cases {
             let normalized_once = normalize_bounds(&original).expect("first normalization failed");
-            let normalized_twice = normalize_bounds(&normalized_once).expect("second normalization failed");
+            let normalized_twice =
+                normalize_bounds(&normalized_once).expect("second normalization failed");
 
             // Normalizing twice should give the same result as normalizing once
             assert_eq!(

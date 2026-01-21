@@ -418,6 +418,9 @@ mod tests {
     #[test]
     fn binary_from_f64_rejects_infinity() {
         assert_eq!(Binary::from_f64(f64::INFINITY), Err(BinaryError::Infinity));
-        assert_eq!(Binary::from_f64(f64::NEG_INFINITY), Err(BinaryError::Infinity));
+        assert_eq!(
+            Binary::from_f64(f64::NEG_INFINITY),
+            Err(BinaryError::Infinity)
+        );
     }
 }

@@ -10,12 +10,12 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
 
+use crate::binary::Bounds;
 use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PowOp, SinOp};
-use crate::binary::Bounds;
-use crate::refinement::{bounds_width_leq, RefinementGraph};
+use crate::refinement::{RefinementGraph, bounds_width_leq};
 
 use parking_lot::RwLock;
 
@@ -308,10 +308,7 @@ mod tests {
         let bounds = computable.bounds().expect("bounds should succeed");
         assert_eq!(
             bounds,
-            Bounds::new(
-                XBinary::Finite(value.clone()),
-                XBinary::Finite(value)
-            )
+            Bounds::new(XBinary::Finite(value.clone()), XBinary::Finite(value))
         );
     }
 
@@ -330,8 +327,8 @@ mod tests {
         let upper = bounds.large();
         let upper = unwrap_finite(&upper);
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
-        let expected_binary = XBinary::from_f64(expected)
-            .expect("expected value should convert to extended binary");
+        let expected_binary =
+            XBinary::from_f64(expected).expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon.to_binary();
 
@@ -356,8 +353,8 @@ mod tests {
         let upper = bounds.large();
         let upper = unwrap_finite(&upper);
         let expected = 2.0_f64 * 2.0_f64.sqrt();
-        let expected_binary = XBinary::from_f64(expected)
-            .expect("expected value should convert to extended binary");
+        let expected_binary =
+            XBinary::from_f64(expected).expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon.to_binary();
 

@@ -57,18 +57,27 @@ pub fn shortest_binary_in_finite_bounds(bounds: &FiniteBounds) -> Binary {
             Binary::zero()
         }
         // Both bounds are non-negative (lower >= 0)
-        (Sign::NoSign, Sign::NoSign) | (Sign::Plus, Sign::Plus) | (Sign::NoSign, _) | (Sign::Plus, _) => {
+        (Sign::NoSign, Sign::NoSign)
+        | (Sign::Plus, Sign::Plus)
+        | (Sign::NoSign, _)
+        | (Sign::Plus, _) => {
             // Use magnitude() to get UBinary directly, and bounds.width() for the width
-            shortest_binary_in_positive_interval(&lower.magnitude(), &UXBinary::Finite(bounds.width().clone()))
-                .to_binary()
+            shortest_binary_in_positive_interval(
+                &lower.magnitude(),
+                &UXBinary::Finite(bounds.width().clone()),
+            )
+            .to_binary()
         }
         // Both bounds are negative (upper <= 0)
         (Sign::Minus, Sign::Minus) => {
             // For negative interval [lower, upper] where lower < upper < 0:
             // Map to positive interval [|upper|, |lower|] and negate the result
-            shortest_binary_in_positive_interval(&upper.magnitude(), &UXBinary::Finite(bounds.width().clone()))
-                .to_binary()
-                .neg()
+            shortest_binary_in_positive_interval(
+                &upper.magnitude(),
+                &UXBinary::Finite(bounds.width().clone()),
+            )
+            .to_binary()
+            .neg()
         }
     }
 }
@@ -86,7 +95,8 @@ pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
             if bounds.large() >= XBinary::zero() {
                 XBinary::zero()
             } else {
-                shortest_xbinary_in_positive_interval(&bounds.large().magnitude(), bounds.width()).neg()
+                shortest_xbinary_in_positive_interval(&bounds.large().magnitude(), bounds.width())
+                    .neg()
             }
         }
     }
@@ -99,16 +109,19 @@ fn shortest_xbinary_in_positive_interval(lower: &UXBinary, width: &UXBinary) -> 
             crate::detected_computable_with_infinite_value!("lower input bound is PosInf");
             XBinary::PosInf
         }
-        UXBinary::Finite(lm) => XBinary::Finite(shortest_binary_in_positive_interval(lm, width).to_binary())
+        UXBinary::Finite(lm) => {
+            XBinary::Finite(shortest_binary_in_positive_interval(lm, width).to_binary())
+        }
     }
 }
 
 fn shortest_binary_in_positive_interval(lower: &UBinary, width: &UXBinary) -> UBinary {
     match width {
         UXBinary::Inf => {
-                // next power of 2 >= lower
-                let exponent = lower.exponent() + BigInt::from((lower.mantissa() - BigUint::one()).bits());
-                UBinary::new(BigUint::one(), exponent)
+            // next power of 2 >= lower
+            let exponent =
+                lower.exponent() + BigInt::from((lower.mantissa() - BigUint::one()).bits());
+            UBinary::new(BigUint::one(), exponent)
         }
         UXBinary::Finite(wm) => {
             // take lower and then cancel out as many mantissa bits as possible by adding at most wm.
@@ -126,7 +139,7 @@ fn shortest_binary_in_positive_interval(lower: &UBinary, width: &UXBinary) -> UB
             // position of highest differing bit, 0-indexed from the right
             // since lower is smaller, lower[k] = 0 and upper[k] = 1
             let k = xor.bits() - 1;
-            
+
             // if lower already has > k trailing zeros,
             // our plan to flip lower[k] to 1 and clear all following bits would make things worse
             let mask = (BigUint::one() << (k + 1)) - BigUint::one();
@@ -141,12 +154,11 @@ fn shortest_binary_in_positive_interval(lower: &UBinary, width: &UXBinary) -> UB
     }
 }
 
-
 fn split_xbinary(value: &XBinary) -> (Sign, UXBinary) {
     match value {
         XBinary::NegInf => (Sign::Minus, UXBinary::Inf),
         XBinary::PosInf => (Sign::Plus, UXBinary::Inf),
-        XBinary::Finite(v) => (v.mantissa().sign(), UXBinary::Finite(v.magnitude()))
+        XBinary::Finite(v) => (v.mantissa().sign(), UXBinary::Finite(v.magnitude())),
     }
 }
 
@@ -235,15 +247,14 @@ pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
     };
 
     // Find shortest width in [min_width, min_width + margin]
-    let new_width = shortest_binary_in_positive_interval(&min_width_unsigned, &UXBinary::Finite(finite_margin.clone()));
+    let new_width = shortest_binary_in_positive_interval(
+        &min_width_unsigned,
+        &UXBinary::Finite(finite_margin.clone()),
+    );
 
     // Construct new bounds directly from lower and width
-    Bounds::from_lower_and_width(
-        XBinary::Finite(new_lower),
-        UXBinary::Finite(new_width),
-    )
+    Bounds::from_lower_and_width(XBinary::Finite(new_lower), UXBinary::Finite(new_width))
 }
-
 
 /// Computes the mantissa bit count of a Binary number.
 ///
@@ -373,7 +384,10 @@ mod tests {
         // [1.41421356..., 1.41421357...] with many mantissa bits
         let lower = bin(181, -7); // ~1.4140625
         let upper = bin(363, -8); // ~1.41796875
-        let bounds = Bounds::new(XBinary::Finite(lower.clone()), XBinary::Finite(upper.clone()));
+        let bounds = Bounds::new(
+            XBinary::Finite(lower.clone()),
+            XBinary::Finite(upper.clone()),
+        );
 
         let original_precision = bounds_precision(&bounds);
         let margin = margin_from_width(bounds.width(), 2); // loosen by width/4
@@ -394,7 +408,10 @@ mod tests {
         // Bounds around sqrt(2) ~ 1.414...
         let lower = bin(1414, -10); // ~1.380859375
         let upper = bin(1415, -10); // ~1.3818359375
-        let bounds = Bounds::new(XBinary::Finite(lower.clone()), XBinary::Finite(upper.clone()));
+        let bounds = Bounds::new(
+            XBinary::Finite(lower.clone()),
+            XBinary::Finite(upper.clone()),
+        );
 
         let margin = margin_from_width(bounds.width(), 2);
         let simplified = simplify_bounds(&bounds, &margin);
@@ -403,19 +420,24 @@ mod tests {
         assert!(
             simplified.small() <= bounds.small(),
             "Simplified lower bound {} should be <= original lower {}",
-            simplified.small(), bounds.small()
+            simplified.small(),
+            bounds.small()
         );
         assert!(
             simplified.large() >= bounds.large(),
             "Simplified upper bound {} should be >= original upper {}",
-            simplified.large(), bounds.large()
+            simplified.large(),
+            bounds.large()
         );
     }
 
     #[test]
     fn simplify_bounds_handles_zero_width() {
         let point = bin(5, 0);
-        let bounds = Bounds::new(XBinary::Finite(point.clone()), XBinary::Finite(point.clone()));
+        let bounds = Bounds::new(
+            XBinary::Finite(point.clone()),
+            XBinary::Finite(point.clone()),
+        );
 
         // margin_from_width with zero width gives a zero margin
         let margin = margin_from_width(bounds.width(), 2);
@@ -431,7 +453,10 @@ mod tests {
         let bounds = Bounds::new(XBinary::Finite(bin(1, 0)), XBinary::PosInf);
 
         // margin_from_width returns Inf for infinite width
-        assert!(matches!(margin_from_width(bounds.width(), 2), UXBinary::Inf));
+        assert!(matches!(
+            margin_from_width(bounds.width(), 2),
+            UXBinary::Inf
+        ));
 
         // simplify_bounds with infinite margin returns bounds unchanged
         let margin = margin_from_width(bounds.width(), 2);
@@ -592,12 +617,14 @@ mod tests {
         assert!(
             shortest >= lower,
             "shortest {} should be >= lower {}",
-            shortest, lower
+            shortest,
+            lower
         );
         assert!(
             shortest <= upper,
             "shortest {} should be <= upper {}",
-            shortest, upper
+            shortest,
+            upper
         );
 
         // The shortest representation should ideally be 2 (mantissa = 1, exponent = 1)
@@ -607,7 +634,8 @@ mod tests {
         assert!(
             shortest_bits <= lower_bits,
             "shortest ({} bits) should have <= bits than lower ({} bits)",
-            shortest_bits, lower_bits
+            shortest_bits,
+            lower_bits
         );
     }
 }

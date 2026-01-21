@@ -45,8 +45,7 @@ pub(super) fn format_ubinary_display(
         return write!(f, "0.0");
     }
 
-    let (formatted_mantissa, adjusted_exponent) =
-        format_mantissa_with_point(mantissa, exponent);
+    let (formatted_mantissa, adjusted_exponent) = format_mantissa_with_point(mantissa, exponent);
 
     write!(f, "{} * 2^{}", formatted_mantissa, adjusted_exponent)
 }
@@ -98,7 +97,10 @@ mod tests {
     fn format_binary_display_zero() {
         let mantissa = BigInt::from(0);
         let exponent = BigInt::from(42);
-        let result = format!("{}", FormatWrapper(&mantissa, &exponent, format_binary_display));
+        let result = format!(
+            "{}",
+            FormatWrapper(&mantissa, &exponent, format_binary_display)
+        );
         assert_eq!(result, "0.0");
     }
 
@@ -106,7 +108,10 @@ mod tests {
     fn format_binary_display_negative() {
         let mantissa = BigInt::from(-15); // -1111 in binary
         let exponent = BigInt::from(3);
-        let result = format!("{}", FormatWrapper(&mantissa, &exponent, format_binary_display));
+        let result = format!(
+            "{}",
+            FormatWrapper(&mantissa, &exponent, format_binary_display)
+        );
         assert_eq!(result, "-1.111 * 2^6"); // 3 + 3
     }
 

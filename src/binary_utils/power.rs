@@ -96,11 +96,7 @@ pub fn xbinary_pow(x: &XBinary, n: NonZeroU32) -> XBinary {
 ///
 /// Uses the standard ordering: -∞ < all finite values < +∞.
 pub fn xbinary_max(a: &XBinary, b: &XBinary) -> XBinary {
-    if a >= b {
-        a.clone()
-    } else {
-        b.clone()
-    }
+    if a >= b { a.clone() } else { b.clone() }
 }
 
 /// Returns true if the XBinary value is negative (less than zero).

@@ -23,13 +23,13 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::thread;
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 
+use crate::binary::Bounds;
 use crate::binary::{UBinary, UXBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
-use crate::binary::Bounds;
 
 /// Command sent to a refiner thread.
 #[derive(Clone, Copy)]
@@ -215,9 +215,7 @@ fn spawn_refiner<'scope, 'env>(
         }));
     });
 
-    RefinerHandle {
-        sender: command_tx,
-    }
+    RefinerHandle { sender: command_tx }
 }
 
 fn refiner_loop(
@@ -290,7 +288,10 @@ mod tests {
     use crate::binary::XBinary;
     use crate::computable::Computable;
     use crate::error::ComputableError;
-    use crate::test_utils::{bin, ubin, xbin, unwrap_finite, interval_midpoint_computable, midpoint_between, interval_refine};
+    use crate::test_utils::{
+        bin, interval_midpoint_computable, interval_refine, midpoint_between, ubin, unwrap_finite,
+        xbin,
+    };
     use num_traits::Zero;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -362,7 +363,10 @@ mod tests {
         let result = one_third.refine_to::<10>(epsilon);
 
         assert!(
-            matches!(result, Err(ComputableError::MaxRefinementIterations { max: 10 })),
+            matches!(
+                result,
+                Err(ComputableError::MaxRefinementIterations { max: 10 })
+            ),
             "expected MaxRefinementIterations error for non-exact value with epsilon=0, got {:?}",
             result
         );
@@ -386,10 +390,7 @@ mod tests {
         assert!(width < epsilon);
         let refined_bounds = computable.bounds().expect("bounds should succeed");
         let refined_upper = refined_bounds.large();
-        assert!(
-            refined_bounds.small() <= &expected
-                && &expected <= &refined_upper
-        );
+        assert!(refined_bounds.small() <= &expected && &expected <= &refined_upper);
     }
 
     #[test]
@@ -409,12 +410,7 @@ mod tests {
     fn refine_to_enforces_max_iterations() {
         let computable = Computable::new(
             0usize,
-            |_| {
-                Ok(Bounds::new(
-                    XBinary::NegInf,
-                    XBinary::PosInf,
-                ))
-            },
+            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| state + 1,
         );
         let epsilon = ubin(1, -1);
@@ -453,10 +449,7 @@ mod tests {
             |inner_state: IntervalState| {
                 let upper = inner_state.large();
                 let worse_upper = unwrap_finite(&upper).add(&bin(1, 0));
-                Bounds::new(
-                    inner_state.small().clone(),
-                    XBinary::Finite(worse_upper),
-                )
+                Bounds::new(inner_state.small().clone(), XBinary::Finite(worse_upper))
             },
         );
         let epsilon = ubin(1, -2);
@@ -484,12 +477,7 @@ mod tests {
     fn refine_to_channel_closure() {
         let computable = Computable::new(
             0usize,
-            |_| {
-                Ok(Bounds::new(
-                    XBinary::NegInf,
-                    XBinary::PosInf,
-                ))
-            },
+            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |_| panic!("refiner panic"),
         );
 
@@ -505,22 +493,12 @@ mod tests {
     fn refine_to_max_iterations_multiple_refiners() {
         let left = Computable::new(
             0usize,
-            |_| {
-                Ok(Bounds::new(
-                    XBinary::NegInf,
-                    XBinary::PosInf,
-                ))
-            },
+            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| state + 1,
         );
         let right = Computable::new(
             0usize,
-            |_| {
-                Ok(Bounds::new(
-                    XBinary::NegInf,
-                    XBinary::PosInf,
-                ))
-            },
+            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| state + 1,
         );
         let expr = left + right;
@@ -550,12 +528,7 @@ mod tests {
     fn concurrent_bounds_reads_during_failed_refinement() {
         let computable = Arc::new(Computable::new(
             0usize,
-            |_| {
-                Ok(Bounds::new(
-                    XBinary::NegInf,
-                    XBinary::PosInf,
-                ))
-            },
+            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| state + 1,
         ));
         let epsilon = ubin(1, -6);
@@ -585,12 +558,7 @@ mod tests {
         let slow_refiner = || {
             Computable::new(
                 0usize,
-                |_| {
-                    Ok(Bounds::new(
-                        XBinary::NegInf,
-                        XBinary::PosInf,
-                    ))
-                },
+                |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
                 |state| {
                     thread::sleep(Duration::from_millis(SLEEP_MS));
                     state + 1

@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use crate::binary::Bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::binary::Bounds;
 
 /// Negation operation.
 pub struct NegOp {
@@ -114,7 +114,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use crate::binary::Bounds;
-    use crate::test_utils::{xbin, interval_midpoint_computable};
+    use crate::test_utils::{interval_midpoint_computable, xbin};
 
     #[test]
     fn add_combines_bounds() {

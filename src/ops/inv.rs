@@ -7,7 +7,8 @@ use num_traits::Zero;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    margin_from_width, reciprocal_rounded_abs_extended, simplify_bounds_if_needed, Bounds, ReciprocalRounding, XBinary,
+    Bounds, ReciprocalRounding, XBinary, margin_from_width, reciprocal_rounded_abs_extended,
+    simplify_bounds_if_needed,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -85,30 +86,18 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
     }
 
     let (lower_bound, upper_bound) = if upper < zero {
-        let lower_bound = reciprocal_rounded_abs_extended(
-            &upper,
-            precision_bits,
-            ReciprocalRounding::Ceil,
-        )?
-        .neg();
-        let upper_bound = reciprocal_rounded_abs_extended(
-            lower,
-            precision_bits,
-            ReciprocalRounding::Floor,
-        )?
-        .neg();
+        let lower_bound =
+            reciprocal_rounded_abs_extended(&upper, precision_bits, ReciprocalRounding::Ceil)?
+                .neg();
+        let upper_bound =
+            reciprocal_rounded_abs_extended(lower, precision_bits, ReciprocalRounding::Floor)?
+                .neg();
         (lower_bound, upper_bound)
     } else {
-        let lower_bound = reciprocal_rounded_abs_extended(
-            &upper,
-            precision_bits,
-            ReciprocalRounding::Floor,
-        )?;
-        let upper_bound = reciprocal_rounded_abs_extended(
-            lower,
-            precision_bits,
-            ReciprocalRounding::Ceil,
-        )?;
+        let lower_bound =
+            reciprocal_rounded_abs_extended(&upper, precision_bits, ReciprocalRounding::Floor)?;
+        let upper_bound =
+            reciprocal_rounded_abs_extended(lower, precision_bits, ReciprocalRounding::Ceil)?;
         (lower_bound, upper_bound)
     };
 
@@ -121,7 +110,9 @@ mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use crate::binary::{Binary, Bounds, UBinary, XBinary};
-    use crate::test_utils::{ubin, unwrap_finite, unwrap_finite_uxbinary, interval_midpoint_computable};
+    use crate::test_utils::{
+        interval_midpoint_computable, ubin, unwrap_finite, unwrap_finite_uxbinary,
+    };
 
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
@@ -142,10 +133,7 @@ mod tests {
         let value = interval_midpoint_computable(-1, 1);
         let inv = value.inv();
         let bounds = inv.bounds().expect("bounds should succeed");
-        assert_eq!(
-            bounds,
-            Bounds::new(XBinary::NegInf, XBinary::PosInf)
-        );
+        assert_eq!(bounds, Bounds::new(XBinary::NegInf, XBinary::PosInf));
     }
 
     #[test]
@@ -156,8 +144,8 @@ mod tests {
         let bounds = inv
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
-        let expected_binary = XBinary::from_f64(1.0 / 3.0)
-            .expect("expected value should convert to extended binary");
+        let expected_binary =
+            XBinary::from_f64(1.0 / 3.0).expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
 
         assert_bounds_compatible_with_expected(&bounds, &expected_value, &epsilon);

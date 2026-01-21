@@ -2,11 +2,11 @@ use std::time::Instant;
 
 use computable::{Computable, UBinary};
 use num_bigint::{BigInt, BigUint};
-use rand::rngs::StdRng;
 use rand::Rng;
+use rand::rngs::StdRng;
 
 use crate::balanced_sum::balanced_sum;
-use crate::common::{binary_from_f64, try_finite_bounds, midpoint};
+use crate::common::{binary_from_f64, midpoint, try_finite_bounds};
 
 pub const SIN_SAMPLE_COUNT: usize = 100;
 pub const SIN_PRECISION_BITS: i64 = 32;

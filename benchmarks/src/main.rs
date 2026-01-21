@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::env;
 
 use computable::UXBinary;
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 mod balanced_sum;
 mod common;

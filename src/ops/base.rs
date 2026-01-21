@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use crate::binary::Bounds;
 use crate::error::ComputableError;
 use crate::node::{BaseNode, BoundsAccess, Node, NodeOp};
-use crate::binary::Bounds;
 
 /// Operation that wraps a user-defined base node.
 pub struct BaseOp {

@@ -6,13 +6,13 @@
 //! - `Node` for the computation graph with bounds caching
 //! - `NodeOp` trait for composable operations (arithmetic, transcendental, etc.)
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 
-use crate::error::ComputableError;
 use crate::binary::Bounds;
+use crate::error::ComputableError;
 
 /// Shared API for retrieving bounds with lazy computation.
 pub trait BoundsAccess {

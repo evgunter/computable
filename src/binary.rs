@@ -37,8 +37,8 @@ mod binary_impl;
 mod display;
 mod error;
 mod reciprocal;
-mod shortest;
 mod shift;
+mod shortest;
 mod ubinary;
 mod uxbinary;
 mod xbinary;
@@ -46,10 +46,11 @@ mod xbinary;
 // Re-export all public types
 pub use binary_impl::Binary;
 pub use error::{BinaryError, XBinaryError};
-pub use reciprocal::{
-    reciprocal_of_biguint, reciprocal_rounded_abs_extended, ReciprocalRounding,
+pub use reciprocal::{ReciprocalRounding, reciprocal_of_biguint, reciprocal_rounded_abs_extended};
+pub use shortest::{
+    margin_from_width, shortest_binary_in_finite_bounds, shortest_xbinary_in_bounds,
+    simplify_bounds_if_needed,
 };
-pub use shortest::{margin_from_width, shortest_binary_in_finite_bounds, shortest_xbinary_in_bounds, simplify_bounds_if_needed};
 pub use ubinary::UBinary;
 pub use uxbinary::UXBinary;
 pub use xbinary::XBinary;
@@ -257,7 +258,10 @@ mod integration_tests {
     #[test]
     fn bounds_from_lower_and_width_constructs_correctly() {
         let lower = xbin(5, 0);
-        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(3u32), BigInt::from(0)));
+        let width = UXBinary::Finite(UBinary::new(
+            num_bigint::BigUint::from(3u32),
+            BigInt::from(0),
+        ));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width.clone());
 
@@ -272,10 +276,8 @@ mod integration_tests {
         let upper = xbin(25, 0);
 
         let via_new = Bounds::new(lower.clone(), upper.clone());
-        let via_from_lower_and_width = Bounds::from_lower_and_width(
-            lower.clone(),
-            via_new.width().clone(),
-        );
+        let via_from_lower_and_width =
+            Bounds::from_lower_and_width(lower.clone(), via_new.width().clone());
 
         assert_eq!(via_new, via_from_lower_and_width);
     }
@@ -283,12 +285,14 @@ mod integration_tests {
     #[test]
     fn bounds_from_lower_and_width_zero_width() {
         let lower = xbin(42, 0);
-        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(0u32), BigInt::from(0)));
+        let width = UXBinary::Finite(UBinary::new(
+            num_bigint::BigUint::from(0u32),
+            BigInt::from(0),
+        ));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width);
 
         assert_eq!(bounds.small(), &xbin(42, 0));
         assert_eq!(bounds.large(), xbin(42, 0));
     }
-
 }

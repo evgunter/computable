@@ -5,11 +5,11 @@
 
 use std::time::{Duration, Instant};
 
-use computable::{pi, pi_bounds_at_precision, Binary, Computable, UBinary};
+use computable::{Binary, Computable, UBinary, pi, pi_bounds_at_precision};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, Signed, Zero};
 
-use crate::common::{binary_from_f64, finite_binary, try_finite_bounds, midpoint};
+use crate::common::{binary_from_f64, finite_binary, midpoint, try_finite_bounds};
 
 /// Precision levels to test (in bits)
 // TODO: Re-enable 128+ bit precision levels once the fixed 128-bit intermediate precision

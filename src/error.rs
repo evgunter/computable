@@ -84,7 +84,10 @@ impl fmt::Display for ComputableError {
             }
             Self::Binary(err) => write!(f, "{err}"),
             Self::DomainError => write!(f, "input is outside the domain of the operation"),
-            Self::InfiniteBounds => write!(f, "input bounds are infinite where finite bounds are required"),
+            Self::InfiniteBounds => write!(
+                f,
+                "input bounds are infinite where finite bounds are required"
+            ),
         }
     }
 }

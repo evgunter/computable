@@ -43,7 +43,7 @@ impl NodeOp for PowOp {
         }
 
         let is_even = self.exponent.get().is_multiple_of(2);
-        
+
         let (result_lower, result_upper) = if is_even {
             compute_even_power_bounds(lower, upper, self.exponent)
         } else {
@@ -53,8 +53,13 @@ impl NodeOp for PowOp {
         // TODO: Investigate if the type system can constrain this so that invalid bounds
         // ordering is unrepresentable. This case should be mathematically impossible since
         // we carefully compute lower/upper based on monotonicity properties of power functions.
-        Ok(Bounds::new_checked(result_lower, result_upper)
-            .unwrap_or_else(|_| unreachable!("pow bounds ordering is invalid despite monotonicity-based computation")))
+        Ok(
+            Bounds::new_checked(result_lower, result_upper).unwrap_or_else(|_| {
+                unreachable!(
+                    "pow bounds ordering is invalid despite monotonicity-based computation"
+                )
+            }),
+        )
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -87,7 +92,11 @@ fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> 
 /// - If [lower, upper] is entirely non-negative: bounds are [lower^n, upper^n]
 /// - If [lower, upper] is entirely non-positive: bounds are [upper^n, lower^n]
 /// - If [lower, upper] spans zero: bounds are [0, max(|lower|^n, |upper|^n)]
-fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> (XBinary, XBinary) {
+fn compute_even_power_bounds(
+    lower: &XBinary,
+    upper: &XBinary,
+    n: NonZeroU32,
+) -> (XBinary, XBinary) {
     let lower_non_negative = !is_negative(lower);
     let upper_non_positive = !is_positive(upper);
 
@@ -111,14 +120,13 @@ fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) ->
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use crate::binary::{Binary, Bounds, UBinary};
     use crate::computable::Computable;
-    use crate::test_utils::{bin, ubin, xbin, unwrap_finite};
+    use crate::test_utils::{bin, ubin, unwrap_finite, xbin};
 
     fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _epsilon: &UBinary) {
         let lower = unwrap_finite(bounds.small());
@@ -127,7 +135,9 @@ mod tests {
         assert!(
             lower <= *expected && *expected <= upper,
             "Expected {} to be in bounds [{}, {}]",
-            expected, lower, upper
+            expected,
+            lower,
+            upper
         );
     }
 
@@ -321,5 +331,4 @@ mod tests {
         assert!(bounds.small().is_zero());
         assert!(bounds.large().is_zero());
     }
-
 }
