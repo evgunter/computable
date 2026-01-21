@@ -120,7 +120,7 @@ impl NodeOp for NthRootOp {
         match &mut *state {
             None => {
                 // Initialize the bisection state from input bounds
-                *state = Some(initialize_bisection_state(&input_bounds, self.degree.get())?);
+                *state = Some(initialize_nth_root_bisection_state(&input_bounds, self.degree.get())?);
                 Ok(true)
             }
             Some(s) => {
@@ -279,13 +279,11 @@ fn compute_root_lower_bound(x: &Binary, _degree: u32) -> Binary {
     }
 }
 
-/// Initializes the bisection state from the input bounds.
+/// Initializes the bisection state for nth root computation.
 ///
-/// Note: This function generally loosens the input bounds by using heuristic initial bounds
-/// (e.g., [1, target] for target >= 1) rather than deriving tight bounds from the input.
-/// The normalized bounds may also expand further to ensure containment. Bisection will
-/// refine these back down to the actual root value.
-fn initialize_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<BisectionState, ComputableError> {
+/// Takes the midpoint of input bounds as the target value, then sets up initial
+/// bisection bounds to find the nth root of that target.
+fn initialize_nth_root_bisection_state(input_bounds: &Bounds, degree: u32) -> Result<BisectionState, ComputableError> {
     let lower = input_bounds.small();
     let upper = &input_bounds.large();
     
