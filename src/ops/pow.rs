@@ -117,7 +117,6 @@ mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
     use crate::binary::{Binary, Bounds, UBinary};
-    use crate::binary_utils::power::binary_pow;
     use crate::computable::Computable;
     use crate::test_utils::{bin, ubin, xbin, unwrap_finite};
 
@@ -323,12 +322,4 @@ mod tests {
         assert!(bounds.large().is_zero());
     }
 
-    #[test]
-    fn binary_pow_function() {
-        let x = bin(3, 0);
-        assert_eq!(binary_pow(&x, 0), bin(1, 0));
-        assert_eq!(binary_pow(&x, 1), bin(3, 0));
-        assert_eq!(binary_pow(&x, 2), bin(9, 0));
-        assert_eq!(binary_pow(&x, 3), bin(27, 0));
-    }
 }

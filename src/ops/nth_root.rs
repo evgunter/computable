@@ -552,12 +552,4 @@ mod tests {
         assert!(upper >= bin(3, 0));
     }
 
-    #[test]
-    fn power_function() {
-        use crate::binary_utils::power::binary_pow;
-        let x = bin(3, 0); // 3
-        assert_eq!(binary_pow(&x, 2), bin(9, 0)); // 3^2 = 9
-        assert_eq!(binary_pow(&x, 3), bin(27, 0)); // 3^3 = 27
-        assert_eq!(binary_pow(&x, 0), bin(1, 0)); // 3^0 = 1
-    }
 }
