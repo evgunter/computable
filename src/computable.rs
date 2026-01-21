@@ -70,12 +70,6 @@ impl Computable {
         &self,
         epsilon: UBinary,
     ) -> Result<Bounds, ComputableError> {
-        // TODO: it may be desirable to allow epsilon = 0, but probably only after we implement automatic checking of short-prefix bounds
-        // (e.g. as-is, sqrt(4) may never refine to a width of 0 because we just use binary search)
-        if epsilon.mantissa().is_zero() {
-            return Err(ComputableError::NonpositiveEpsilon);
-        }
-
         loop {
             let bounds = self.node.get_bounds()?;
             if bounds_width_leq(&bounds, &epsilon) {
