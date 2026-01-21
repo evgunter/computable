@@ -128,7 +128,7 @@ impl NodeOp for NthRootOp {
                 let degree = self.degree.get();
                 let target = s.target.clone();
                 let bounds = FiniteBounds::new(s.lower.clone(), s.upper.clone());
-                let normalized = normalize_bounds(&bounds);
+                let normalized = normalize_bounds(&bounds)?;
                 let result = bisection_step_midpoint(normalized, |mid| {
                     let mid_pow = binary_pow(mid, degree);
                     match mid_pow.cmp(&target) {

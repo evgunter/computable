@@ -156,8 +156,14 @@ pub fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBound
 ///
 /// # Returns
 ///
-/// [`FiniteBounds`] in normalized form that contains the input bounds.
-pub fn normalize_bounds(bounds: &FiniteBounds) -> FiniteBounds {
+/// [`Result`] containing [`FiniteBounds`] in normalized form that contains the input bounds,
+/// or a [`ComputableError::InfiniteBounds`] if the exponent shift is too large.
+///
+/// # Errors
+///
+/// Returns [`ComputableError::InfiniteBounds`] if the exponent shift required for normalization
+/// is too large to represent (doesn't fit in `usize`).
+pub fn normalize_bounds(bounds: &FiniteBounds) -> Result<FiniteBounds, crate::error::ComputableError> {
     use num_traits::Signed;
 
     let lower = bounds.small();
@@ -191,15 +197,19 @@ pub fn normalize_bounds(bounds: &FiniteBounds) -> FiniteBounds {
         lower.mantissa().clone()
     } else if shift.is_positive() {
         // Shift left (no rounding needed)
-        lower.mantissa() << shift.magnitude().to_usize().expect("shift too large")
+        let shift_amount = shift.magnitude().to_usize()
+            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
+        lower.mantissa() << shift_amount
     } else {
         // Shift right (floor toward -∞)
         // For negative numbers, arithmetic right shift rounds toward -∞
         // For positive numbers, it also rounds toward -∞ (rounds down)
-        lower.mantissa() >> shift.magnitude().to_usize().expect("shift too large")
+        let shift_amount = shift.magnitude().to_usize()
+            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
+        lower.mantissa() >> shift_amount
     };
 
-    bounds_from_normalized(lower_mantissa, target_exp)
+    Ok(bounds_from_normalized(lower_mantissa, target_exp))
 }
 
 /// Selects the midpoint as the split point.
@@ -494,7 +504,7 @@ mod tests {
 
         // Simple case: [1, 2]
         let original = FiniteBounds::new(bin(1, 0), bin(2, 0));
-        let normalized = normalize_bounds(&original);
+        let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
@@ -510,7 +520,7 @@ mod tests {
 
         // Fractional bounds: [0.25, 0.75] = [1 * 2^-2, 3 * 2^-2]
         let original = FiniteBounds::new(bin(1, -2), bin(3, -2));
-        let normalized = normalize_bounds(&original);
+        let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
@@ -526,7 +536,7 @@ mod tests {
 
         // Bounds with different exponents: [5 * 2^0, 11 * 2^-1] = [5, 5.5]
         let original = FiniteBounds::new(bin(5, 0), bin(11, -1));
-        let normalized = normalize_bounds(&original);
+        let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
@@ -542,7 +552,7 @@ mod tests {
 
         // Bounds with large mantissas: [123 * 2^-5, 125 * 2^-5]
         let original = FiniteBounds::new(bin(123, -5), bin(125, -5));
-        let normalized = normalize_bounds(&original);
+        let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
@@ -558,7 +568,7 @@ mod tests {
 
         // Negative bounds: [-3, -1]
         let original = FiniteBounds::new(bin(-3, 0), bin(-1, 0));
-        let normalized = normalize_bounds(&original);
+        let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
@@ -574,7 +584,7 @@ mod tests {
 
         // Already normalized: [5 * 2^-3, 6 * 2^-3] with width = 1 * 2^-3
         let original = FiniteBounds::new(bin(5, -3), bin(6, -3));
-        let normalized = normalize_bounds(&original);
+        let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Should be exactly equal for already-normalized bounds
         assert_eq!(normalized.small(), original.small());
