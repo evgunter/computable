@@ -19,11 +19,112 @@ use super::Bounds;
 use super::FiniteBounds;
 use super::{Binary, UBinary, UXBinary, XBinary};
 
-// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
-// to reduce code duplication. Both functions follow a similar pattern (check sign, handle
-// zero-crossing, handle positive/negative intervals). This could potentially be unified
-// using generics over the bound types, though the different handling of infinities may
-// make this non-trivial.
+/// Trait for bounds types that support finding the shortest representation within.
+///
+/// This trait abstracts over the common logic for finding shortest representations
+/// in both finite bounds (`FiniteBounds`) and extended bounds (`Bounds`), using the
+/// type system to ensure correctness without runtime panics.
+trait ShortestInBounds {
+    /// The signed output type (Binary for finite, XBinary for extended)
+    type Output;
+
+    /// Returns Some(zero) if the interval spans zero, otherwise None
+    fn check_zero_crossing(&self) -> Option<Self::Output>;
+
+    /// Returns the shortest representation assuming the interval is entirely non-negative
+    fn shortest_positive(&self) -> Self::Output;
+
+    /// Returns the shortest representation assuming the interval is entirely negative
+    fn shortest_negative(&self) -> Self::Output;
+
+    /// Returns true if the lower bound is negative
+    fn lower_is_negative(&self) -> bool;
+}
+
+impl ShortestInBounds for FiniteBounds {
+    type Output = Binary;
+
+    fn check_zero_crossing(&self) -> Option<Binary> {
+        let lower_sign = self.small().mantissa().sign();
+        let upper_sign = self.large().mantissa().sign();
+        match (lower_sign, upper_sign) {
+            (Sign::Minus, Sign::Plus)
+            | (Sign::Minus, Sign::NoSign)
+            | (Sign::NoSign, Sign::Plus) => Some(Binary::zero()),
+            _ => None,
+        }
+    }
+
+    fn shortest_positive(&self) -> Binary {
+        shortest_binary_in_positive_interval(
+            &self.small().magnitude(),
+            &UXBinary::Finite(self.width().clone()),
+        )
+        .to_binary()
+    }
+
+    fn shortest_negative(&self) -> Binary {
+        shortest_binary_in_positive_interval(
+            &self.large().magnitude(),
+            &UXBinary::Finite(self.width().clone()),
+        )
+        .to_binary()
+        .neg()
+    }
+
+    fn lower_is_negative(&self) -> bool {
+        self.small().mantissa().sign() == Sign::Minus
+    }
+}
+
+impl ShortestInBounds for Bounds {
+    type Output = XBinary;
+
+    fn check_zero_crossing(&self) -> Option<XBinary> {
+        let (lower_sign, _) = split_xbinary(self.small());
+        match lower_sign {
+            Sign::NoSign => Some(XBinary::zero()),
+            Sign::Plus => None,
+            Sign::Minus => {
+                if self.large() >= XBinary::zero() {
+                    Some(XBinary::zero())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn shortest_positive(&self) -> XBinary {
+        let (_, lower_mag) = split_xbinary(self.small());
+        shortest_xbinary_in_positive_interval(&lower_mag, self.width())
+    }
+
+    fn shortest_negative(&self) -> XBinary {
+        shortest_xbinary_in_positive_interval(&self.large().magnitude(), self.width()).neg()
+    }
+
+    fn lower_is_negative(&self) -> bool {
+        let (lower_sign, _) = split_xbinary(self.small());
+        lower_sign == Sign::Minus
+    }
+}
+
+/// Generic implementation of shortest representation finding.
+///
+/// This function contains the shared control flow for both finite and extended bounds,
+/// with the type system ensuring correctness through the `ShortestInBounds` trait.
+fn shortest_in_bounds<B: ShortestInBounds>(bounds: &B) -> B::Output {
+    if let Some(zero) = bounds.check_zero_crossing() {
+        return zero;
+    }
+
+    if bounds.lower_is_negative() {
+        bounds.shortest_negative()
+    } else {
+        bounds.shortest_positive()
+    }
+}
 
 /// Returns a Binary value inside the finite bounds with the shortest normalized mantissa.
 ///
@@ -40,58 +141,28 @@ use super::{Binary, UBinary, UXBinary, XBinary};
 /// A `Binary` value that lies strictly inside the bounds and has the shortest possible
 /// mantissa. If the bounds have zero width, returns the single value in the bounds.
 pub fn shortest_binary_in_finite_bounds(bounds: &FiniteBounds) -> Binary {
-    let lower = bounds.small();
-    let upper = bounds.large();
-
-    match (lower.mantissa().sign(), upper.mantissa().sign()) {
-        // Interval spans zero - zero is the shortest representation
-        (Sign::Minus, Sign::Plus) | (Sign::Minus, Sign::NoSign) | (Sign::NoSign, Sign::Plus) => {
-            Binary::zero()
-        }
-        // Both bounds are non-negative (lower >= 0)
-        (Sign::NoSign, Sign::NoSign) | (Sign::Plus, Sign::Plus) | (Sign::NoSign, _) | (Sign::Plus, _) => {
-            // Use magnitude() to get UBinary directly, and bounds.width() for the width
-            shortest_binary_in_positive_interval(&lower.magnitude(), &UXBinary::Finite(bounds.width().clone()))
-                .to_binary()
-        }
-        // Both bounds are negative (upper <= 0)
-        (Sign::Minus, Sign::Minus) => {
-            // For negative interval [lower, upper] where lower < upper < 0:
-            // Map to positive interval [|upper|, |lower|] and negate the result
-            shortest_binary_in_positive_interval(&upper.magnitude(), &UXBinary::Finite(bounds.width().clone()))
-                .to_binary()
-                .neg()
-        }
-    }
+    shortest_in_bounds(bounds)
 }
 
 /// Returns an XBinary value inside the bounds with the shortest normalized mantissa.
-/// infinities are only returned if the bounds do not contain any finite numbers; this shouldn't happen currently but it might be valid in the future.
+///
+/// Infinities are only returned if the bounds do not contain any finite numbers;
+/// this shouldn't happen currently but it might be valid in the future.
 pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
-    // NOTE: Bounds stores lower + width with UXBinary, so intervals like (-inf, -1]
-    // cannot be represented because the width is +inf and large() becomes +inf.
-    let (lower_sign, lower_mag) = split_xbinary(bounds.small());
-    match lower_sign {
-        Sign::NoSign => XBinary::zero(),
-        Sign::Plus => shortest_xbinary_in_positive_interval(&lower_mag, bounds.width()),
-        Sign::Minus => {
-            if bounds.large() >= XBinary::zero() {
-                XBinary::zero()
-            } else {
-                shortest_xbinary_in_positive_interval(&bounds.large().magnitude(), bounds.width()).neg()
-            }
-        }
-    }
+    shortest_in_bounds(bounds)
 }
 
-/// infinities are only returned if the bounds do not contain any finite numbers; this shouldn't happen currently but it might be valid in the future.
+/// Infinities are only returned if the bounds do not contain any finite numbers;
+/// this shouldn't happen currently but it might be valid in the future.
 fn shortest_xbinary_in_positive_interval(lower: &UXBinary, width: &UXBinary) -> XBinary {
     match lower {
         UXBinary::Inf => {
             crate::detected_computable_with_infinite_value!("lower input bound is PosInf");
             XBinary::PosInf
         }
-        UXBinary::Finite(lm) => XBinary::Finite(shortest_binary_in_positive_interval(lm, width).to_binary())
+        UXBinary::Finite(lm) => {
+            XBinary::Finite(shortest_binary_in_positive_interval(lm, width).to_binary())
+        }
     }
 }
 

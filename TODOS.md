@@ -9,14 +9,6 @@
 ```
 Now unblocked after shortest-repr implementation.
 
-### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
-**File:** `src/binary/shortest.rs:22`
-```rust
-// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
-// to reduce code duplication.
-```
-Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
-
 ### <a id="bisection-benchmark"></a>bisection-benchmark: Compare midpoint vs shortest-representation bisection
 **File:** `benchmarks/src/integer_roots.rs:1`
 ```rust
