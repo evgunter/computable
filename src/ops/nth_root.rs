@@ -31,7 +31,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary_utils::bisection::{midpoint, BisectionComparison, bisection_step};
+use crate::binary_utils::bisection::{midpoint, BisectionComparison, bisection_step_midpoint, normalize_bounds};
 use crate::binary_utils::power::binary_pow;
 use crate::binary::{Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed};
 use crate::error::ComputableError;
@@ -124,14 +124,12 @@ impl NodeOp for NthRootOp {
                 Ok(true)
             }
             Some(s) => {
-                // Perform one bisection step using the generic helper
-                // TODO: Consider using bounds_from_normalized + bisection_step_midpoint instead.
-                // This would require converting the initial bounds to normalized form, which
-                // may not be straightforward given the bounds are computed from the target value.
+                // Perform one bisection step using normalized bounds + midpoint strategy
                 let degree = self.degree.get();
                 let target = s.target.clone();
                 let bounds = FiniteBounds::new(s.lower.clone(), s.upper.clone());
-                let result = bisection_step(bounds, |mid| {
+                let normalized = normalize_bounds(&bounds);
+                let result = bisection_step_midpoint(normalized, |mid| {
                     let mid_pow = binary_pow(mid, degree);
                     match mid_pow.cmp(&target) {
                         std::cmp::Ordering::Less => BisectionComparison::Above,
