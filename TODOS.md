@@ -17,16 +17,6 @@ Now unblocked after shortest-repr implementation.
 ```
 Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
 
-### <a id="bisection-benchmark"></a>bisection-benchmark: Compare midpoint vs shortest-representation bisection
-**File:** `benchmarks/src/integer_roots.rs:1`
-```rust
-// TODO: Add comparison benchmark between midpoint-based bisection (bisection_step_midpoint)
-// and shortest-representation bisection (bisection_step) to measure the precision
-// accumulation reduction and any performance differences.
-```
-Benchmark to validate that the shortest-representation bisection strategy reduces precision accumulation without significant performance cost.
-
-
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
 ### <a id="nonzero-benchmark"></a>nonzero-benchmark: Use NonZeroU32 directly in benchmark

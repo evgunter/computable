@@ -15,14 +15,14 @@ mod sin;
 mod summation;
 
 use complex::run_complex_benchmark;
-use integer_roots::run_integer_roots_benchmark;
+use integer_roots::{run_bisection_comparison_benchmark, run_integer_roots_benchmark};
 use inv::run_inv_benchmark;
 use pi::run_pi_benchmark;
 use sin::run_sin_benchmark;
 use summation::run_summation_benchmark;
 
 /// Available benchmark names
-const BENCHMARK_NAMES: &[&str] = &["complex", "summation", "integer-roots", "inv", "sin", "pi"];
+const BENCHMARK_NAMES: &[&str] = &["complex", "summation", "integer-roots", "inv", "sin", "pi", "bisection-comparison"];
 
 fn print_usage() {
     println!("Usage: benchmarks [OPTIONS] [BENCHMARK...]");
@@ -132,6 +132,7 @@ fn main() {
                 3 => run_inv_benchmark(&mut rng),
                 4 => run_sin_benchmark(&mut rng),
                 5 => run_pi_benchmark(),
+                6 => run_bisection_comparison_benchmark(),
                 _ => unreachable!(),
             }
         }
