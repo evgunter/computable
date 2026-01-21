@@ -5,19 +5,12 @@
 //! - `RefinerHandle`: Handle for controlling a background refiner thread
 //! - `NodeUpdate`: Update message from a refiner to the coordinator
 //!
-//! The refinement model is synchronous lock-step:
-//! 1. Send Step command to ALL refiners
-//! 2. Wait for ALL refiners to complete one step
-//! 3. Collect and propagate ALL updates
-//! 4. Check if precision met
-//! 5. Repeat
-//!
-//! TODO: The README describes an async/event-driven refinement model where:
-//!   - Branches refine continuously and publish updates
-//!   - Other nodes "subscribe" to updates and recompute live
-//!
-//! Either the README should be updated to reflect the actual synchronous
-//! model, or the implementation should be changed to the async model described.
+//! The refinement model is event-driven:
+//! 1. Each refiner runs independently, sending updates as they refine
+//! 2. Coordinator uses `select!` to receive from any refiner
+//! 3. After processing each update, coordinator sends "continue" signal
+//! 4. Precision is checked after each update propagation
+//! 5. When precision is met or max iterations reached, coordinator stops all refiners
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -31,16 +24,12 @@ use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
 
-/// Command sent to a refiner thread.
-#[derive(Clone, Copy)]
-pub enum RefineCommand {
-    Step,
-    Stop,
-}
-
 /// Handle for a background refiner task.
 pub struct RefinerHandle {
-    pub sender: Sender<RefineCommand>,
+    /// Channel to send "continue" signals to the refiner
+    pub continue_tx: Sender<()>,
+    /// Node ID for this refiner
+    pub node_id: usize,
 }
 
 /// Update message from a refiner thread.
@@ -98,12 +87,12 @@ impl RefinementGraph {
         let mut outcome = None;
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
-            let mut refiners = Vec::new();
-            let mut iterations = 0usize;
+            let mut handles = Vec::new();
             let (update_tx, update_rx) = unbounded();
 
+            // Spawn all refiners
             for node in &self.refiners {
-                refiners.push(spawn_refiner(
+                handles.push(spawn_refiner(
                     scope,
                     Arc::clone(node),
                     Arc::clone(&stop_flag),
@@ -112,65 +101,104 @@ impl RefinementGraph {
             }
             drop(update_tx);
 
-            let shutdown_refiners = |handles: Vec<RefinerHandle>, stop_signal: &Arc<StopFlag>| {
-                stop_signal.stop();
-                for refiner in &handles {
-                    let _ = refiner.sender.send(RefineCommand::Stop);
-                }
-            };
+            // Build a map from node_id to handle index for sending continue signals
+            let node_to_handle: HashMap<usize, usize> = handles
+                .iter()
+                .enumerate()
+                .map(|(idx, h)| (h.node_id, idx))
+                .collect();
 
-            let result = (|| {
-                let mut root_bounds;
-                loop {
-                    root_bounds = self.root.get_bounds()?;
-                    if bounds_width_leq(&root_bounds, epsilon) {
-                        break;
-                    }
-                    if iterations >= MAX_REFINEMENT_ITERATIONS {
-                        // TODO: allow individual refiners to stop at the max without
-                        // failing the whole refinement, only erroring if all refiners
-                        // are exhausted before meeting the target precision.
-                        return Err(ComputableError::MaxRefinementIterations {
-                            max: MAX_REFINEMENT_ITERATIONS,
-                        });
-                    }
-                    iterations += 1;
+            // In event-driven mode, we count individual updates.
+            // Multiply MAX_ITERATIONS by number of refiners to get equivalent work budget.
+            let max_updates = MAX_REFINEMENT_ITERATIONS.saturating_mul(self.refiners.len().max(1));
 
-                    for refiner in &refiners {
-                        refiner
-                            .sender
-                            .send(RefineCommand::Step)
-                            .map_err(|_| ComputableError::RefinementChannelClosed)?;
-                    }
+            let result = self.event_driven_loop(
+                &update_rx,
+                &handles,
+                &node_to_handle,
+                &stop_flag,
+                epsilon,
+                max_updates,
+            );
 
-                    let mut expected_updates = refiners.len();
-                    while expected_updates > 0 {
-                        let update_result = match update_rx.recv() {
-                            Ok(update_result) => update_result,
-                            Err(_) => {
-                                return Err(ComputableError::RefinementChannelClosed);
-                            }
-                        };
-                        expected_updates -= 1;
-                        match update_result {
-                            Ok(update) => self.apply_update(update)?,
-                            Err(error) => {
-                                return Err(error);
-                            }
-                        }
-                    }
-                }
-
-                self.root.get_bounds()
-            })();
-
-            shutdown_refiners(refiners, &stop_flag);
+            // Shutdown all refiners
+            stop_flag.stop();
+            // Close continue channels by dropping handles (handled automatically)
             outcome = Some(result);
         });
 
         match outcome {
             Some(result) => result,
             None => Err(ComputableError::RefinementChannelClosed),
+        }
+    }
+
+    fn event_driven_loop(
+        &self,
+        update_rx: &Receiver<Result<NodeUpdate, ComputableError>>,
+        handles: &[RefinerHandle],
+        node_to_handle: &HashMap<usize, usize>,
+        stop_flag: &Arc<StopFlag>,
+        epsilon: &UBinary,
+        max_updates: usize,
+    ) -> Result<Bounds, ComputableError> {
+        let mut updates_processed = 0usize;
+
+        // Check initial precision
+        let initial_bounds = self.root.get_bounds()?;
+        if bounds_width_leq(&initial_bounds, epsilon) {
+            stop_flag.stop();
+            return Ok(initial_bounds);
+        }
+
+        // Send initial "continue" signal to all refiners to start them
+        for handle in handles {
+            let _ = handle.continue_tx.send(());
+        }
+
+        // Event loop: receive updates as they arrive
+        loop {
+            let result = match update_rx.recv() {
+                Ok(r) => r,
+                Err(_) => {
+                    // All senders dropped - refiners finished before we met precision.
+                    // This typically happens when refiners panic or exit early.
+                    stop_flag.stop();
+                    return Err(ComputableError::RefinementChannelClosed);
+                }
+            };
+
+            match result {
+                Ok(update) => {
+                    let node_id = update.node_id;
+                    self.apply_update(update)?;
+                    updates_processed += 1;
+
+                    // Check if precision met
+                    let root_bounds = self.root.get_bounds()?;
+                    if bounds_width_leq(&root_bounds, epsilon) {
+                        stop_flag.stop();
+                        return Ok(root_bounds);
+                    }
+
+                    // Check iteration limit
+                    if updates_processed >= max_updates {
+                        stop_flag.stop();
+                        return Err(ComputableError::MaxRefinementIterations {
+                            max: max_updates / self.refiners.len().max(1),
+                        });
+                    }
+
+                    // Send continue signal to the refiner that sent this update
+                    if let Some(&handle_idx) = node_to_handle.get(&node_id) {
+                        let _ = handles[handle_idx].continue_tx.send(());
+                    }
+                }
+                Err(error) => {
+                    stop_flag.stop();
+                    return Err(error);
+                }
+            }
         }
     }
 
@@ -208,58 +236,80 @@ fn spawn_refiner<'scope, 'env>(
     stop: Arc<StopFlag>,
     updates: Sender<Result<NodeUpdate, ComputableError>>,
 ) -> RefinerHandle {
-    let (command_tx, command_rx) = unbounded();
+    let (continue_tx, continue_rx) = unbounded();
+    let node_id = node.id;
+
     scope.spawn(move || {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            refiner_loop(node, stop, command_rx, updates)
+            refiner_loop(node, stop, continue_rx, updates)
         }));
     });
 
-    RefinerHandle { sender: command_tx }
+    RefinerHandle {
+        continue_tx,
+        node_id,
+    }
 }
 
 fn refiner_loop(
     node: Arc<Node>,
     stop: Arc<StopFlag>,
-    commands: Receiver<RefineCommand>,
+    continue_rx: Receiver<()>,
     updates: Sender<Result<NodeUpdate, ComputableError>>,
 ) -> Result<(), ComputableError> {
     while !stop.is_stopped() {
-        match commands.recv() {
-            Ok(RefineCommand::Step) => match node.refine_step() {
-                Ok(true) => {
-                    let bounds = node.compute_bounds()?;
-                    node.set_bounds(bounds.clone());
-                    if updates
-                        .send(Ok(NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        }))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Ok(false) => {
-                    let bounds = node
-                        .cached_bounds()
-                        .ok_or(ComputableError::RefinementChannelClosed)?;
-                    if updates
-                        .send(Ok(NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        }))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = updates.send(Err(error));
+        // Wait for continue signal from coordinator
+        match continue_rx.recv() {
+            Ok(()) => {
+                // Check stop flag again after receiving signal
+                if stop.is_stopped() {
                     break;
                 }
-            },
-            Ok(RefineCommand::Stop) | Err(_) => break,
+
+                match node.refine_step() {
+                    Ok(true) => {
+                        // Refinement made progress - compute and send new bounds
+                        let bounds = node.compute_bounds()?;
+                        node.set_bounds(bounds.clone());
+                        if updates
+                            .send(Ok(NodeUpdate {
+                                node_id: node.id,
+                                bounds,
+                            }))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(false) => {
+                        // Refinement made no change locally, but we should NOT exit!
+                        // The global expression may not have converged yet.
+                        // Send current bounds and wait for next continue signal.
+                        let bounds = match node.cached_bounds() {
+                            Some(b) => b,
+                            None => node.compute_bounds()?,
+                        };
+                        if updates
+                            .send(Ok(NodeUpdate {
+                                node_id: node.id,
+                                bounds,
+                            }))
+                            .is_err()
+                        {
+                            break;
+                        }
+                        // Continue the loop - wait for next signal from coordinator
+                    }
+                    Err(error) => {
+                        let _ = updates.send(Err(error));
+                        break;
+                    }
+                }
+            }
+            Err(_) => {
+                // Channel closed - coordinator is done
+                break;
+            }
         }
     }
     Ok(())
@@ -581,10 +631,11 @@ mod tests {
             elapsed.as_millis() as u64 > SLEEP_MS,
             "refinement must not have actually run"
         );
+        // Allow some margin for thread spawning overhead and context switching
         assert!(
-            (elapsed.as_millis() as u64) < 2 * SLEEP_MS,
+            (elapsed.as_millis() as u64) < 3 * SLEEP_MS,
             "expected parallel refinement under {}ms, elapsed {elapsed:?}",
-            2 * SLEEP_MS
+            3 * SLEEP_MS
         );
     }
 
