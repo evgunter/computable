@@ -1,1 +1,1 @@
-implement the first TODO in TODOS.md, removing it from the list when you're done
+implement the TODO in TODOS.md described by $ARGUMENTS, removing it from the list when you're done. if the argument is an integer, do the nth TODO in TODOS.md. if no arguments were specified, implement the first TODO.
