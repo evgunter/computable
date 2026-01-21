@@ -1,12 +1,10 @@
-// TODO: Add comparison benchmark between midpoint-based bisection (bisection_step_midpoint)
-// and shortest-representation bisection (bisection_step) to measure the precision
-// accumulation reduction and any performance differences.
-
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
-use computable::{Binary, Computable, UBinary};
+use computable::binary_utils::bisection::{bisection_step, bisection_step_midpoint, BisectionComparison};
+use computable::{Binary, Computable, FiniteBounds, UBinary};
 use num_bigint::BigInt;
+use num_traits::Zero;
 use rand::rngs::StdRng;
 use rand::Rng;
 
@@ -130,4 +128,178 @@ pub fn run_integer_roots_benchmark(rng: &mut StdRng) {
         integer_roots_computable_result.width
     );
     println!("abs(float - midpoint): {}", integer_roots_error);
+}
+
+/// Returns the number of bits in the mantissa of a Binary value.
+fn mantissa_bits(value: &Binary) -> u64 {
+    value.mantissa().magnitude().bits()
+}
+
+/// Returns the total mantissa bits used by bounds (lower + upper).
+fn bounds_mantissa_bits(bounds: &FiniteBounds) -> u64 {
+    mantissa_bits(bounds.small()) + mantissa_bits(&bounds.large())
+}
+
+/// Statistics from running a bisection strategy.
+#[derive(Debug)]
+struct BisectionStats {
+    duration: Duration,
+    final_width_bits: u64,
+    max_mantissa_bits: u64,
+    final_mantissa_bits: u64,
+    total_mantissa_bits_accumulated: u64,
+}
+
+/// Runs bisection for sqrt(target) using the provided step function.
+fn run_bisection<F>(
+    initial_bounds: FiniteBounds,
+    target: &Binary,
+    iterations: usize,
+    step_fn: F,
+) -> BisectionStats
+where
+    F: Fn(FiniteBounds, &dyn Fn(&Binary) -> BisectionComparison) -> FiniteBounds,
+{
+    let start = Instant::now();
+
+    let compare = |mid: &Binary| -> BisectionComparison {
+        let mid_sq = mid.mul(mid);
+        match mid_sq.cmp(target) {
+            std::cmp::Ordering::Less => BisectionComparison::Above,
+            std::cmp::Ordering::Equal => BisectionComparison::Exact,
+            std::cmp::Ordering::Greater => BisectionComparison::Below,
+        }
+    };
+
+    let mut bounds = initial_bounds;
+    let mut max_mantissa_bits: u64 = bounds_mantissa_bits(&bounds);
+    let mut total_mantissa_bits: u64 = max_mantissa_bits;
+
+    for _ in 0..iterations {
+        bounds = step_fn(bounds, &compare);
+        let current_bits = bounds_mantissa_bits(&bounds);
+        max_mantissa_bits = max_mantissa_bits.max(current_bits);
+        total_mantissa_bits = total_mantissa_bits.saturating_add(current_bits);
+        if bounds.width().mantissa().is_zero() {
+            break;
+        }
+    }
+
+    let duration = start.elapsed();
+    let final_width_bits = bounds.width().mantissa().bits();
+    let final_mantissa_bits = bounds_mantissa_bits(&bounds);
+
+    BisectionStats {
+        duration,
+        final_width_bits,
+        max_mantissa_bits,
+        final_mantissa_bits,
+        total_mantissa_bits_accumulated: total_mantissa_bits,
+    }
+}
+
+/// Benchmark comparing midpoint-based bisection vs shortest-representation bisection.
+///
+/// This benchmark measures:
+/// 1. Performance (time taken)
+/// 2. Precision accumulation (mantissa bit growth)
+/// 3. Final interval width
+pub fn run_bisection_comparison_benchmark() {
+    const ITERATIONS: usize = 100;
+
+    // Create initial bounds [0, 4] to find sqrt(2) ~ 1.414...
+    let lower = Binary::new(BigInt::from(0), BigInt::from(0));
+    let upper = Binary::new(BigInt::from(4), BigInt::from(0));
+    let target = Binary::new(BigInt::from(2), BigInt::from(0)); // Looking for x where x^2 = 2
+
+    let initial_bounds = FiniteBounds::new(lower, upper);
+
+    // Run with midpoint strategy
+    let midpoint_stats = run_bisection(
+        initial_bounds.clone(),
+        &target,
+        ITERATIONS,
+        |bounds, compare| bisection_step_midpoint(bounds, compare),
+    );
+
+    // Run with shortest-representation strategy
+    let shortest_stats = run_bisection(
+        initial_bounds.clone(),
+        &target,
+        ITERATIONS,
+        |bounds, compare| bisection_step(bounds, compare),
+    );
+
+    // Print results
+    println!("== Bisection strategy comparison benchmark ==");
+    println!("Problem: find sqrt(2) in [0, 4]");
+    println!("Iterations: {}", ITERATIONS);
+    println!();
+
+    println!("--- Midpoint strategy ---");
+    println!("  Time:                    {:?}", midpoint_stats.duration);
+    println!(
+        "  Final width bits:        {}",
+        midpoint_stats.final_width_bits
+    );
+    println!(
+        "  Max mantissa bits:       {}",
+        midpoint_stats.max_mantissa_bits
+    );
+    println!(
+        "  Final mantissa bits:     {}",
+        midpoint_stats.final_mantissa_bits
+    );
+    println!(
+        "  Total bits accumulated:  {}",
+        midpoint_stats.total_mantissa_bits_accumulated
+    );
+    println!();
+
+    println!("--- Shortest-representation strategy ---");
+    println!("  Time:                    {:?}", shortest_stats.duration);
+    println!(
+        "  Final width bits:        {}",
+        shortest_stats.final_width_bits
+    );
+    println!(
+        "  Max mantissa bits:       {}",
+        shortest_stats.max_mantissa_bits
+    );
+    println!(
+        "  Final mantissa bits:     {}",
+        shortest_stats.final_mantissa_bits
+    );
+    println!(
+        "  Total bits accumulated:  {}",
+        shortest_stats.total_mantissa_bits_accumulated
+    );
+    println!();
+
+    // Comparison
+    let speedup = midpoint_stats.duration.as_secs_f64() / shortest_stats.duration.as_secs_f64();
+    let bits_reduction = midpoint_stats.max_mantissa_bits as f64
+        / shortest_stats.max_mantissa_bits.max(1) as f64;
+
+    println!("--- Comparison ---");
+    if speedup > 1.0 {
+        println!(
+            "  Shortest-repr is {:.2}x faster",
+            speedup
+        );
+    } else {
+        println!(
+            "  Midpoint is {:.2}x faster",
+            1.0 / speedup
+        );
+    }
+    println!(
+        "  Max mantissa bits ratio (midpoint/shortest): {:.2}x",
+        bits_reduction
+    );
+    println!(
+        "  Total bits accumulated ratio: {:.2}x",
+        midpoint_stats.total_mantissa_bits_accumulated as f64
+            / shortest_stats.total_mantissa_bits_accumulated.max(1) as f64
+    );
 }
