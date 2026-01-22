@@ -280,8 +280,6 @@ pub fn normalize_bounds(
 
 #[cfg(test)]
 mod tests {
-    use num_traits::Zero;
-
     use super::*;
     use crate::test_utils::bin;
 
