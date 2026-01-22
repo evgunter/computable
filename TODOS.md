@@ -1,23 +1,5 @@
 # TODOs - Ranked by Ease of Completion
 
-## Tier 1: Easy
-
-### <a id="precision-option-type"></a>precision-option-type: Use Option for initialization state
-**File:** `src/ops/inv.rs:60`
-```rust
-// TODO: use Option<NonZeroOrPositiveBigInt> to encode "not initialized" vs "initialized"
-// at the type level, avoiding is_zero() check and making initialization state explicit
-```
-Currently checks `if precision.is_zero()` to determine if initialization is needed. Using `Option<NonZero...>` would encode this state in the type system, eliminating the runtime check.
-
-### <a id="non-negative-type"></a>non-negative-type: Ensure non-negative via type system
-**File:** `src/binary/shortest.rs:240`
-```rust
-// TODO: can we use the type system to ensure that this is non-negative?
-```
-Type constraint addition.
-
-
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
 ### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions

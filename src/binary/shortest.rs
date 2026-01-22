@@ -26,6 +26,7 @@ use num_traits::{One, Zero};
 use super::Bounds;
 use super::FiniteBounds;
 use super::{Binary, UBinary, UXBinary, XBinary};
+use crate::ordered_pair::AbsDistance;
 
 // TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
 // to reduce code duplication. Both functions follow a similar pattern (check sign, handle
@@ -237,14 +238,10 @@ pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
         _ => return bounds.clone(), // Can't simplify infinite upper bound
     };
 
-    // TODO: can we use the type system to ensure that this is non-negative?
     // min_width = original_upper - new_lower
-    // Since new_lower <= original_lower <= original_upper, this is non-negative
-    let min_width = original_upper.sub(&new_lower);
-    let min_width_unsigned = match UBinary::try_from_binary(&min_width) {
-        Ok(w) => w,
-        Err(_) => return bounds.clone(), // Shouldn't happen, but be safe
-    };
+    // Since new_lower <= original_lower <= original_upper, this is non-negative.
+    // Using abs_distance guarantees a UBinary result through the type system.
+    let min_width_unsigned = original_upper.clone().abs_distance(new_lower.clone());
 
     // Find shortest width in [min_width, min_width + margin]
     let new_width = shortest_binary_in_positive_interval(
