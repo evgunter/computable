@@ -186,13 +186,6 @@ Type-level prevention of invalid states.
 ```
 Eliminate impossible states at type level.
 
-### <a id="binary-unreachable"></a>binary-unreachable: Type system for Binary unreachable
-**File:** `src/binary/binary_impl.rs:271`
-```rust
-// TODO: Investigate if the type system can prevent needing the unreachable! check below.
-```
-Similar to [uxbinary-unreachable](#uxbinary-unreachable).
-
 ### <a id="pi-adaptive"></a>pi-adaptive: Make pi precision adaptive (128-bit limitation)
 **File:** `src/ops/pi.rs:243`
 ```rust

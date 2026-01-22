@@ -37,7 +37,6 @@
 #![cfg_attr(not(test), forbid(clippy::expect_used))]
 #![cfg_attr(not(test), forbid(clippy::panic))]
 #![cfg_attr(not(test), forbid(clippy::unwrap_used))]
-
 #![warn(
     clippy::shadow_reuse,
     clippy::shadow_same,
