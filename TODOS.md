@@ -26,13 +26,6 @@ Cases using `simplify_bounds` don't appear to track refinement progress properly
 
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
-### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy
-**File:** `src/ops/inv.rs:28`
-```rust
-// TODO: Improve inv() precision strategy. Currently precision_bits starts at 0 and
-```
-Algorithm improvement requiring understanding of numerical precision trade-offs.
-
 ### <a id="sin-k-midpoint"></a>sin-k-midpoint: Fix midpoint usage for k computation
 **File:** `src/ops/sin.rs:292`
 ```rust
@@ -48,7 +41,7 @@ Correctness issue in range reduction math.
 Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters and have similar interval arithmetic needs. Consider whether the interval_add, interval_sub, interval_neg, scale_positive, scale_bigint, midpoint, and comparison methods could be generalized to work on any `Interval<T, W>` where T and W satisfy appropriate trait bounds.
 
 ### <a id="inv-bounds-order"></a>inv-bounds-order: Type system for bounds ordering
-**File:** `src/ops/inv.rs:113`
+**File:** `src/ops/inv.rs:148`
 ```rust
 // TODO: can the type system ensure that the bounds remain ordered?
 ```
