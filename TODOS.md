@@ -13,13 +13,6 @@ Both functions follow a similar pattern (check sign, handle zero-crossing, handl
 
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
-### <a id="midpoint-dedup"></a>midpoint-dedup: Consolidate midpoint implementations
-**File:** `benchmarks/src/common.rs:50`
-```rust
-// TODO: remove all the implementations in other files of `midpoint` or `midpoint_between` etc and just use one implementation
-```
-Multiple implementations of midpoint calculation exist across the codebase. Consolidate into a single implementation in the main module using the + width/2 strategy.
-
 ### <a id="bisection-bigint"></a>bisection-bigint: Change exponent parameter type
 **File:** `src/binary_utils/bisection.rs:102`
 ```rust

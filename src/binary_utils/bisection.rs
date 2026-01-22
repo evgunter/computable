@@ -94,9 +94,7 @@ pub enum BisectionComparison {
 ///
 /// The midpoint is calculated as (lower + upper) / 2.
 pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
-    let sum = lower.add(upper);
-    // Divide by 2 by subtracting 1 from the exponent
-    Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
+    FiniteBounds::new(lower.clone(), upper.clone()).midpoint()
 }
 
 // TODO: this doesn't need to take exponent as a BigInt since we don't really do that anywhere else.

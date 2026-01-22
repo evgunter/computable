@@ -320,14 +320,6 @@ mod tests {
     use super::*;
     use crate::test_utils::bin;
 
-    use super::super::Binary;
-
-    fn midpoint_between(lower: &Binary, upper: &Binary) -> Binary {
-        let mid_sum = lower.add(upper);
-        let exponent = mid_sum.exponent() - BigInt::from(1);
-        Binary::new(mid_sum.mantissa().clone(), exponent)
-    }
-
     #[test]
     fn shortest_xbinary_in_bounds_finds_sqrt_four() {
         let four = bin(1, 2);
@@ -341,7 +333,7 @@ mod tests {
                 break;
             }
 
-            let mid = midpoint_between(&lower, &upper);
+            let mid = FiniteBounds::new(lower.clone(), upper.clone()).midpoint();
             let mid_sq = mid.clone() * mid.clone();
 
             if mid_sq <= four {
@@ -514,7 +506,7 @@ mod tests {
 
         // Do 20 "fake" bisection steps that accumulate precision
         for _ in 0..20 {
-            let mid = midpoint_between(&lower, &upper);
+            let mid = FiniteBounds::new(lower.clone(), upper.clone()).midpoint();
             // Arbitrarily take upper half each time
             lower = mid;
         }
@@ -600,7 +592,7 @@ mod tests {
 
         // Do some bisection steps
         for _ in 0..10 {
-            let mid = midpoint_between(&lower, &upper);
+            let mid = FiniteBounds::new(lower.clone(), upper.clone()).midpoint();
             let mid_sq = mid.clone() * mid.clone();
             if mid_sq <= four {
                 lower = mid;
