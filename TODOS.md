@@ -13,13 +13,6 @@ Both functions follow a similar pattern (check sign, handle zero-crossing, handl
 
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
-### <a id="bisection-bigint"></a>bisection-bigint: Change exponent parameter type
-**File:** `src/binary_utils/bisection.rs:102`
-```rust
-// TODO: this doesn't need to take exponent as a BigInt since we don't really do that anywhere else.
-```
-Switch exponent parameter to a more convenient type for its callers once they're integrated.
-
 ### <a id="shortest-module-eval"></a>shortest-module-eval: Evaluate if shortest module is still needed
 **File:** `src/binary/shortest.rs:15`
 ```rust

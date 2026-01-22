@@ -370,7 +370,7 @@ fn initialize_nth_root_bisection_state(
     let mantissa = if normalized_lower.mantissa().is_zero() {
         BigInt::zero()
     } else {
-        // Lower should already be at the correct exponent from bounds_from_normalized
+        // Lower should already be at the correct exponent from normalize_bounds
         normalized_lower.mantissa().clone()
     };
 

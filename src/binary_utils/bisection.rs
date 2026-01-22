@@ -159,9 +159,6 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
     FiniteBounds::new(lower.clone(), upper.clone()).midpoint()
 }
 
-// TODO: this doesn't need to take exponent as a BigInt since we don't really do that anywhere else.
-// switch it to whatever's convenient for its callers once they're integrated
-
 /// Creates normalized bounds suitable for midpoint-based bisection.
 ///
 /// If the lower bound and width can be written as a pair of binary numbers
