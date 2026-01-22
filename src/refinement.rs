@@ -541,6 +541,7 @@ mod tests {
         use std::time::Instant;
 
         const SLEEP_MS: u64 = 10;
+        let sleep_duration = Duration::from_millis(SLEEP_MS);
 
         let slow_refiner = || {
             Computable::new(
@@ -564,12 +565,14 @@ mod tests {
             result,
             Err(ComputableError::MaxRefinementIterations { max: 1 })
         ));
+        // Use Duration comparison instead of as_millis() truncation
+        // to avoid off-by-one issues when elapsed is e.g. 10.5ms
         assert!(
-            elapsed.as_millis() as u64 > SLEEP_MS,
-            "refinement must not have actually run"
+            elapsed >= sleep_duration,
+            "refinement must not have actually run, elapsed {elapsed:?}"
         );
         assert!(
-            (elapsed.as_millis() as u64) < 2 * SLEEP_MS,
+            elapsed < 2 * sleep_duration,
             "expected parallel refinement under {}ms, elapsed {elapsed:?}",
             2 * SLEEP_MS
         );
