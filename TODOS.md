@@ -34,13 +34,6 @@ With the introduction of `bounds_from_normalized` in the bisection module, it ma
 ```
 Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
 
-### <a id="pi-unwrap"></a>pi-unwrap: Avoid using unwrap in pi benchmark
-**File:** `benchmarks/src/pi.rs:55`
-```rust
-// TODO: can we avoid using unwrap?
-```
-Replace with proper error handling.
-
 ### <a id="non-negative-type"></a>non-negative-type: Ensure non-negative via type system
 **File:** `src/binary/shortest.rs:179`
 ```rust

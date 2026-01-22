@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use computable::{Binary, Computable, UBinary, pi, pi_bounds_at_precision};
+use computable::{Binary, Bounds, Computable, UBinary, XBinary, pi, pi_bounds_at_precision};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, Signed, Zero};
 
@@ -37,7 +37,7 @@ fn benchmark_pi_refinement() {
 
         // Timed runs
         let mut total_duration = Duration::ZERO;
-        let mut final_bounds = None;
+        let mut final_bounds = Bounds::new(XBinary::NegInf, XBinary::PosInf);
 
         for _ in 0..TIMING_ITERATIONS {
             let pi_comp = pi();
@@ -48,12 +48,11 @@ fn benchmark_pi_refinement() {
                 .expect("pi refinement should succeed");
             total_duration += start.elapsed();
 
-            final_bounds = Some(bounds);
+            final_bounds = bounds;
         }
 
         let avg_duration = total_duration / TIMING_ITERATIONS;
-        // TODO: can we avoid using unwrap?
-        let bounds = final_bounds.unwrap();
+        let bounds = final_bounds;
 
         println!(
             "Precision: {} bits (epsilon = 2^-{})",
