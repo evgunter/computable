@@ -24,13 +24,6 @@ With the introduction of `bounds_from_normalized` in the bisection module, it ma
 ```
 Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
 
-### <a id="sin-branch-dedup"></a>sin-branch-dedup: Reduce duplication in sin boundary region branches
-**File:** `src/ops/sin.rs:522`
-```rust
-// TODO: The two boundary region branches below have duplicated logic for computing
-```
-The two boundary region branches in `compute_sin_bounds_for_point_with_pi` have duplicated logic for computing conservative bounds from two branches. Could extract a helper function that takes two (lo, hi) pairs and returns conservative (min_lo, max_hi) bounds.
-
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy
