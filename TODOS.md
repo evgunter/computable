@@ -20,13 +20,6 @@ Both functions follow a similar pattern (check sign, handle zero-crossing, handl
 ```
 Multiple implementations of midpoint calculation exist across the codebase. Consolidate into a single implementation in the main module using the + width/2 strategy.
 
-### <a id="interval-test-helper-dedup"></a>interval-test-helper-dedup: Consolidate interval test helpers
-**File:** `src/ops/pow.rs:135`, `src/ops/nth_root.rs:509`, `src/ops/arithmetic.rs:117`
-```rust
-// Multiple test files define their own interval_computable helper functions
-```
-Multiple test modules have their own `interval_computable` helper that creates a Computable with interval bounds. The main difference is whether they refine to midpoint or not. Consider consolidating into `test_utils` with a parameter to control refinement behavior, or at least add comments explaining why each version exists.
-
 ### <a id="bisection-bigint"></a>bisection-bigint: Change exponent parameter type
 **File:** `src/binary_utils/bisection.rs:102`
 ```rust

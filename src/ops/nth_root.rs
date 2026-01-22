@@ -361,7 +361,7 @@ mod tests {
     use super::*;
     use crate::binary::UBinary;
     use crate::computable::Computable;
-    use crate::test_utils::{bin, ubin, unwrap_finite, unwrap_finite_uxbinary};
+    use crate::test_utils::{bin, interval_noop_computable, ubin, unwrap_finite, unwrap_finite_uxbinary};
 
     /// Helper to create NonZeroU32 from a literal in tests.
     fn nz(n: u32) -> NonZeroU32 {
@@ -519,23 +519,11 @@ mod tests {
         assert!(lower <= expected && expected <= upper);
     }
 
-    fn interval_computable(lower: i64, upper: i64) -> Computable {
-        let interval_state = Bounds::new(
-            XBinary::Finite(bin(lower, 0)),
-            XBinary::Finite(bin(upper, 0)),
-        );
-        Computable::new(
-            interval_state,
-            |state| Ok(state.clone()),
-            |state| state, // No refinement for this test
-        )
-    }
-
     #[test]
     fn sqrt_of_interval_overlapping_zero() {
         // Test even root of a Computable with bounds overlapping zero: [-1, 4]
         // The sqrt should have bounds [0, upper] (since sqrt is only defined for non-negative)
-        let interval = interval_computable(-1, 4);
+        let interval = interval_noop_computable(-1, 4);
         let sqrt_interval = interval.nth_root(nz(2));
         let bounds = sqrt_interval.bounds().expect("bounds should succeed");
 
@@ -552,7 +540,7 @@ mod tests {
     fn cbrt_of_interval_overlapping_zero() {
         // Test odd root of a Computable with bounds overlapping zero: [-8, 27]
         // cbrt(-8) = -2, cbrt(27) = 3, so output should be approximately [-2, 3]
-        let interval = interval_computable(-8, 27);
+        let interval = interval_noop_computable(-8, 27);
         let cbrt_interval = interval.nth_root(nz(3));
         let bounds = cbrt_interval.bounds().expect("bounds should succeed");
 

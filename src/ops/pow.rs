@@ -126,7 +126,7 @@ mod tests {
 
     use crate::binary::{Binary, Bounds, UBinary};
     use crate::computable::Computable;
-    use crate::test_utils::{bin, ubin, unwrap_finite, xbin};
+    use crate::test_utils::{bin, interval_noop_computable, ubin, unwrap_finite};
 
     fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _epsilon: &UBinary) {
         let lower = unwrap_finite(bounds.small());
@@ -139,15 +139,6 @@ mod tests {
             lower,
             upper
         );
-    }
-
-    fn interval_computable(lower: i64, upper: i64) -> Computable {
-        let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
-        Computable::new(
-            interval_state,
-            |state| Ok(state.clone()),
-            |state| state, // No refinement for this test
-        )
     }
 
     #[test]
@@ -201,7 +192,7 @@ mod tests {
     #[test]
     fn pow_interval_positive_even() {
         // [2, 4]^2 = [4, 16]
-        let interval = interval_computable(2, 4);
+        let interval = interval_noop_computable(2, 4);
         let squared = interval.pow(2);
         let bounds = squared.bounds().expect("bounds should succeed");
 
@@ -212,7 +203,7 @@ mod tests {
     #[test]
     fn pow_interval_negative_even() {
         // [-4, -2]^2 = [4, 16] (note: more negative gives larger result)
-        let interval = interval_computable(-4, -2);
+        let interval = interval_noop_computable(-4, -2);
         let squared = interval.pow(2);
         let bounds = squared.bounds().expect("bounds should succeed");
 
@@ -223,7 +214,7 @@ mod tests {
     #[test]
     fn pow_interval_spanning_zero_even() {
         // [-2, 3]^2 = [0, 9] (minimum at 0, max at the larger magnitude)
-        let interval = interval_computable(-2, 3);
+        let interval = interval_noop_computable(-2, 3);
         let squared = interval.pow(2);
         let bounds = squared.bounds().expect("bounds should succeed");
 
@@ -234,7 +225,7 @@ mod tests {
     #[test]
     fn pow_interval_odd() {
         // [2, 4]^3 = [8, 64]
-        let interval = interval_computable(2, 4);
+        let interval = interval_noop_computable(2, 4);
         let cubed = interval.pow(3);
         let bounds = cubed.bounds().expect("bounds should succeed");
 
@@ -245,7 +236,7 @@ mod tests {
     #[test]
     fn pow_interval_negative_odd() {
         // [-4, -2]^3 = [-64, -8]
-        let interval = interval_computable(-4, -2);
+        let interval = interval_noop_computable(-4, -2);
         let cubed = interval.pow(3);
         let bounds = cubed.bounds().expect("bounds should succeed");
 

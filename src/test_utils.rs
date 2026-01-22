@@ -106,3 +106,23 @@ pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
         interval_refine,
     )
 }
+
+/// Creates a Computable that represents an interval [lower, upper] without refinement.
+///
+/// Unlike `interval_midpoint_computable`, this helper does not refine the bounds at all.
+/// It simply returns the interval unchanged. This is useful for testing interval arithmetic
+/// operations where you want to observe how bounds propagate without any refinement.
+///
+/// # Examples
+/// ```ignore
+/// let interval = interval_noop_computable(1, 3); // [1, 3], never refines
+/// let bounds = interval.bounds().expect("bounds should succeed");
+/// ```
+pub fn interval_noop_computable(lower: i64, upper: i64) -> Computable {
+    let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
+    Computable::new(
+        interval_state,
+        |state| Ok(state.clone()),
+        |state| state,
+    )
+}
