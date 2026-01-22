@@ -253,11 +253,21 @@ Similar to [uxbinary-unreachable](#uxbinary-unreachable).
 Related to [pi-adaptive](#pi-adaptive).
 
 ### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
-**File:** `src/refinement.rs:15`
-```rust
-//! TODO: The README describes an async/event-driven refinement model where:
-```
-Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative), [nth-root-async](#nth-root-async), [refiners-stop](#refiners-stop)
+**File:** `src/refinement.rs`
+**Status:** IN PROGRESS - See branch `try-strategies-1769039545-strategy-3`
+
+The async/event-driven refinement model has been partially implemented:
+- ✅ Removed `RefineCommand` enum - refiners run autonomously
+- ✅ Refiners run continuously, publishing updates via bounded channel
+- ✅ Coordinator monitors updates asynchronously (no lock-step waiting)
+- ✅ Fixed `StopFlag` memory ordering (Release/Acquire)
+
+**Remaining issues:**
+- ⚠️ Race conditions cause occasional flaky test failures - bounds can be captured in inconsistent states
+- ⚠️ Some tests expect lock-step semantics that don't hold in async model
+- Need proper synchronization to ensure bounds consistency across the graph
+
+**Blocks:** [nth-root-negative](#nth-root-negative), [nth-root-async](#nth-root-async), [refiners-stop](#refiners-stop)
 
 ---
 
