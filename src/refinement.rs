@@ -6,7 +6,7 @@
 //!
 //! The refinement model follows a pub/sub pattern as described in the README:
 //! 1. Each refiner runs autonomously in its own thread, continuously refining
-//! 2. Refiners publish updates via bounded(0) channels for natural backpressure
+//! 2. Refiners publish updates via bounded(1) channel for natural backpressure
 //! 3. Coordinator receives updates as they arrive and propagates through the graph
 //! 4. Precision is checked after each update propagation
 //! 5. When precision is met or max iterations reached, coordinator signals stop via StopFlag
