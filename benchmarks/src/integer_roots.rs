@@ -27,10 +27,9 @@ struct IntegerRootsComputableResult {
 
 /// Computes the n-th root of a value using binary search.
 /// Returns a Computable that refines by bisection.
-fn nth_root_computable(value: u64, n: u32) -> Computable {
+fn nth_root_computable(value: u64, n: NonZeroU32) -> Computable {
     let value_binary = Binary::new(BigInt::from(value), BigInt::from(0));
-    // TODO: see if we can take the input as NonZeroU32 directly so we don't need to unwrap
-    Computable::constant(value_binary).nth_root(NonZeroU32::new(n).unwrap())
+    Computable::constant(value_binary).nth_root(n)
 }
 
 /// Computes integer n-th root using f64 (for comparison).
@@ -39,11 +38,11 @@ fn nth_root_float(value: f64, n: u32) -> f64 {
 }
 
 /// Benchmark: sum of integer roots using f64
-fn integer_roots_float(inputs: &[(u64, u32)]) -> IntegerRootsResult {
+fn integer_roots_float(inputs: &[(u64, NonZeroU32)]) -> IntegerRootsResult {
     let start = Instant::now();
     let mut total = 0.0;
     for &(value, n) in inputs {
-        total += nth_root_float(value as f64, n);
+        total += nth_root_float(value as f64, n.get());
     }
     IntegerRootsResult {
         duration: start.elapsed(),
@@ -52,7 +51,7 @@ fn integer_roots_float(inputs: &[(u64, u32)]) -> IntegerRootsResult {
 }
 
 /// Benchmark: sum of integer roots using Computable (binary search)
-fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResult {
+fn integer_roots_computable(inputs: &[(u64, NonZeroU32)]) -> IntegerRootsComputableResult {
     let start = Instant::now();
 
     let terms: Vec<Computable> = inputs
@@ -81,10 +80,11 @@ fn integer_roots_computable(inputs: &[(u64, u32)]) -> IntegerRootsComputableResu
 pub fn run_integer_roots_benchmark(rng: &mut StdRng) {
     // Generate inputs: (value, root_degree) pairs
     // Use various values and root degrees (2=sqrt, 3=cbrt, 4=4th root, etc.)
-    let integer_roots_inputs: Vec<(u64, u32)> = (0..INTEGER_ROOTS_SAMPLE_COUNT)
+    // Root degrees 2-6 are always non-zero, so unwrap is safe
+    let integer_roots_inputs: Vec<(u64, NonZeroU32)> = (0..INTEGER_ROOTS_SAMPLE_COUNT)
         .map(|i| {
             let value = rng.gen_range(2..1000) as u64;
-            let n = (i % 5) as u32 + 2; // roots from 2 to 6
+            let n = NonZeroU32::new((i % 5) as u32 + 2).expect("root degree 2-6 is non-zero");
             (value, n)
         })
         .collect();
