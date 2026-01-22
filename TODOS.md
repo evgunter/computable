@@ -2,16 +2,38 @@
 
 ## Tier 1: Easy
 
+### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
+**File:** `src/ops/pi.rs:472`
+```rust
+// TODO: should this go with `neg` tests? is this actually needed or redundant?
+```
+Evaluate and either move or remove the interval negation test.
+
+### <a id="precision-option-type"></a>precision-option-type: Use Option for initialization state
+**File:** `src/ops/inv.rs:60`
+```rust
+// TODO: use Option<NonZeroOrPositiveBigInt> to encode "not initialized" vs "initialized"
+// at the type level, avoiding is_zero() check and making initialization state explicit
+```
+Currently checks `if precision.is_zero()` to determine if initialization is needed. Using `Option<NonZero...>` would encode this state in the type system, eliminating the runtime check.
+
+### <a id="non-negative-type"></a>non-negative-type: Ensure non-negative via type system
+**File:** `src/binary/shortest.rs:240`
+```rust
+// TODO: can we use the type system to ensure that this is non-negative?
+```
+Type constraint addition.
+
+
+## Tier 2: Medium Effort (Unblocked, requires some work)
+
 ### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
-**File:** `src/binary/shortest.rs:22`
+**File:** `src/binary/shortest.rs:30`
 ```rust
 // TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
 // to reduce code duplication.
 ```
 Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
-
-
-## Tier 2: Medium Effort (Unblocked, requires some work)
 
 ### <a id="shortest-module-eval"></a>shortest-module-eval: Evaluate if shortest module is still needed
 **File:** `src/binary/shortest.rs:15`
@@ -21,65 +43,42 @@ Both functions follow a similar pattern (check sign, handle zero-crossing, handl
 With the introduction of `bounds_from_normalized` in the bisection module, it may be possible to avoid needing explicit shortest-representation searches. Evaluate if this module is only needed for cases where bounds cannot be normalized initially.
 
 ### <a id="shortest-refinement"></a>shortest-refinement: Fix refinement progress tracking
-**File:** `src/binary/shortest.rs:271`
+**File:** `src/binary/shortest.rs:282`
 ```rust
 // TODO: all the cases that use this seem to not be tracking refinement progress properly.
 ```
 Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
 
-### <a id="non-negative-type"></a>non-negative-type: Ensure non-negative via type system
-**File:** `src/binary/shortest.rs:179`
-```rust
-// TODO: can we use the type system to ensure that this is non-negative?
-```
-Type constraint addition.
-
-### <a id="precision-option-type"></a>precision-option-type: Use Option for initialization state
-**File:** `src/ops/inv.rs:59`
-```rust
-// TODO: use Option<NonZeroOrPositiveBigInt> to encode "not initialized" vs "initialized"
-// at the type level, avoiding is_zero() check and making initialization state explicit
-```
-Currently checks `if precision.is_zero()` to determine if initialization is needed. Using `Option<NonZero...>` would encode this state in the type system, eliminating the runtime check.
-
-### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy
-**File:** `src/ops/inv.rs:27`
-```rust
-// TODO: Improve inv() precision strategy. Currently precision_bits starts at 0 and
-```
-Algorithm improvement.
-
-### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
-**File:** `src/ops/pi.rs:496`
-```rust
-// TODO: should this go with `neg` tests? is this actually needed or redundant?
-```
-Evaluate and either move or remove the interval negation test.
-
 ### <a id="sin-sus-comment"></a>sin-sus-comment: Investigate suspicious comment
-**File:** `src/ops/sin.rs:312`
+**File:** `src/ops/sin.rs:316`
 ```rust
 // TODO: this comment is sus, what's up with this
 ```
 There's a comment that suggests a correctness issue ('close enough'). Determine why the code says that and whether there is a correctness issue.
 
 ### <a id="sin-midpoint-usage"></a>sin-midpoint-usage: Investigate midpoint usage in sin
-**File:** `src/ops/sin.rs:485`
+**File:** `src/ops/sin.rs:489`
 ```rust
 // TODO: it's suspicious that this uses midpoints rather than bounds
 ```
 This also suggests a correctness issue (using the midpoint rather than the bounds separately suggests that an approximation is being made, instead of correctly propagating the bounds fully)
 
+
+## Tier 3: Hard (Unblocked, but complex correctness issues)
+
+### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy
+**File:** `src/ops/inv.rs:28`
+```rust
+// TODO: Improve inv() precision strategy. Currently precision_bits starts at 0 and
+```
+Algorithm improvement requiring understanding of numerical precision trade-offs.
+
 ### <a id="sin-k-midpoint"></a>sin-k-midpoint: Fix midpoint usage for k computation
-**File:** `src/ops/sin.rs:288`
+**File:** `src/ops/sin.rs:292`
 ```rust
 // TODO(correctness): Using midpoints for k computation could cause incorrect range reduction.
 ```
-Correctness issue.
-
----
-
-## Tier 3: Hard (Unblocked, but complex correctness issues)
+Correctness issue in range reduction math.
 
 ### <a id="bounds-dedup"></a>bounds-dedup: Deduplicate FiniteBounds and Bounds
 **File:** `src/binary.rs:77`
