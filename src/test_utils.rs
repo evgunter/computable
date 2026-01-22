@@ -68,18 +68,17 @@ pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
     }
 }
 
-use crate::binary::Bounds;
+use crate::binary::{Bounds, FiniteBounds};
 use crate::computable::Computable;
-use num_traits::One;
 
 /// Computes the midpoint between two finite XBinary values.
 ///
 /// # Panics
 /// Panics if either input is infinite.
 pub fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
-    let mid_sum = unwrap_finite(lower).add(&unwrap_finite(upper));
-    let exponent = mid_sum.exponent() - BigInt::one();
-    Binary::new(mid_sum.mantissa().clone(), exponent)
+    let lower_finite = unwrap_finite(lower);
+    let upper_finite = unwrap_finite(upper);
+    FiniteBounds::new(lower_finite, upper_finite).midpoint()
 }
 
 /// Refines bounds by collapsing them to their midpoint.

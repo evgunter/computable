@@ -13,13 +13,6 @@ Both functions follow a similar pattern (check sign, handle zero-crossing, handl
 
 ## Tier 2: Medium Effort (Unblocked, requires some work)
 
-### <a id="midpoint-dedup"></a>midpoint-dedup: Consolidate midpoint implementations
-**File:** `benchmarks/src/common.rs:50`
-```rust
-// TODO: remove all the implementations in other files of `midpoint` or `midpoint_between` etc and just use one implementation
-```
-Multiple implementations of midpoint calculation exist across the codebase. Consolidate into a single implementation in the main module using the + width/2 strategy.
-
 ### <a id="interval-test-helper-dedup"></a>interval-test-helper-dedup: Consolidate interval test helpers
 **File:** `src/ops/pow.rs:135`, `src/ops/nth_root.rs:509`, `src/ops/arithmetic.rs:117`
 ```rust
