@@ -2,13 +2,6 @@
 
 ## Tier 1: Easy
 
-### <a id="clippy-expect"></a>clippy-expect: Investigate missing clippy warning
-**File:** `benchmarks/src/balanced_sum.rs:26`
-```rust
-// TODO: why doesn't clippy complain about this expect?
-```
-Investigate why clippy isn't catching this expect usage.
-
 ### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
 **File:** `src/binary/shortest.rs:22`
 ```rust
