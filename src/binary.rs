@@ -199,13 +199,14 @@ impl FiniteBounds {
         !(self.entirely_less_than(other) || self.entirely_greater_than(other))
     }
 
-    /// Returns the union of two intervals: the smallest interval containing both.
+    /// Returns the join (smallest enclosing interval) of two intervals.
     ///
-    /// `[a, b].union([c, d]) = [min(a, c), max(b, d)]`
+    /// `[a, b].join([c, d]) = [min(a, c), max(b, d)]`
     ///
-    /// Note: This returns the convex hull of the two intervals, which may contain
-    /// points not in either original interval if they don't overlap.
-    pub fn union(&self, other: &Self) -> Self {
+    /// This is the lattice join operation: the smallest interval that contains
+    /// both inputs. Note that if the intervals are disjoint, the result includes
+    /// points in neither original interval (i.e., this is the convex hull).
+    pub fn join(&self, other: &Self) -> Self {
         let min_lo = if self.lo() < other.lo() {
             self.lo().clone()
         } else {
@@ -361,37 +362,37 @@ mod integration_tests {
     }
 
     #[test]
-    fn finite_bounds_union_overlapping() {
-        // Test union of overlapping intervals
+    fn finite_bounds_join_overlapping() {
+        // Test join of overlapping intervals
         let a = FiniteBounds::new(bin(1, 0), bin(4, 0)); // [1, 4]
         let b = FiniteBounds::new(bin(3, 0), bin(6, 0)); // [3, 6]
 
-        let result = a.union(&b);
-        // [1, 4] ∪ [3, 6] = [1, 6]
+        let result = a.join(&b);
+        // [1, 4].join([3, 6]) = [1, 6]
         assert_eq!(result.lo(), &bin(1, 0));
         assert_eq!(result.hi(), bin(6, 0));
     }
 
     #[test]
-    fn finite_bounds_union_disjoint() {
-        // Test union of disjoint intervals (convex hull)
+    fn finite_bounds_join_disjoint() {
+        // Test join of disjoint intervals (convex hull)
         let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
         let b = FiniteBounds::new(bin(5, 0), bin(7, 0)); // [5, 7]
 
-        let result = a.union(&b);
-        // [1, 2] ∪ [5, 7] = [1, 7] (convex hull)
+        let result = a.join(&b);
+        // [1, 2].join([5, 7]) = [1, 7] (convex hull)
         assert_eq!(result.lo(), &bin(1, 0));
         assert_eq!(result.hi(), bin(7, 0));
     }
 
     #[test]
-    fn finite_bounds_union_nested() {
-        // Test union where one interval contains the other
+    fn finite_bounds_join_nested() {
+        // Test join where one interval contains the other
         let outer = FiniteBounds::new(bin(1, 0), bin(10, 0)); // [1, 10]
         let inner = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
 
-        let result = outer.union(&inner);
-        // [1, 10] ∪ [3, 5] = [1, 10]
+        let result = outer.join(&inner);
+        // [1, 10].join([3, 5]) = [1, 10]
         assert_eq!(result.lo(), &bin(1, 0));
         assert_eq!(result.hi(), bin(10, 0));
     }

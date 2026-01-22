@@ -460,7 +460,7 @@ fn reduce_to_half_pi_range_interval(
     // Otherwise compute bounds at endpoints using interval-based pi and take their union
     let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
     let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
-    let combined = sin_bounds_1.union(&sin_bounds_2);
+    let combined = sin_bounds_1.join(&sin_bounds_2);
 
     ReductionResult::SpansMultipleBranches {
         overall_lo: combined.lo().clone().max(neg_one),
@@ -521,7 +521,7 @@ fn compute_sin_bounds_for_point_with_pi(
         let upper_bounds = compute_sin_on_monotonic_interval(&upper_reduced, n);
 
         // Take the union of bounds from both branches
-        center_bounds.union(&upper_bounds)
+        center_bounds.join(&upper_bounds)
     } else {
         // x is in the boundary region around -half_pi: [neg_half_pi.lo, neg_half_pi.hi]
         // i.e., x is in [-half_pi.hi, -half_pi.lo]
@@ -537,7 +537,7 @@ fn compute_sin_bounds_for_point_with_pi(
             FiniteBounds::new(lower_sin_bounds.hi().neg(), lower_sin_bounds.lo().neg());
 
         // Take the union of bounds from both branches
-        center_bounds.union(&lower_bounds)
+        center_bounds.join(&lower_bounds)
     }
 }
 
