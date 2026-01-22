@@ -125,6 +125,7 @@ impl RefinementGraph {
             // Build subscription infrastructure:
             // - Each parent (propagator + coordinator) has an inbox receiver
             // - Children have senders to their parents' inboxes
+            // - Refiners with children also need inboxes (e.g., InvOp)
             let mut inbox_senders: HashMap<usize, Vec<Sender<BoundsNotification>>> = HashMap::new();
             let mut inbox_receivers: HashMap<usize, Receiver<BoundsNotification>> = HashMap::new();
 
@@ -134,6 +135,25 @@ impl RefinementGraph {
                 inbox_receivers.insert(propagator.id, rx);
                 // Register this inbox with all children
                 if let Some(child_ids) = self.children.get(&propagator.id) {
+                    for child_id in child_ids {
+                        inbox_senders.entry(*child_id).or_default().push(tx.clone());
+                    }
+                }
+            }
+
+            // Create inbox for each refiner that has children (like InvOp)
+            // These refiners need to be notified when their children update
+            let refiners_with_children: Vec<Arc<Node>> = self
+                .refiners
+                .iter()
+                .filter(|n| self.children.get(&n.id).map(|c| !c.is_empty()).unwrap_or(false))
+                .cloned()
+                .collect();
+
+            for refiner in &refiners_with_children {
+                let (tx, rx) = bounded(4);
+                inbox_receivers.insert(refiner.id, rx);
+                if let Some(child_ids) = self.children.get(&refiner.id) {
                     for child_id in child_ids {
                         inbox_senders.entry(*child_id).or_default().push(tx.clone());
                     }
@@ -150,14 +170,18 @@ impl RefinementGraph {
             // Error channel for threads to report failures
             let (error_tx, error_rx) = bounded::<ErrorNotification>(1);
 
-            // Spawn refiner threads - they send to their parents' inboxes + iteration channel
+            // Spawn refiner threads
+            // Refiners with children run a hybrid loop: refine + listen for child updates
+            // Refiners without children just refine continuously
             for node in &self.refiners {
                 let senders = inbox_senders.get(&node.id).cloned().unwrap_or_default();
+                let inbox_rx = inbox_receivers.remove(&node.id);
                 spawn_refiner(
                     scope,
                     Arc::clone(node),
                     Arc::clone(&stop_flag),
                     senders,
+                    inbox_rx,
                     iter_tx.clone(),
                     error_tx.clone(),
                 );
@@ -258,12 +282,13 @@ fn spawn_refiner<'scope, 'env>(
     node: Arc<Node>,
     stop: Arc<StopFlag>,
     parent_senders: Vec<Sender<BoundsNotification>>,
+    child_inbox: Option<Receiver<BoundsNotification>>,
     iter_tx: Sender<IterationNotification>,
     error_tx: Sender<ErrorNotification>,
 ) {
     scope.spawn(move || {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            refiner_loop(node, stop, parent_senders, iter_tx, error_tx)
+            refiner_loop(node, stop, parent_senders, child_inbox, iter_tx, error_tx)
         }));
     });
 }
@@ -272,10 +297,42 @@ fn refiner_loop(
     node: Arc<Node>,
     stop: Arc<StopFlag>,
     parent_senders: Vec<Sender<BoundsNotification>>,
+    child_inbox: Option<Receiver<BoundsNotification>>,
     iter_tx: Sender<IterationNotification>,
     error_tx: Sender<ErrorNotification>,
 ) {
+    // Track cached bounds to detect changes from child updates
+    let mut cached_bounds: Option<Bounds> = None;
+
     while !stop.is_stopped() {
+        // If we have a child inbox, check for child updates first
+        if let Some(ref inbox) = child_inbox {
+            // Non-blocking check for child updates
+            while let Ok(_) = inbox.try_recv() {
+                // Child updated - recompute our bounds
+                let new_bounds = match node.compute_bounds() {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = error_tx.send(ErrorNotification { error: e });
+                        return;
+                    }
+                };
+
+                if cached_bounds.as_ref() != Some(&new_bounds) {
+                    node.set_bounds(new_bounds.clone());
+                    cached_bounds = Some(new_bounds);
+
+                    // Notify parents with blocking send
+                    let notification = BoundsNotification { node_id: node.id };
+                    for sender in &parent_senders {
+                        if sender.send(notification.clone()).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         match node.refine_step() {
             Ok(true) => {
                 // Report iteration for max_iterations tracking
@@ -295,14 +352,16 @@ fn refiner_loop(
                         break;
                     }
                 };
-                node.set_bounds(bounds);
+                node.set_bounds(bounds.clone());
+                cached_bounds = Some(bounds);
 
                 // Publish to all parent inboxes
                 let notification = BoundsNotification { node_id: node.id };
                 for sender in &parent_senders {
-                    // Use try_send to avoid blocking if parent is slow
-                    // Bounded channel provides backpressure
-                    let _ = sender.try_send(notification.clone());
+                    // Use blocking send to ensure updates are seen
+                    if sender.send(notification.clone()).is_err() {
+                        return;
+                    }
                 }
             }
             Ok(false) => {
@@ -354,7 +413,9 @@ fn propagator_loop(
     // Publish initial bounds to all parents
     let notification = BoundsNotification { node_id: node.id };
     for sender in &parent_senders {
-        let _ = sender.try_send(notification.clone());
+        if sender.send(notification.clone()).is_err() {
+            return;
+        }
     }
 
     let timeout = Duration::from_millis(PROPAGATOR_TIMEOUT_MS);
@@ -377,10 +438,12 @@ fn propagator_loop(
                     node.set_bounds(new_bounds.clone());
                     cached_bounds = new_bounds;
 
-                    // Publish to parent inboxes
+                    // Publish to parent inboxes with blocking send
                     let notification = BoundsNotification { node_id: node.id };
                     for sender in &parent_senders {
-                        let _ = sender.try_send(notification.clone());
+                        if sender.send(notification.clone()).is_err() {
+                            return;
+                        }
                     }
                 }
             }
