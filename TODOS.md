@@ -179,13 +179,6 @@ Memory safety for edge cases.
 ```
 Type-level prevention of invalid states.
 
-### <a id="uxbinary-unreachable"></a>uxbinary-unreachable: Type system for UXBinary unreachable
-**File:** `src/binary/uxbinary.rs:157`
-```rust
-// TODO: Investigate if the type system can prevent needing the unreachable! check
-```
-Eliminate impossible states at type level.
-
 ### <a id="pi-adaptive"></a>pi-adaptive: Make pi precision adaptive (128-bit limitation)
 **File:** `src/ops/pi.rs:243`
 ```rust
