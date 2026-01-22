@@ -42,14 +42,6 @@ With the introduction of `bounds_from_normalized` in the bisection module, it ma
 ```
 Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
 
-### <a id="sin-midpoint-usage"></a>sin-midpoint-usage: Investigate midpoint usage in sin
-**File:** `src/ops/sin.rs:489`
-```rust
-// TODO: it's suspicious that this uses midpoints rather than bounds
-```
-This also suggests a correctness issue (using the midpoint rather than the bounds separately suggests that an approximation is being made, instead of correctly propagating the bounds fully)
-
-
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy

@@ -483,45 +483,90 @@ fn reduce_to_half_pi_range_interval(
 /// This function uses the same structure as the original but with interval-based pi
 /// for proper error tracking. The point x is assumed to already be reduced to
 /// approximately [-pi, pi].
+///
+/// When x falls within the uncertainty interval of a branch boundary (half_pi or -half_pi),
+/// both possible branches are evaluated and conservative bounds are returned.
 fn compute_sin_bounds_for_point_with_pi(
     x: &Binary,
     n: usize,
     pi: &FiniteBounds,
     half_pi: &FiniteBounds,
 ) -> (Binary, Binary) {
-    // TODO: it's suspicious that this uses midpoints rather than bounds
-    // Use interval midpoints for comparisons (same approach as original but with
-    // interval-based pi instead of hardcoded constant)
-    let half_pi_mid = half_pi.midpoint();
-    let neg_half_pi_mid = half_pi_mid.neg();
+    let neg_half_pi = half_pi.interval_neg(); // [-pi/2_hi, -pi/2_lo]
 
     // For the transformation, we use the full interval to get proper bounds
     let x_interval = FiniteBounds::point(x.clone());
 
-    // Check which region x is in and transform accordingly
-    let mut sign_flip = false;
+    // Determine which branch(es) x could be in using interval bounds.
+    // We use conservative comparisons:
+    // - x is definitively above half_pi if x > half_pi.hi()
+    // - x is definitively below -half_pi if x < neg_half_pi.lo() (i.e., x < -half_pi.hi())
+    // - Otherwise, x might be in a boundary region where we need to consider multiple branches
 
-    let reduced_interval = if x > &half_pi_mid {
-        // x is in (pi/2, pi], transform: sin(x) = sin(pi - x)
-        // Using interval: [pi_lo - x, pi_hi - x]
-        pi.interval_sub(&x_interval)
-    } else if x < &neg_half_pi_mid {
-        // x is in [-pi, -pi/2), transform: sin(x) = -sin(pi + x)
-        // Using interval: [pi_lo + x, pi_hi + x]
-        sign_flip = true;
-        pi.interval_add(&x_interval)
-    } else {
-        // x is in [-pi/2, pi/2], use directly as point interval
-        x_interval
-    };
+    let definitely_above_half_pi = x > &half_pi.hi();
+    let definitely_below_neg_half_pi = *x < *neg_half_pi.lo();
+    let definitely_in_center = *x >= neg_half_pi.hi() && x <= half_pi.lo();
 
-    // Compute sin on the (potentially interval) reduced value
-    let (sin_lo, sin_hi) = compute_sin_on_monotonic_interval(&reduced_interval, n);
-
-    if sign_flip {
+    if definitely_in_center {
+        // x is definitively in [-pi/2, pi/2], use directly
+        compute_sin_on_monotonic_interval(&x_interval, n)
+    } else if definitely_above_half_pi {
+        // x is definitively in (pi/2, pi], transform: sin(x) = sin(pi - x)
+        let reduced_interval = pi.interval_sub(&x_interval);
+        compute_sin_on_monotonic_interval(&reduced_interval, n)
+    } else if definitely_below_neg_half_pi {
+        // x is definitively in [-pi, -pi/2), transform: sin(x) = -sin(pi + x)
+        let reduced_interval = pi.interval_add(&x_interval);
+        let (sin_lo, sin_hi) = compute_sin_on_monotonic_interval(&reduced_interval, n);
         (sin_hi.neg(), sin_lo.neg())
+    } else if x >= half_pi.lo() {
+        // x is in the boundary region around half_pi: [half_pi.lo, half_pi.hi]
+        // Need to consider both the center branch and the upper branch
+
+        // Center branch: use x directly
+        let (center_lo, center_hi) = compute_sin_on_monotonic_interval(&x_interval, n);
+
+        // Upper branch: transform sin(x) = sin(pi - x)
+        let upper_reduced = pi.interval_sub(&x_interval);
+        let (upper_lo, upper_hi) = compute_sin_on_monotonic_interval(&upper_reduced, n);
+
+        // Take conservative bounds
+        let result_lo = if center_lo < upper_lo {
+            center_lo
+        } else {
+            upper_lo
+        };
+        let result_hi = if center_hi > upper_hi {
+            center_hi
+        } else {
+            upper_hi
+        };
+        (result_lo, result_hi)
     } else {
-        (sin_lo, sin_hi)
+        // x is in the boundary region around -half_pi: [neg_half_pi.lo, neg_half_pi.hi]
+        // i.e., x is in [-half_pi.hi, -half_pi.lo]
+        // Need to consider both the center branch and the lower branch
+
+        // Center branch: use x directly
+        let (center_lo, center_hi) = compute_sin_on_monotonic_interval(&x_interval, n);
+
+        // Lower branch: transform sin(x) = -sin(pi + x)
+        let lower_reduced = pi.interval_add(&x_interval);
+        let (lower_sin_lo, lower_sin_hi) = compute_sin_on_monotonic_interval(&lower_reduced, n);
+        let (lower_lo, lower_hi) = (lower_sin_hi.neg(), lower_sin_lo.neg());
+
+        // Take conservative bounds
+        let result_lo = if center_lo < lower_lo {
+            center_lo
+        } else {
+            lower_lo
+        };
+        let result_hi = if center_hi > lower_hi {
+            center_hi
+        } else {
+            lower_hi
+        };
+        (result_lo, result_hi)
     }
 }
 
