@@ -31,10 +31,10 @@ const NO_PROGRESS_BACKOFF_US: u64 = 100;
 /// Timeout for propagator receive to check stop flag.
 const PROPAGATOR_TIMEOUT_MS: u64 = 1;
 
-
 /// Notification sent when a node's bounds have been updated.
 #[derive(Clone)]
 pub struct BoundsNotification {
+    #[allow(dead_code)] // Kept for debugging
     pub node_id: usize,
 }
 
@@ -49,13 +49,14 @@ pub struct ErrorNotification {
 }
 
 /// Snapshot of the node graph used to coordinate parallel refinement.
+#[allow(dead_code)] // Some fields kept for debugging and future use
 pub struct RefinementGraph {
     pub root: Arc<Node>,
-    pub nodes: HashMap<usize, Arc<Node>>,    // node id -> node
-    pub parents: HashMap<usize, Vec<usize>>, // child id -> parent ids
+    pub nodes: HashMap<usize, Arc<Node>>,     // node id -> node
+    pub parents: HashMap<usize, Vec<usize>>,  // child id -> parent ids
     pub children: HashMap<usize, Vec<usize>>, // parent id -> child ids
     pub refiners: Vec<Arc<Node>>,
-    pub propagators: Vec<Arc<Node>>,          // intermediate nodes (non-refiners with children)
+    pub propagators: Vec<Arc<Node>>, // intermediate nodes (non-refiners with children)
 }
 
 impl RefinementGraph {
@@ -110,15 +111,15 @@ impl RefinementGraph {
             let stop_flag = Arc::new(StopFlag::new());
 
             // Check if precision already met before spawning threads
-            let root_bounds = match self.root.get_bounds() {
+            let initial_bounds = match self.root.get_bounds() {
                 Ok(b) => b,
                 Err(e) => {
                     outcome = Some(Err(e));
                     return;
                 }
             };
-            if bounds_width_leq(&root_bounds, epsilon) {
-                outcome = Some(Ok(root_bounds));
+            if bounds_width_leq(&initial_bounds, epsilon) {
+                outcome = Some(Ok(initial_bounds));
                 return;
             }
 
@@ -146,7 +147,12 @@ impl RefinementGraph {
             let refiners_with_children: Vec<Arc<Node>> = self
                 .refiners
                 .iter()
-                .filter(|n| self.children.get(&n.id).map(|c| !c.is_empty()).unwrap_or(false))
+                .filter(|n| {
+                    self.children
+                        .get(&n.id)
+                        .map(|c| !c.is_empty())
+                        .unwrap_or(false)
+                })
                 .cloned()
                 .collect();
 
@@ -162,7 +168,10 @@ impl RefinementGraph {
 
             // Create inbox for coordinator (receives from root)
             let (coord_tx, coord_rx) = bounded(4);
-            inbox_senders.entry(self.root.id).or_default().push(coord_tx);
+            inbox_senders
+                .entry(self.root.id)
+                .or_default()
+                .push(coord_tx);
 
             // Iteration channel - refiners report each step for max_iterations tracking
             let (iter_tx, iter_rx) = bounded::<IterationNotification>(16);
@@ -189,7 +198,10 @@ impl RefinementGraph {
 
             // Spawn propagator threads - they receive from their inbox, send to parents' inboxes
             for node in &self.propagators {
-                let inbox_rx = inbox_receivers.remove(&node.id).unwrap();
+                // inbox_receivers was populated for all propagators above, so this should always succeed
+                let Some(inbox_rx) = inbox_receivers.remove(&node.id) else {
+                    continue;
+                };
                 let senders = inbox_senders.get(&node.id).cloned().unwrap_or_default();
                 spawn_propagator(
                     scope,
@@ -308,7 +320,7 @@ fn refiner_loop(
         // If we have a child inbox, check for child updates first
         if let Some(ref inbox) = child_inbox {
             // Non-blocking check for child updates
-            while let Ok(_) = inbox.try_recv() {
+            while inbox.try_recv().is_ok() {
                 // Child updated - recompute our bounds
                 let new_bounds = match node.compute_bounds() {
                     Ok(b) => b,
@@ -411,10 +423,12 @@ fn propagator_loop(
     };
 
     // Publish initial bounds to all parents
-    let notification = BoundsNotification { node_id: node.id };
-    for sender in &parent_senders {
-        if sender.send(notification.clone()).is_err() {
-            return;
+    {
+        let init_notification = BoundsNotification { node_id: node.id };
+        for sender in &parent_senders {
+            if sender.send(init_notification.clone()).is_err() {
+                return;
+            }
         }
     }
 
@@ -423,7 +437,7 @@ fn propagator_loop(
     while !stop.is_stopped() {
         // Wait for any child update in our inbox
         match inbox_rx.recv_timeout(timeout) {
-            Ok(_notification) => {
+            Ok(_child_update) => {
                 // A child updated - recompute our bounds
                 let new_bounds = match node.compute_bounds() {
                     Ok(b) => b,
@@ -439,9 +453,9 @@ fn propagator_loop(
                     cached_bounds = new_bounds;
 
                     // Publish to parent inboxes with blocking send
-                    let notification = BoundsNotification { node_id: node.id };
+                    let update_notification = BoundsNotification { node_id: node.id };
                     for sender in &parent_senders {
-                        if sender.send(notification.clone()).is_err() {
+                        if sender.send(update_notification.clone()).is_err() {
                             return;
                         }
                     }
