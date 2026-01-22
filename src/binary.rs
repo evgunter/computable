@@ -218,8 +218,6 @@ impl AddWidth<BigInt, BigUint> for BigInt {
 mod integration_tests {
     //! Integration tests that verify cross-module functionality.
 
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::{bin, xbin};
 

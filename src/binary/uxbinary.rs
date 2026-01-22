@@ -200,8 +200,6 @@ impl fmt::Display for UXBinary {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::{bin, ubin, xbin};
 

@@ -290,8 +290,6 @@ impl std::ops::Div for Computable {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::test_utils::{bin, ubin, unwrap_finite};
 

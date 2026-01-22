@@ -20,15 +20,6 @@ Both functions follow a similar pattern (check sign, handle zero-crossing, handl
 ```
 Switch exponent parameter to a more convenient type for its callers once they're integrated.
 
-### <a id="test-macro"></a>test-macro: Create test boilerplate macro
-**File:** `src/refinement.rs:279`
-```rust
-// TODO: make a macro for basically
-// mod tests {
-//     #![allow(clippy::expect_used, clippy::panic)]
-```
-Create a macro for test module boilerplate with ratchet tests for clippy::expect_used and clippy::panic (they should NEVER be allowed in the code except in tests).
-
 ### <a id="shortest-module-eval"></a>shortest-module-eval: Evaluate if shortest module is still needed
 **File:** `src/binary/shortest.rs:15`
 ```rust

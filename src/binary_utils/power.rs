@@ -127,8 +127,6 @@ pub fn is_positive(x: &XBinary) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::test_utils::{bin, xbin};
 

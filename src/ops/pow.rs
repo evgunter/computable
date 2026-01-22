@@ -122,8 +122,6 @@ fn compute_even_power_bounds(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use crate::binary::{Binary, Bounds, UBinary};
     use crate::computable::Computable;
     use crate::test_utils::{bin, interval_noop_computable, ubin, unwrap_finite};

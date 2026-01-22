@@ -351,8 +351,6 @@ fn initialize_nth_root_bisection_state(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::binary::UBinary;
     use crate::computable::Computable;

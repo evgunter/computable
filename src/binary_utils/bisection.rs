@@ -272,8 +272,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use num_traits::Zero;
 
     use super::*;

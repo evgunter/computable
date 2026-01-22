@@ -111,8 +111,6 @@ impl NodeOp for MulOp {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use crate::binary::Bounds;
     use crate::test_utils::{interval_midpoint_computable, xbin};
 

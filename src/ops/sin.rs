@@ -788,8 +788,6 @@ pub fn taylor_sin_partial_sum_test(x: &Binary, n: usize, down: bool) -> Binary {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::binary::UBinary;
     use crate::computable::Computable;

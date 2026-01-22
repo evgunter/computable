@@ -336,8 +336,6 @@ pub fn half_pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::binary::UBinary;
     use num_bigint::BigUint;

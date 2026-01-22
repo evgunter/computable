@@ -294,8 +294,6 @@ impl crate::ordered_pair::AddWidth<Binary, super::UBinary> for Binary {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::bin;
 

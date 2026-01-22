@@ -107,8 +107,6 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use crate::binary::{Binary, Bounds, UBinary, XBinary};
     use crate::test_utils::{
         interval_midpoint_computable, ubin, unwrap_finite, unwrap_finite_uxbinary,

@@ -274,16 +274,8 @@ pub fn bounds_width_leq(bounds: &Bounds, epsilon: &UBinary) -> bool {
     }
 }
 
-// TODO: make a macro for basically
-// mod tests {
-//     #![allow(clippy::expect_used, clippy::panic)]
-// and then put ratchet tests for clippy::expect_used and clippy:panic
-// (they should NEVER be allowed in the code except in tests--we ONLY use unreachable! and debug_assert! in non-test code)
-
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::binary::XBinary;
     use crate::computable::Computable;

@@ -315,8 +315,6 @@ pub fn simplify_bounds_if_needed(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::bin;
 
