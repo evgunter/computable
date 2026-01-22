@@ -62,6 +62,10 @@ impl NodeOp for InvOp {
                 // Double precision each step for O(log n) convergence to high precision.
                 // This is more efficient than linear increment for reaching high precision
                 // targets, as the reciprocal computation cost grows with precision.
+                //
+                // TODO: If state reuse is implemented (e.g., Newton-Raphson iteration that
+                // builds on previous results), this should be changed to linear increment
+                // to avoid computing to higher precision than requested.
                 *precision = Some(current * 2);
             }
         }
