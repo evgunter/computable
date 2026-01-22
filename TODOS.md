@@ -42,13 +42,6 @@ With the introduction of `bounds_from_normalized` in the bisection module, it ma
 ```
 Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
 
-### <a id="sin-sus-comment"></a>sin-sus-comment: Investigate suspicious comment
-**File:** `src/ops/sin.rs:316`
-```rust
-// TODO: this comment is sus, what's up with this
-```
-There's a comment that suggests a correctness issue ('close enough'). Determine why the code says that and whether there is a correctness issue.
-
 ### <a id="sin-midpoint-usage"></a>sin-midpoint-usage: Investigate midpoint usage in sin
 **File:** `src/ops/sin.rs:489`
 ```rust

@@ -310,11 +310,14 @@ fn reduce_to_pi_range_interval(
             return current;
         }
 
-        // Also check with outer bounds - if we're definitely out of range
+        // Check if we're within the outer bounds [-pi_hi, pi_hi].
+        // This is acceptable because downstream code (reduce_to_half_pi_range_interval)
+        // uses conservative interval comparisons with pi/half_pi that properly account
+        // for the uncertainty in the pi approximation. The reduced value doesn't need
+        // to be exactly in [-π, π]; it just needs to be close enough that the interval
+        // comparisons can correctly determine which trigonometric identity to apply.
         let neg_pi_hi = pi.hi().neg();
         if *current.lo() >= neg_pi_hi && current.hi() <= pi.hi() {
-            // TODO: this comment is sus, what's up with this
-            // We're in the outer range [-pi_hi, pi_hi], close enough
             return current;
         }
 
