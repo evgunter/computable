@@ -213,7 +213,6 @@ impl Computable {
     }
 
     /// Creates a constant computable with exact bounds.
-    #[allow(clippy::type_complexity)]
     pub fn constant(value: Binary) -> Self {
         fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
             Ok(Bounds::new(

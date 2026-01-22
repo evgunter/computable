@@ -273,7 +273,6 @@ impl crate::ordered_pair::AbsDistance<Binary, super::UBinary> for Binary {
     // should never fail. Ideally we'd have a type-level proof of this.
     #[allow(clippy::unreachable)]
     fn abs_distance(self, other: Self) -> super::UBinary {
-        use num_traits::Signed;
         let diff = Binary::sub(&self, &other);
         let non_negative = if diff.mantissa().is_negative() {
             diff.neg()
