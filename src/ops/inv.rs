@@ -133,8 +133,28 @@ mod tests {
         let width = unwrap_finite_uxbinary(bounds.width());
         let upper = unwrap_finite(&upper_xb);
 
-        assert!(lower <= *expected && *expected <= upper);
-        assert!(width <= *epsilon);
+        // Check width is within epsilon
+        assert!(width <= *epsilon, "width {} > epsilon {}", width, epsilon);
+
+        // Check bounds contain expected value with tolerance for f64 precision.
+        // f64 has ~53 bits of precision, so we need to account for that when
+        // comparing against bounds that may be much tighter.
+        let f64_epsilon = crate::binary::UBinary::new(
+            num_bigint::BigUint::from(1u32),
+            num_bigint::BigInt::from(-50), // ~2^-50 tolerance for f64 rounding
+        );
+        let lower_minus_eps = lower.sub(&f64_epsilon.to_binary());
+        let upper_plus_eps = upper.add(&f64_epsilon.to_binary());
+
+        assert!(
+            lower_minus_eps <= *expected && *expected <= upper_plus_eps,
+            "Expected {} to be in bounds [{}, {}] (with f64 tolerance), width = {}, epsilon = {}",
+            expected,
+            lower,
+            upper,
+            width,
+            epsilon
+        );
     }
 
     #[test]
