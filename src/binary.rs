@@ -198,6 +198,52 @@ impl FiniteBounds {
     pub fn overlaps(&self, other: &Self) -> bool {
         !(self.entirely_less_than(other) || self.entirely_greater_than(other))
     }
+
+    /// Returns the union of two intervals: the smallest interval containing both.
+    ///
+    /// `[a, b].union([c, d]) = [min(a, c), max(b, d)]`
+    ///
+    /// Note: This returns the convex hull of the two intervals, which may contain
+    /// points not in either original interval if they don't overlap.
+    pub fn union(&self, other: &Self) -> Self {
+        let min_lo = if self.lo() < other.lo() {
+            self.lo().clone()
+        } else {
+            other.lo().clone()
+        };
+        let self_hi = self.hi();
+        let other_hi = other.hi();
+        let max_hi = if self_hi > other_hi {
+            self_hi
+        } else {
+            other_hi
+        };
+        Self::new(min_lo, max_hi)
+    }
+
+    /// Returns the intersection of two intervals, if non-empty.
+    ///
+    /// `[a, b].intersection([c, d]) = [max(a, c), min(b, d)]` if non-empty
+    ///
+    /// Returns `None` if the intervals don't overlap.
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
+        if !self.overlaps(other) {
+            return None;
+        }
+        let max_lo = if self.lo() > other.lo() {
+            self.lo().clone()
+        } else {
+            other.lo().clone()
+        };
+        let self_hi = self.hi();
+        let other_hi = other.hi();
+        let min_hi = if self_hi < other_hi {
+            self_hi
+        } else {
+            other_hi
+        };
+        Some(Self::new(max_lo, min_hi))
+    }
 }
 
 impl Unsigned for BigUint {}
@@ -312,5 +358,90 @@ mod integration_tests {
         let neg_a = a.interval_neg(); // [-3, -1]
         assert_eq!(neg_a.lo(), &bin(-3, 0));
         assert_eq!(neg_a.hi(), bin(-1, 0));
+    }
+
+    #[test]
+    fn finite_bounds_union_overlapping() {
+        // Test union of overlapping intervals
+        let a = FiniteBounds::new(bin(1, 0), bin(4, 0)); // [1, 4]
+        let b = FiniteBounds::new(bin(3, 0), bin(6, 0)); // [3, 6]
+
+        let result = a.union(&b);
+        // [1, 4] ∪ [3, 6] = [1, 6]
+        assert_eq!(result.lo(), &bin(1, 0));
+        assert_eq!(result.hi(), bin(6, 0));
+    }
+
+    #[test]
+    fn finite_bounds_union_disjoint() {
+        // Test union of disjoint intervals (convex hull)
+        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteBounds::new(bin(5, 0), bin(7, 0)); // [5, 7]
+
+        let result = a.union(&b);
+        // [1, 2] ∪ [5, 7] = [1, 7] (convex hull)
+        assert_eq!(result.lo(), &bin(1, 0));
+        assert_eq!(result.hi(), bin(7, 0));
+    }
+
+    #[test]
+    fn finite_bounds_union_nested() {
+        // Test union where one interval contains the other
+        let outer = FiniteBounds::new(bin(1, 0), bin(10, 0)); // [1, 10]
+        let inner = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+
+        let result = outer.union(&inner);
+        // [1, 10] ∪ [3, 5] = [1, 10]
+        assert_eq!(result.lo(), &bin(1, 0));
+        assert_eq!(result.hi(), bin(10, 0));
+    }
+
+    #[test]
+    fn finite_bounds_intersection_overlapping() {
+        // Test intersection of overlapping intervals
+        let a = FiniteBounds::new(bin(1, 0), bin(4, 0)); // [1, 4]
+        let b = FiniteBounds::new(bin(3, 0), bin(6, 0)); // [3, 6]
+
+        let result = a.intersection(&b).expect("should overlap");
+        // [1, 4] ∩ [3, 6] = [3, 4]
+        assert_eq!(result.lo(), &bin(3, 0));
+        assert_eq!(result.hi(), bin(4, 0));
+    }
+
+    #[test]
+    fn finite_bounds_intersection_disjoint() {
+        // Test intersection of disjoint intervals
+        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteBounds::new(bin(5, 0), bin(7, 0)); // [5, 7]
+
+        let result = a.intersection(&b);
+        assert!(
+            result.is_none(),
+            "disjoint intervals should have no intersection"
+        );
+    }
+
+    #[test]
+    fn finite_bounds_intersection_nested() {
+        // Test intersection where one interval contains the other
+        let outer = FiniteBounds::new(bin(1, 0), bin(10, 0)); // [1, 10]
+        let inner = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+
+        let result = outer.intersection(&inner).expect("should overlap");
+        // [1, 10] ∩ [3, 5] = [3, 5]
+        assert_eq!(result.lo(), &bin(3, 0));
+        assert_eq!(result.hi(), bin(5, 0));
+    }
+
+    #[test]
+    fn finite_bounds_intersection_touching() {
+        // Test intersection of intervals that touch at a point
+        let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
+        let b = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+
+        let result = a.intersection(&b).expect("should touch at a point");
+        // [1, 3] ∩ [3, 5] = [3, 3]
+        assert_eq!(result.lo(), &bin(3, 0));
+        assert_eq!(result.hi(), bin(3, 0));
     }
 }
