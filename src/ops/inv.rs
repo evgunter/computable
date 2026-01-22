@@ -90,7 +90,7 @@ fn reciprocal_bounds(
     }
 
     // If precision is not yet initialized, return infinite bounds in the appropriate direction
-    let Some(precision_bits) = precision_bits else {
+    let Some(precision) = precision_bits else {
         return if upper < zero {
             Ok(Bounds::new(XBinary::NegInf, XBinary::zero()))
         } else {
@@ -100,17 +100,15 @@ fn reciprocal_bounds(
 
     let (lower_bound, upper_bound) = if upper < zero {
         let lower_bound =
-            reciprocal_rounded_abs_extended(&upper, precision_bits, ReciprocalRounding::Ceil)?
-                .neg();
+            reciprocal_rounded_abs_extended(&upper, precision, ReciprocalRounding::Ceil)?.neg();
         let upper_bound =
-            reciprocal_rounded_abs_extended(lower, precision_bits, ReciprocalRounding::Floor)?
-                .neg();
+            reciprocal_rounded_abs_extended(lower, precision, ReciprocalRounding::Floor)?.neg();
         (lower_bound, upper_bound)
     } else {
         let lower_bound =
-            reciprocal_rounded_abs_extended(&upper, precision_bits, ReciprocalRounding::Floor)?;
+            reciprocal_rounded_abs_extended(&upper, precision, ReciprocalRounding::Floor)?;
         let upper_bound =
-            reciprocal_rounded_abs_extended(lower, precision_bits, ReciprocalRounding::Ceil)?;
+            reciprocal_rounded_abs_extended(lower, precision, ReciprocalRounding::Ceil)?;
         (lower_bound, upper_bound)
     };
 
