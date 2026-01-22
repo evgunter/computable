@@ -26,6 +26,7 @@ use num_traits::{One, Zero};
 use super::Bounds;
 use super::FiniteBounds;
 use super::{Binary, UBinary, UXBinary, XBinary};
+use crate::ordered_pair::AbsDistance;
 
 // TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
 // to reduce code duplication. Both functions follow a similar pattern (check sign, handle
@@ -237,14 +238,10 @@ pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
         _ => return bounds.clone(), // Can't simplify infinite upper bound
     };
 
-    // TODO: can we use the type system to ensure that this is non-negative?
     // min_width = original_upper - new_lower
-    // Since new_lower <= original_lower <= original_upper, this is non-negative
-    let min_width = original_upper.sub(&new_lower);
-    let min_width_unsigned = match UBinary::try_from_binary(&min_width) {
-        Ok(w) => w,
-        Err(_) => return bounds.clone(), // Shouldn't happen, but be safe
-    };
+    // Since new_lower <= original_lower <= original_upper, this is non-negative.
+    // Using abs_distance guarantees a UBinary result through the type system.
+    let min_width_unsigned = original_upper.clone().abs_distance(new_lower.clone());
 
     // Find shortest width in [min_width, min_width + margin]
     let new_width = shortest_binary_in_positive_interval(
@@ -315,18 +312,8 @@ pub fn simplify_bounds_if_needed(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::bin;
-
-    use super::super::Binary;
-
-    fn midpoint_between(lower: &Binary, upper: &Binary) -> Binary {
-        let mid_sum = lower.add(upper);
-        let exponent = mid_sum.exponent() - BigInt::from(1);
-        Binary::new(mid_sum.mantissa().clone(), exponent)
-    }
 
     #[test]
     fn shortest_xbinary_in_bounds_finds_sqrt_four() {
@@ -341,7 +328,7 @@ mod tests {
                 break;
             }
 
-            let mid = midpoint_between(&lower, &upper);
+            let mid = FiniteBounds::new(lower.clone(), upper.clone()).midpoint();
             let mid_sq = mid.clone() * mid.clone();
 
             if mid_sq <= four {
@@ -514,7 +501,7 @@ mod tests {
 
         // Do 20 "fake" bisection steps that accumulate precision
         for _ in 0..20 {
-            let mid = midpoint_between(&lower, &upper);
+            let mid = FiniteBounds::new(lower.clone(), upper.clone()).midpoint();
             // Arbitrarily take upper half each time
             lower = mid;
         }
@@ -600,7 +587,7 @@ mod tests {
 
         // Do some bisection steps
         for _ in 0..10 {
-            let mid = midpoint_between(&lower, &upper);
+            let mid = FiniteBounds::new(lower.clone(), upper.clone()).midpoint();
             let mid_sq = mid.clone() * mid.clone();
             if mid_sq <= four {
                 lower = mid;

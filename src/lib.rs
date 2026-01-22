@@ -33,18 +33,19 @@
 //! let bounds = z.bounds().unwrap();
 //! ```
 
+// Forbid panic-related lints in non-test code (tests can still use expect/panic/unwrap)
+#![cfg_attr(not(test), forbid(clippy::expect_used))]
+#![cfg_attr(not(test), forbid(clippy::panic))]
+#![cfg_attr(not(test), forbid(clippy::unwrap_used))]
 #![warn(
     clippy::shadow_reuse,
     clippy::shadow_same,
     clippy::shadow_unrelated,
     clippy::dbg_macro,
-    clippy::expect_used,
-    clippy::panic,
     clippy::print_stderr,
     clippy::print_stdout,
     clippy::todo,
-    clippy::unimplemented,
-    clippy::unwrap_used
+    clippy::unimplemented
 )]
 
 // External modules (already exist)

@@ -172,11 +172,11 @@ impl FiniteBounds {
         }
     }
 
-    /// Returns the midpoint of the interval: (lo + hi) / 2
+    /// Returns the midpoint of the interval: lo + width/2
     pub fn midpoint(&self) -> Binary {
-        let sum = self.lo().add(&self.hi());
-        // Divide by 2 by decrementing exponent
-        Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
+        let width = self.width().to_binary();
+        let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
+        self.lo().add(&half_width)
     }
 
     /// Checks if this interval contains a point.
@@ -198,6 +198,33 @@ impl FiniteBounds {
     pub fn overlaps(&self, other: &Self) -> bool {
         !(self.entirely_less_than(other) || self.entirely_greater_than(other))
     }
+
+    /// Returns the join (smallest enclosing interval) of two intervals.
+    ///
+    /// `[a, b].join([c, d]) = [min(a, c), max(b, d)]`
+    ///
+    /// This is the lattice join operation: the smallest interval that contains
+    /// both inputs. Note that if the intervals are disjoint, the result includes
+    /// points in neither original interval (i.e., this is the convex hull).
+    pub fn join(&self, other: &Self) -> Self {
+        let min_lo = std::cmp::min(self.lo(), other.lo()).clone();
+        let max_hi = std::cmp::max(self.hi(), other.hi());
+        Self::new(min_lo, max_hi)
+    }
+
+    /// Returns the intersection of two intervals, if non-empty.
+    ///
+    /// `[a, b].intersection([c, d]) = [max(a, c), min(b, d)]` if non-empty
+    ///
+    /// Returns `None` if the intervals don't overlap.
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
+        if !self.overlaps(other) {
+            return None;
+        }
+        let max_lo = std::cmp::max(self.lo(), other.lo()).clone();
+        let min_hi = std::cmp::min(self.hi(), other.hi());
+        Some(Self::new(max_lo, min_hi))
+    }
 }
 
 impl Unsigned for BigUint {}
@@ -217,8 +244,6 @@ impl AddWidth<BigInt, BigUint> for BigInt {
 #[cfg(test)]
 mod integration_tests {
     //! Integration tests that verify cross-module functionality.
-
-    #![allow(clippy::expect_used)]
 
     use super::*;
     use crate::test_utils::{bin, xbin};
@@ -294,5 +319,110 @@ mod integration_tests {
 
         assert_eq!(bounds.small(), &xbin(42, 0));
         assert_eq!(bounds.large(), xbin(42, 0));
+    }
+
+    #[test]
+    fn finite_bounds_interval_subtraction() {
+        // Test that [a,b] - [c,d] = [a-d, b-c]
+        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+
+        let result = a.interval_sub(&b);
+        // [1, 2] - [3, 5] = [1-5, 2-3] = [-4, -1]
+        assert_eq!(result.lo(), &bin(-4, 0));
+        assert_eq!(result.hi(), bin(-1, 0));
+    }
+
+    #[test]
+    fn finite_bounds_interval_negation() {
+        let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
+        let neg_a = a.interval_neg(); // [-3, -1]
+        assert_eq!(neg_a.lo(), &bin(-3, 0));
+        assert_eq!(neg_a.hi(), bin(-1, 0));
+    }
+
+    #[test]
+    fn finite_bounds_join_overlapping() {
+        // Test join of overlapping intervals
+        let a = FiniteBounds::new(bin(1, 0), bin(4, 0)); // [1, 4]
+        let b = FiniteBounds::new(bin(3, 0), bin(6, 0)); // [3, 6]
+
+        let result = a.join(&b);
+        // [1, 4].join([3, 6]) = [1, 6]
+        assert_eq!(result.lo(), &bin(1, 0));
+        assert_eq!(result.hi(), bin(6, 0));
+    }
+
+    #[test]
+    fn finite_bounds_join_disjoint() {
+        // Test join of disjoint intervals (convex hull)
+        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteBounds::new(bin(5, 0), bin(7, 0)); // [5, 7]
+
+        let result = a.join(&b);
+        // [1, 2].join([5, 7]) = [1, 7] (convex hull)
+        assert_eq!(result.lo(), &bin(1, 0));
+        assert_eq!(result.hi(), bin(7, 0));
+    }
+
+    #[test]
+    fn finite_bounds_join_nested() {
+        // Test join where one interval contains the other
+        let outer = FiniteBounds::new(bin(1, 0), bin(10, 0)); // [1, 10]
+        let inner = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+
+        let result = outer.join(&inner);
+        // [1, 10].join([3, 5]) = [1, 10]
+        assert_eq!(result.lo(), &bin(1, 0));
+        assert_eq!(result.hi(), bin(10, 0));
+    }
+
+    #[test]
+    fn finite_bounds_intersection_overlapping() {
+        // Test intersection of overlapping intervals
+        let a = FiniteBounds::new(bin(1, 0), bin(4, 0)); // [1, 4]
+        let b = FiniteBounds::new(bin(3, 0), bin(6, 0)); // [3, 6]
+
+        let result = a.intersection(&b).expect("should overlap");
+        // [1, 4] ∩ [3, 6] = [3, 4]
+        assert_eq!(result.lo(), &bin(3, 0));
+        assert_eq!(result.hi(), bin(4, 0));
+    }
+
+    #[test]
+    fn finite_bounds_intersection_disjoint() {
+        // Test intersection of disjoint intervals
+        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteBounds::new(bin(5, 0), bin(7, 0)); // [5, 7]
+
+        let result = a.intersection(&b);
+        assert!(
+            result.is_none(),
+            "disjoint intervals should have no intersection"
+        );
+    }
+
+    #[test]
+    fn finite_bounds_intersection_nested() {
+        // Test intersection where one interval contains the other
+        let outer = FiniteBounds::new(bin(1, 0), bin(10, 0)); // [1, 10]
+        let inner = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+
+        let result = outer.intersection(&inner).expect("should overlap");
+        // [1, 10] ∩ [3, 5] = [3, 5]
+        assert_eq!(result.lo(), &bin(3, 0));
+        assert_eq!(result.hi(), bin(5, 0));
+    }
+
+    #[test]
+    fn finite_bounds_intersection_touching() {
+        // Test intersection of intervals that touch at a point
+        let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
+        let b = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+
+        let result = a.intersection(&b).expect("should touch at a point");
+        // [1, 3] ∩ [3, 5] = [3, 3]
+        assert_eq!(result.lo(), &bin(3, 0));
+        assert_eq!(result.hi(), bin(3, 0));
     }
 }

@@ -1,61 +1,14 @@
 # TODOs - Ranked by Ease of Completion
 
-## Tier 1: Easy
-
-### <a id="error-doctest"></a>error-doctest: Fix or investigate ignored doctest
-**File:** `src/error.rs:32`
-```rust
-/// TODO: why is the doctest ignored? does it not like macro_rules or something
-```
-Investigate why the doctest for the macro is ignored and fix if possible.
-
-### <a id="clippy-expect"></a>clippy-expect: Investigate missing clippy warning
-**File:** `benchmarks/src/balanced_sum.rs:26`
-```rust
-// TODO: why doesn't clippy complain about this expect?
-```
-Investigate why clippy isn't catching this expect usage.
+## Tier 2: Medium Effort (Unblocked, requires some work)
 
 ### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
-**File:** `src/binary/shortest.rs:22`
+**File:** `src/binary/shortest.rs:30`
 ```rust
 // TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
 // to reduce code duplication.
 ```
 Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
-
-
-## Tier 2: Medium Effort (Unblocked, requires some work)
-
-### <a id="midpoint-dedup"></a>midpoint-dedup: Consolidate midpoint implementations
-**File:** `benchmarks/src/common.rs:50`
-```rust
-// TODO: remove all the implementations in other files of `midpoint` or `midpoint_between` etc and just use one implementation
-```
-Multiple implementations of midpoint calculation exist across the codebase. Consolidate into a single implementation in the main module using the + width/2 strategy.
-
-### <a id="interval-test-helper-dedup"></a>interval-test-helper-dedup: Consolidate interval test helpers
-**File:** `src/ops/pow.rs:135`, `src/ops/nth_root.rs:509`, `src/ops/arithmetic.rs:117`
-```rust
-// Multiple test files define their own interval_computable helper functions
-```
-Multiple test modules have their own `interval_computable` helper that creates a Computable with interval bounds. The main difference is whether they refine to midpoint or not. Consider consolidating into `test_utils` with a parameter to control refinement behavior, or at least add comments explaining why each version exists.
-
-### <a id="bisection-bigint"></a>bisection-bigint: Change exponent parameter type
-**File:** `src/binary_utils/bisection.rs:102`
-```rust
-// TODO: this doesn't need to take exponent as a BigInt since we don't really do that anywhere else.
-```
-Switch exponent parameter to a more convenient type for its callers once they're integrated.
-
-### <a id="test-macro"></a>test-macro: Create test boilerplate macro
-**File:** `src/refinement.rs:279`
-```rust
-// TODO: make a macro for basically
-// mod tests {
-//     #![allow(clippy::expect_used, clippy::panic)]
-```
-Create a macro for test module boilerplate with ratchet tests for clippy::expect_used and clippy::panic (they should NEVER be allowed in the code except in tests).
 
 ### <a id="shortest-module-eval"></a>shortest-module-eval: Evaluate if shortest module is still needed
 **File:** `src/binary/shortest.rs:15`
@@ -65,87 +18,20 @@ Create a macro for test module boilerplate with ratchet tests for clippy::expect
 With the introduction of `bounds_from_normalized` in the bisection module, it may be possible to avoid needing explicit shortest-representation searches. Evaluate if this module is only needed for cases where bounds cannot be normalized initially.
 
 ### <a id="shortest-refinement"></a>shortest-refinement: Fix refinement progress tracking
-**File:** `src/binary/shortest.rs:271`
+**File:** `src/binary/shortest.rs:282`
 ```rust
 // TODO: all the cases that use this seem to not be tracking refinement progress properly.
 ```
 Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
 
-### <a id="nonzero-benchmark"></a>nonzero-benchmark: Use NonZeroU32 directly in benchmark
-**File:** `benchmarks/src/integer_roots.rs:35`
-```rust
-// TODO: see if we can take the input as NonZeroU32 directly so we don't need to unwrap
-```
-Minor API change to avoid an unwrap.
-
-### <a id="pi-unwrap"></a>pi-unwrap: Avoid using unwrap in pi benchmark
-**File:** `benchmarks/src/pi.rs:55`
-```rust
-// TODO: can we avoid using unwrap?
-```
-Replace with proper error handling.
-
-### <a id="non-negative-type"></a>non-negative-type: Ensure non-negative via type system
-**File:** `src/binary/shortest.rs:179`
-```rust
-// TODO: can we use the type system to ensure that this is non-negative?
-```
-Type constraint addition.
-
-### <a id="binary-abs-method"></a>binary-abs-method: Add Binary::abs() -> UBinary method
-**Files:** `src/ops/sin.rs:236`, `src/ops/sin.rs:683`, `src/ops/nth_root.rs:270`
-```rust
-// TODO: add Binary::abs() -> UBinary method to avoid repeated is_negative checks and encode
-// non-negativity in the type system
-```
-Multiple locations compute absolute value with `if x.mantissa().is_negative() { x.neg() } else { x.clone() }`. Adding an `abs()` method that returns `UBinary` would (a) avoid repeated sign checks, (b) encode non-negativity at the type level, and (c) reduce code duplication.
-
-### <a id="precision-option-type"></a>precision-option-type: Use Option for initialization state
-**File:** `src/ops/inv.rs:59`
-```rust
-// TODO: use Option<NonZeroOrPositiveBigInt> to encode "not initialized" vs "initialized"
-// at the type level, avoiding is_zero() check and making initialization state explicit
-```
-Currently checks `if precision.is_zero()` to determine if initialization is needed. Using `Option<NonZero...>` would encode this state in the type system, eliminating the runtime check.
-
-### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy
-**File:** `src/ops/inv.rs:27`
-```rust
-// TODO: Improve inv() precision strategy. Currently precision_bits starts at 0 and
-```
-Algorithm improvement.
-
-### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
-**File:** `src/ops/pi.rs:496`
-```rust
-// TODO: should this go with `neg` tests? is this actually needed or redundant?
-```
-Evaluate and either move or remove the interval negation test.
-
-### <a id="sin-sus-comment"></a>sin-sus-comment: Investigate suspicious comment
-**File:** `src/ops/sin.rs:312`
-```rust
-// TODO: this comment is sus, what's up with this
-```
-There's a comment that suggests a correctness issue ('close enough'). Determine why the code says that and whether there is a correctness issue.
-
-### <a id="sin-midpoint-usage"></a>sin-midpoint-usage: Investigate midpoint usage in sin
-**File:** `src/ops/sin.rs:485`
-```rust
-// TODO: it's suspicious that this uses midpoints rather than bounds
-```
-This also suggests a correctness issue (using the midpoint rather than the bounds separately suggests that an approximation is being made, instead of correctly propagating the bounds fully)
+## Tier 3: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="sin-k-midpoint"></a>sin-k-midpoint: Fix midpoint usage for k computation
-**File:** `src/ops/sin.rs:288`
+**File:** `src/ops/sin.rs:292`
 ```rust
 // TODO(correctness): Using midpoints for k computation could cause incorrect range reduction.
 ```
-Correctness issue.
-
----
-
-## Tier 3: Hard (Unblocked, but complex correctness issues)
+Correctness issue in range reduction math.
 
 ### <a id="bounds-dedup"></a>bounds-dedup: Deduplicate FiniteBounds and Bounds
 **File:** `src/binary.rs:77`
@@ -155,7 +41,7 @@ Correctness issue.
 Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters and have similar interval arithmetic needs. Consider whether the interval_add, interval_sub, interval_neg, scale_positive, scale_bigint, midpoint, and comparison methods could be generalized to work on any `Interval<T, W>` where T and W satisfy appropriate trait bounds.
 
 ### <a id="inv-bounds-order"></a>inv-bounds-order: Type system for bounds ordering
-**File:** `src/ops/inv.rs:113`
+**File:** `src/ops/inv.rs:148`
 ```rust
 // TODO: can the type system ensure that the bounds remain ordered?
 ```
@@ -188,6 +74,13 @@ Correctness issue in range reduction.
 // TODO(correctness): Capping at 256 bits may not provide sufficient pi precision
 ```
 May need adaptive precision.
+
+### <a id="sin-arbitrary-precision"></a>sin-arbitrary-precision: Support arbitrary precision in divide_by_factorial_directed
+**File:** `src/ops/sin.rs:721`
+```rust
+// TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
+```
+The `divide_by_factorial_directed` function uses a fixed 64-bit precision for reciprocal computation. This caps achievable accuracy and should be made adaptive based on the requested output precision, similar to the issues in pi.rs.
 
 ### <a id="sin-refine-default"></a>sin-refine-default: Use refine_to_default instead of custom loop
 **File:** `src/ops/sin.rs:301`
@@ -223,20 +116,6 @@ Memory safety for edge cases.
 // TODO: Investigate if the type system can constrain this so that invalid bounds
 ```
 Type-level prevention of invalid states.
-
-### <a id="uxbinary-unreachable"></a>uxbinary-unreachable: Type system for UXBinary unreachable
-**File:** `src/binary/uxbinary.rs:157`
-```rust
-// TODO: Investigate if the type system can prevent needing the unreachable! check
-```
-Eliminate impossible states at type level.
-
-### <a id="binary-unreachable"></a>binary-unreachable: Type system for Binary unreachable
-**File:** `src/binary/binary_impl.rs:271`
-```rust
-// TODO: Investigate if the type system can prevent needing the unreachable! check below.
-```
-Similar to [uxbinary-unreachable](#uxbinary-unreachable).
 
 ### <a id="pi-adaptive"></a>pi-adaptive: Make pi precision adaptive (128-bit limitation)
 **File:** `src/ops/pi.rs:243`

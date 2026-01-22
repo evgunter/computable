@@ -29,11 +29,10 @@ use crate::binary::BinaryError;
 ///
 /// * `$msg` - A description of what case was encountered (e.g., "lower input bound is PosInf")
 ///
-/// TODO: why is the doctest ignored? does it not like macro_rules or something
 /// # Example
 ///
-/// ```ignore
-/// detected_computable_with_infinite_value!("lower input bound is PosInf");
+/// ```should_panic
+/// computable::detected_computable_with_infinite_value!("lower input bound is PosInf");
 /// ```
 #[macro_export]
 macro_rules! detected_computable_with_infinite_value {
@@ -97,5 +96,43 @@ impl std::error::Error for ComputableError {}
 impl From<BinaryError> for ComputableError {
     fn from(error: BinaryError) -> Self {
         Self::Binary(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_error_converts_to_computable_error() {
+        let binary_err = BinaryError::NegativeMantissa;
+        let computable_err: ComputableError = binary_err.into();
+        assert!(matches!(
+            computable_err,
+            ComputableError::Binary(BinaryError::NegativeMantissa)
+        ));
+    }
+
+    #[test]
+    fn computable_error_implements_std_error() {
+        let err: &dyn std::error::Error = &ComputableError::DomainError;
+        // Verify it implements the Error trait by calling source()
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn detected_computable_with_infinite_value_macro_compiles() {
+        // Verifies the macro is a no-op in release mode (debug_assertions disabled).
+        #[cfg(not(debug_assertions))]
+        {
+            detected_computable_with_infinite_value!("test message");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "test message")]
+    #[cfg(debug_assertions)]
+    fn detected_computable_with_infinite_value_macro_panics_in_debug() {
+        detected_computable_with_infinite_value!("test message");
     }
 }

@@ -336,8 +336,6 @@ pub fn half_pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::binary::UBinary;
     use num_bigint::BigUint;
@@ -457,26 +455,5 @@ mod tests {
             PRECISION_BITS,
             PRECISION_BITS - 1
         );
-    }
-
-    #[test]
-    fn interval_arithmetic_subtraction() {
-        // Test that [a,b] - [c,d] = [a-d, b-c]
-        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
-        let b = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
-
-        let result = a.interval_sub(&b);
-        // [1, 2] - [3, 5] = [1-5, 2-3] = [-4, -1]
-        assert_eq!(result.lo(), &bin(-4, 0));
-        assert_eq!(result.hi(), bin(-1, 0));
-    }
-
-    // TODO: should this go with `neg` tests? is this actually needed or redundant?
-    #[test]
-    fn interval_negation() {
-        let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
-        let neg_a = a.interval_neg(); // [-3, -1]
-        assert_eq!(neg_a.lo(), &bin(-3, 0));
-        assert_eq!(neg_a.hi(), bin(-1, 0));
     }
 }

@@ -154,10 +154,6 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
     /// Computes the width between two XBinary values, returning a UXBinary.
     ///
     /// Width is always nonnegative: |other - self|.
-    // TODO: Investigate if the type system can prevent needing the unreachable! check below.
-    // After taking the absolute value, the result is guaranteed non-negative, so try_from_binary
-    // should never fail. Ideally we'd have a type-level proof of this.
-    #[allow(clippy::unreachable)]
     fn abs_distance(self, other: Self) -> UXBinary {
         use XBinary::{Finite, NegInf, PosInf};
         match (self, other) {
@@ -166,19 +162,7 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
             (NegInf, NegInf) | (PosInf, PosInf) => UXBinary::zero(),
             (NegInf, Finite(_)) | (Finite(_), PosInf) => UXBinary::Inf,
             (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::Inf,
-            (Finite(l), Finite(u)) => {
-                // Compute |u - l|
-                use num_traits::Signed;
-                let diff = u.clone().sub(l.clone());
-                let non_negative = if diff.mantissa().is_negative() {
-                    l.sub(u)
-                } else {
-                    diff
-                };
-                UXBinary::Finite(UBinary::try_from_binary(&non_negative).unwrap_or_else(|_| {
-                    unreachable!("absolute value of difference should always be non-negative")
-                }))
-            }
+            (Finite(l), Finite(u)) => UXBinary::Finite(u.sub(l).magnitude()),
         }
     }
 }
@@ -200,8 +184,6 @@ impl fmt::Display for UXBinary {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::{bin, ubin, xbin};
 
