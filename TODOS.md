@@ -33,13 +33,6 @@ The two boundary region branches in `compute_sin_bounds_for_point_with_pi` have 
 
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
-### <a id="inv-precision"></a>inv-precision: Improve inv() precision strategy
-**File:** `src/ops/inv.rs:28`
-```rust
-// TODO: Improve inv() precision strategy. Currently precision_bits starts at 0 and
-```
-Algorithm improvement requiring understanding of numerical precision trade-offs.
-
 ### <a id="sin-k-midpoint"></a>sin-k-midpoint: Fix midpoint usage for k computation
 **File:** `src/ops/sin.rs:292`
 ```rust

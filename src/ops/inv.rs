@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
+use num_traits::ToPrimitive;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Bounds, ReciprocalRounding, XBinary, margin_from_width, reciprocal_rounded_abs_extended,
-    simplify_bounds_if_needed,
+    Bounds, ReciprocalRounding, UXBinary, XBinary, margin_from_width,
+    reciprocal_rounded_abs_extended, simplify_bounds_if_needed,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -20,15 +21,13 @@ const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
 /// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
 const MARGIN_SHIFT: u32 = 3;
 
-/// Initial precision bits to start with for inv refinement.
+/// Initial precision bits to start with for inv refinement when input bounds are infinite.
 /// Starting at a reasonable value avoids unnecessary early iterations.
-pub const INV_INITIAL_PRECISION_BITS: i64 = 4;
+pub const INV_INITIAL_PRECISION_BITS: i64 = 8;
 
-// TODO: Improve inv() precision strategy. Currently precision_bits starts uninitialized
-// and doubles on each refine_step. This is simple but potentially inefficient:
-// - For a given epsilon, we don't know how many bits are needed upfront
-// - Each step recomputes the reciprocal from scratch at the new precision
-// Consider: adaptive precision based on current bounds width, or Newton-Raphson iteration.
+/// How many bits to increase precision by on each refinement step.
+/// 16 bits provides a good balance between making progress and not overshooting.
+const PRECISION_INCREMENT: i64 = 16;
 
 /// Inverse (reciprocal) operation with precision-based refinement.
 pub struct InvOp {
@@ -53,13 +52,22 @@ impl NodeOp for InvOp {
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
         let mut precision = self.precision_bits.write();
-        // Double precision each step for O(log n) convergence.
-        // Once the TODO above is implemented (reusing precision calculation state),
-        // this should be changed back to linear increment to avoid unnecessary
-        // computation to higher precision than requested.
-        match precision.as_mut() {
-            None => *precision = Some(BigInt::from(INV_INITIAL_PRECISION_BITS)),
-            Some(p) => *p *= 2,
+
+        match precision.as_ref() {
+            None => {
+                // First step: estimate initial precision from input bounds.
+                // If input has finite bounds, use the input's precision as a starting point.
+                // This avoids wasting iterations on low precision when input is already precise.
+                let input_bounds = self.inner.get_bounds()?;
+                let initial_precision = estimate_initial_precision(&input_bounds);
+                *precision = Some(BigInt::from(initial_precision));
+            }
+            Some(current) => {
+                // Subsequent steps: increase precision by a fixed increment.
+                // This provides predictable, linear convergence rather than exponential
+                // overshoot from doubling.
+                *precision = Some(current + PRECISION_INCREMENT);
+            }
         }
         Ok(true)
     }
@@ -71,6 +79,31 @@ impl NodeOp for InvOp {
     fn is_refiner(&self) -> bool {
         true
     }
+}
+
+/// Estimates an initial precision based on the input bounds.
+///
+/// The idea is to start at a precision that's appropriate for the input:
+/// - If the input has finite bounds with width W, we estimate precision as -log2(W) + offset
+/// - If the input has infinite bounds, we use the default initial precision
+///
+/// This avoids wasting iterations on low precision when the input is already precise.
+fn estimate_initial_precision(input_bounds: &Bounds) -> i64 {
+    // Try to get effective precision from input width
+    if let UXBinary::Finite(width) = input_bounds.width() {
+        // The width is mantissa * 2^exponent
+        // Effective precision is roughly -exponent (ignoring mantissa for simplicity)
+        // We use this as a starting point, with a minimum floor
+        if let Some(exp) = width.exponent().to_i64() {
+            // Precision ≈ -exponent, clamped to reasonable range
+            // Add a small offset to ensure we start with enough precision
+            let estimated = (-exp).max(INV_INITIAL_PRECISION_BITS) + PRECISION_INCREMENT;
+            return estimated;
+        }
+    }
+
+    // Fall back to default for infinite bounds or extreme exponents
+    INV_INITIAL_PRECISION_BITS
 }
 
 /// Computes reciprocal bounds for an interval.
