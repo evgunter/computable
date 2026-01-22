@@ -122,12 +122,17 @@ mod tests {
 
     #[test]
     fn detected_computable_with_infinite_value_macro_compiles() {
-        // This test verifies the macro compiles and executes in release mode.
-        // In debug mode with debug_assertions enabled, this would panic,
-        // so we only test that the macro syntax is correct.
+        // Verifies the macro is a no-op in release mode (debug_assertions disabled).
         #[cfg(not(debug_assertions))]
         {
             detected_computable_with_infinite_value!("test message");
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "test message")]
+    #[cfg(debug_assertions)]
+    fn detected_computable_with_infinite_value_macro_panics_in_debug() {
+        detected_computable_with_infinite_value!("test message");
     }
 }
