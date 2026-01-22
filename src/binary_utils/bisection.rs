@@ -5,10 +5,13 @@
 //! that needs to refine bounds via bisection (e.g., nth_root, inverse functions,
 //! root-finding for monotonic functions).
 //!
-//! # Functions
+//! # Types and Functions
 //!
-//! - [`bisection_step_midpoint`]: Performs bisection using midpoint strategy
-//! - [`bounds_from_normalized`]: Creates normalized bounds for optimal midpoint bisection
+//! - [`NormalizedBounds`]: Bounds in normalized form (mantissa, exponent)
+//! - [`NormalizedBisectionResult`]: Result of a normalized bisection step
+//! - [`bisection_step_normalized`]: Performs bisection on normalized bounds
+//! - [`bisection_step_midpoint`]: Performs bisection on general `FiniteBounds`
+//! - [`bounds_from_normalized`]: Converts normalized form to `FiniteBounds`
 //! - [`normalize_bounds`]: Converts arbitrary bounds to normalized form
 //!
 //! # Normalized Bounds Strategy
@@ -18,8 +21,8 @@
 //! shortest representation at each step. This eliminates the need for explicit shortest-
 //! representation searches.
 //!
-//! Use [`bounds_from_normalized`] to create bounds in normalized form, or [`normalize_bounds`]
-//! to convert existing bounds.
+//! Use [`NormalizedBounds`] and [`bisection_step_normalized`] for the most efficient
+//! bisection on normalized bounds, or [`normalize_bounds`] to convert existing bounds.
 //!
 //! # Usage
 //!
@@ -88,6 +91,91 @@ pub enum BisectionComparison {
     ///
     /// The search is complete; both bounds should be set to this value.
     Exact,
+}
+
+/// Normalized bounds for bisection where lower = mantissa * 2^exponent and width = 2^exponent.
+///
+/// This representation ensures that midpoint bisection automatically selects the shortest
+/// representation at each step, eliminating the need for explicit shortest-representation
+/// searches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedBounds {
+    /// Mantissa of the lower bound.
+    pub mantissa: BigInt,
+    /// Shared exponent for lower bound and width.
+    pub exponent: BigInt,
+}
+
+impl NormalizedBounds {
+    /// Creates new normalized bounds.
+    ///
+    /// The bounds represent the interval [mantissa * 2^exponent, (mantissa + 1) * 2^exponent].
+    pub fn new(mantissa: BigInt, exponent: BigInt) -> Self {
+        Self { mantissa, exponent }
+    }
+
+    /// Converts to `FiniteBounds`.
+    pub fn to_finite_bounds(&self) -> FiniteBounds {
+        bounds_from_normalized(self.mantissa.clone(), self.exponent.clone())
+    }
+
+    /// Returns the midpoint: (2 * mantissa + 1) * 2^(exponent - 1).
+    pub fn midpoint(&self) -> Binary {
+        Binary::new(&self.mantissa * 2 + 1, self.exponent.clone() - 1)
+    }
+}
+
+/// Result of a normalized bisection step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NormalizedBisectionResult {
+    /// The interval was narrowed (target not exactly at midpoint).
+    Narrowed(NormalizedBounds),
+    /// The midpoint was exactly the target.
+    Exact(Binary),
+}
+
+/// Performs a single bisection step on normalized bounds.
+///
+/// This operates directly on the normalized representation, updating mantissa and exponent
+/// without needing to convert to/from `FiniteBounds`.
+///
+/// # Arguments
+///
+/// * `bounds` - The current normalized bounds
+/// * `compare` - A function that compares the midpoint to the target value
+///
+/// # Returns
+///
+/// - `Narrowed(new_bounds)` if the comparison was Above or Below
+/// - `Exact(midpoint)` if the comparison was Exact
+pub fn bisection_step_normalized<C>(
+    bounds: &NormalizedBounds,
+    compare: C,
+) -> NormalizedBisectionResult
+where
+    C: FnOnce(&Binary) -> BisectionComparison,
+{
+    let mid = bounds.midpoint();
+
+    match compare(&mid) {
+        BisectionComparison::Above => {
+            // Target is above mid, so new interval is [mid, upper]
+            // mid = (2m + 1) * 2^(e-1), so new mantissa = 2m + 1
+            NormalizedBisectionResult::Narrowed(NormalizedBounds {
+                mantissa: &bounds.mantissa * 2 + 1,
+                exponent: bounds.exponent.clone() - 1,
+            })
+        }
+        BisectionComparison::Below => {
+            // Target is below mid, so new interval is [lower, mid]
+            // lower at new exponent: m * 2^e = 2m * 2^(e-1), so new mantissa = 2m
+            NormalizedBisectionResult::Narrowed(NormalizedBounds {
+                mantissa: &bounds.mantissa * 2,
+                exponent: bounds.exponent.clone() - 1,
+            })
+        }
+        BisectionComparison::Exact => NormalizedBisectionResult::Exact(mid),
+    }
 }
 
 /// Computes the midpoint of two Binary numbers.
@@ -229,6 +317,8 @@ fn select_midpoint(bounds: &FiniteBounds) -> Binary {
     bounds.small().add(&half_width_shifted)
 }
 
+// TODO: remove bisection_step_midpoint! it is no longer used
+
 /// Performs a single step of binary search using the midpoint strategy.
 ///
 /// This is the standard bisection approach that splits at the midpoint.
@@ -345,6 +435,7 @@ mod tests {
             bounds = bisection_step_midpoint(bounds, |mid| {
                 let mid_sq = mid.mul(mid);
                 match mid_sq.cmp(&target) {
+                    // TODO: we should probably just use std::cmp::Ordering instead of custom BisectionComparison so we can remove BisectionComparison entirely.
                     std::cmp::Ordering::Less => BisectionComparison::Above,
                     std::cmp::Ordering::Equal => BisectionComparison::Exact,
                     std::cmp::Ordering::Greater => BisectionComparison::Below,

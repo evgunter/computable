@@ -32,10 +32,11 @@ use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed,
+    Binary, Bounds, FiniteBounds, UXBinary, XBinary, margin_from_width, simplify_bounds_if_needed,
 };
 use crate::binary_utils::bisection::{
-    BisectionComparison, bisection_step_midpoint, midpoint, normalize_bounds,
+    BisectionComparison, NormalizedBisectionResult, NormalizedBounds, bisection_step_normalized,
+    midpoint, normalize_bounds,
 };
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
@@ -75,17 +76,17 @@ pub struct NthRootOp {
 }
 
 /// State for the bisection algorithm.
-/// Tracks the current interval bounds for the n-th root.
+/// Tracks the current interval bounds for the n-th root in normalized form.
 #[derive(Clone, Debug)]
 pub struct BisectionState {
-    /// Lower bound for the n-th root (finite Binary).
-    pub lower: Binary,
-    /// Upper bound for the n-th root (finite Binary).
-    pub upper: Binary,
+    /// Current bounds in normalized form.
+    pub bounds: NormalizedBounds,
     /// The target value (x) whose n-th root we're computing.
     pub target: Binary,
     /// Whether the result should be negated (for odd roots of negative numbers).
     pub negate_result: bool,
+    /// If set, the exact root value (set when bisection hits Exact).
+    pub exact_value: Option<Binary>,
 }
 
 impl NodeOp for NthRootOp {
@@ -100,12 +101,24 @@ impl NodeOp for NthRootOp {
             }
             Some(s) => {
                 // Return current bisection interval, simplified if needed
-                let (lower, upper) = if s.negate_result {
-                    (s.upper.neg(), s.lower.neg())
-                } else {
-                    (s.lower.clone(), s.upper.clone())
+                let finite_bounds = {
+                    let bounds = if let Some(exact) = &s.exact_value {
+                        // Exact match found - point interval with zero width
+                        FiniteBounds::point(exact.clone())
+                    } else {
+                        // Reconstruct bounds from normalized form
+                        s.bounds.to_finite_bounds()
+                    };
+                    if s.negate_result {
+                        bounds.interval_neg()
+                    } else {
+                        bounds
+                    }
                 };
-                let raw_bounds = Bounds::new(XBinary::Finite(lower), XBinary::Finite(upper));
+                let raw_bounds = Bounds::from_lower_and_width(
+                    XBinary::Finite(finite_bounds.small().clone()),
+                    UXBinary::Finite(finite_bounds.width().clone()),
+                );
                 // Simplify bounds to reduce precision bloat from bisection
                 let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
                 Ok(simplify_bounds_if_needed(
@@ -131,20 +144,31 @@ impl NodeOp for NthRootOp {
                 Ok(true)
             }
             Some(s) => {
-                // Perform one bisection step using midpoint strategy
+                // If we already have an exact value, no need to refine
+                if s.exact_value.is_some() {
+                    return Ok(false);
+                }
+
+                // Perform one bisection step
                 let degree = self.degree.get();
-                let target = s.target.clone();
-                let bounds = FiniteBounds::new(s.lower.clone(), s.upper.clone());
-                let result = bisection_step_midpoint(bounds, |mid| {
+                let target = &s.target;
+                let result = bisection_step_normalized(&s.bounds, |mid| {
                     let mid_pow = binary_pow(mid, degree);
-                    match mid_pow.cmp(&target) {
+                    match mid_pow.cmp(target) {
                         std::cmp::Ordering::Less => BisectionComparison::Above,
                         std::cmp::Ordering::Equal => BisectionComparison::Exact,
                         std::cmp::Ordering::Greater => BisectionComparison::Below,
                     }
                 });
-                s.lower = result.small().clone();
-                s.upper = result.large();
+
+                match result {
+                    NormalizedBisectionResult::Narrowed(new_bounds) => {
+                        s.bounds = new_bounds;
+                    }
+                    NormalizedBisectionResult::Exact(mid) => {
+                        s.exact_value = Some(mid);
+                    }
+                }
                 Ok(true)
             }
         }
@@ -341,11 +365,26 @@ fn initialize_nth_root_bisection_state(
     let initial_bounds = FiniteBounds::new(bisection_lower, bisection_upper);
     let normalized = normalize_bounds(&initial_bounds)?;
 
+    // Extract mantissa and exponent from normalized bounds.
+    // Use width's exponent since it's always correct (even when lower is zero,
+    // which normalizes to exponent 0).
+    let exponent = normalized.width().exponent().clone();
+    let normalized_lower = normalized.small();
+
+    // If lower is zero, mantissa is 0 regardless of exponent.
+    // Otherwise, we need to ensure the mantissa is at the width's exponent.
+    let mantissa = if normalized_lower.mantissa().is_zero() {
+        BigInt::zero()
+    } else {
+        // Lower should already be at the correct exponent from bounds_from_normalized
+        normalized_lower.mantissa().clone()
+    };
+
     Ok(BisectionState {
-        lower: normalized.small().clone(),
-        upper: normalized.large(),
+        bounds: NormalizedBounds::new(mantissa, exponent),
         target: actual_target,
         negate_result,
+        exact_value: None,
     })
 }
 
