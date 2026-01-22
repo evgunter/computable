@@ -2,35 +2,27 @@
 //!
 //! This module provides the machinery for refining computable numbers to a desired precision:
 //! - `RefinementGraph`: Snapshot of the computation graph for coordinating refinement
-//! - `RefinerHandle`: Handle for controlling a background refiner thread
 //! - `NodeUpdate`: Update message from a refiner to the coordinator
 //!
-//! The refinement model is event-driven:
-//! 1. Each refiner runs independently, sending updates as they refine
-//! 2. Coordinator uses `select!` to receive from any refiner
-//! 3. After processing each update, coordinator sends "continue" signal
+//! The refinement model follows a pub/sub pattern as described in the README:
+//! 1. Each refiner runs autonomously in its own thread, continuously refining
+//! 2. Refiners publish updates via bounded(0) channels for natural backpressure
+//! 3. Coordinator receives updates as they arrive and propagates through the graph
 //! 4. Precision is checked after each update propagation
-//! 5. When precision is met or max iterations reached, coordinator stops all refiners
+//! 5. When precision is met or max iterations reached, coordinator signals stop via StopFlag
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::binary::Bounds;
 use crate::binary::{UBinary, UXBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
-
-/// Handle for a background refiner task.
-pub struct RefinerHandle {
-    /// Channel to send "continue" signals to the refiner
-    pub continue_tx: Sender<()>,
-    /// Node ID for this refiner
-    pub node_id: usize,
-}
 
 /// Update message from a refiner thread.
 #[derive(Clone)]
@@ -87,43 +79,30 @@ impl RefinementGraph {
         let mut outcome = None;
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
-            let mut handles = Vec::new();
-            let (update_tx, update_rx) = unbounded();
+            // Use bounded(1) channel - allows one queued message per refiner
+            // This provides backpressure while allowing some pipelining
+            let (update_tx, update_rx) = bounded(1);
 
-            // Spawn all refiners
+            // Spawn all refiners - they start running autonomously immediately
             for node in &self.refiners {
-                handles.push(spawn_refiner(
+                spawn_refiner(
                     scope,
                     Arc::clone(node),
                     Arc::clone(&stop_flag),
                     update_tx.clone(),
-                ));
+                );
             }
             drop(update_tx);
-
-            // Build a map from node_id to handle index for sending continue signals
-            let node_to_handle: HashMap<usize, usize> = handles
-                .iter()
-                .enumerate()
-                .map(|(idx, h)| (h.node_id, idx))
-                .collect();
 
             // In event-driven mode, we count individual updates.
             // Multiply MAX_ITERATIONS by number of refiners to get equivalent work budget.
             let max_updates = MAX_REFINEMENT_ITERATIONS.saturating_mul(self.refiners.len().max(1));
 
-            let result = self.event_driven_loop(
-                &update_rx,
-                &handles,
-                &node_to_handle,
-                &stop_flag,
-                epsilon,
-                max_updates,
-            );
+            let result = self.event_driven_loop(&update_rx, &stop_flag, epsilon, max_updates);
 
             // Shutdown all refiners
             stop_flag.stop();
-            // Close continue channels by dropping handles (handled automatically)
+            // Refiners will exit when they see stop flag or channel closes
             outcome = Some(result);
         });
 
@@ -136,8 +115,6 @@ impl RefinementGraph {
     fn event_driven_loop(
         &self,
         update_rx: &Receiver<Result<NodeUpdate, ComputableError>>,
-        handles: &[RefinerHandle],
-        node_to_handle: &HashMap<usize, usize>,
         stop_flag: &Arc<StopFlag>,
         epsilon: &UBinary,
         max_updates: usize,
@@ -151,12 +128,10 @@ impl RefinementGraph {
             return Ok(initial_bounds);
         }
 
-        // Send initial "continue" signal to all refiners to start them
-        for handle in handles {
-            let _ = handle.continue_tx.send(());
-        }
-
-        // Event loop: receive updates as they arrive
+        // Event loop: receive updates as they arrive from autonomous refiners
+        // Refiners are already running and will send updates as they refine
+        // With bounded(0) channel, refiners block on send until we receive,
+        // providing natural backpressure similar to the original's continue signals
         loop {
             let result = match update_rx.recv() {
                 Ok(r) => r,
@@ -170,7 +145,6 @@ impl RefinementGraph {
 
             match result {
                 Ok(update) => {
-                    let node_id = update.node_id;
                     self.apply_update(update)?;
                     updates_processed += 1;
 
@@ -189,10 +163,8 @@ impl RefinementGraph {
                         });
                     }
 
-                    // Send continue signal to the refiner that sent this update
-                    if let Some(&handle_idx) = node_to_handle.get(&node_id) {
-                        let _ = handles[handle_idx].continue_tx.send(());
-                    }
+                    // No continue signal needed - refiners run autonomously
+                    // Backpressure is provided by bounded(0) channel
                 }
                 Err(error) => {
                     stop_flag.stop();
@@ -205,8 +177,21 @@ impl RefinementGraph {
     fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
-            node.set_bounds(update.bounds);
-            queue.push_back(node.id);
+            // With autonomous refiners, we might receive stale updates.
+            // Only apply if the update bounds are at least as good as current.
+            // This can happen when refiners get ahead of the coordinator.
+            let should_apply = match node.cached_bounds() {
+                None => true,
+                Some(current) => {
+                    // Update is valid if it doesn't worsen either bound
+                    update.bounds.small() >= current.small()
+                        && update.bounds.large() <= current.large()
+                }
+            };
+            if should_apply {
+                node.set_bounds(update.bounds);
+                queue.push_back(node.id);
+            }
         }
 
         while let Some(changed_id) = queue.pop_front() {
@@ -235,79 +220,55 @@ fn spawn_refiner<'scope, 'env>(
     node: Arc<Node>,
     stop: Arc<StopFlag>,
     updates: Sender<Result<NodeUpdate, ComputableError>>,
-) -> RefinerHandle {
-    let (continue_tx, continue_rx) = unbounded();
-    let node_id = node.id;
-
+) {
     scope.spawn(move || {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            refiner_loop(node, stop, continue_rx, updates)
+            refiner_loop(node, stop, updates)
         }));
     });
-
-    RefinerHandle {
-        continue_tx,
-        node_id,
-    }
 }
+
+/// Backoff duration when refine_step makes no progress (100 microseconds)
+const REFINER_BACKOFF: Duration = Duration::from_micros(100);
 
 fn refiner_loop(
     node: Arc<Node>,
     stop: Arc<StopFlag>,
-    continue_rx: Receiver<()>,
     updates: Sender<Result<NodeUpdate, ComputableError>>,
 ) -> Result<(), ComputableError> {
+    // Autonomous refiner loop: runs continuously without waiting for coordinator
     while !stop.is_stopped() {
-        // Wait for continue signal from coordinator
-        match continue_rx.recv() {
-            Ok(()) => {
-                // Check stop flag again after receiving signal
-                if stop.is_stopped() {
+        match node.refine_step() {
+            Ok(made_progress) => {
+                // Compute bounds (either new or cached)
+                let bounds = if made_progress {
+                    let b = node.compute_bounds()?;
+                    node.set_bounds(b.clone());
+                    b
+                } else {
+                    // No progress - add small backoff to avoid busy-spinning
+                    thread::sleep(REFINER_BACKOFF);
+                    match node.cached_bounds() {
+                        Some(b) => b,
+                        None => node.compute_bounds()?,
+                    }
+                };
+
+                // With bounded(1) channel, send blocks if one message is already queued
+                // This provides natural backpressure - refiners can't get too far ahead
+                if updates
+                    .send(Ok(NodeUpdate {
+                        node_id: node.id,
+                        bounds,
+                    }))
+                    .is_err()
+                {
+                    // Channel closed - coordinator is done
                     break;
                 }
-
-                match node.refine_step() {
-                    Ok(true) => {
-                        // Refinement made progress - compute and send new bounds
-                        let bounds = node.compute_bounds()?;
-                        node.set_bounds(bounds.clone());
-                        if updates
-                            .send(Ok(NodeUpdate {
-                                node_id: node.id,
-                                bounds,
-                            }))
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Ok(false) => {
-                        // Refinement made no change locally, but we should NOT exit!
-                        // The global expression may not have converged yet.
-                        // Send current bounds and wait for next continue signal.
-                        let bounds = match node.cached_bounds() {
-                            Some(b) => b,
-                            None => node.compute_bounds()?,
-                        };
-                        if updates
-                            .send(Ok(NodeUpdate {
-                                node_id: node.id,
-                                bounds,
-                            }))
-                            .is_err()
-                        {
-                            break;
-                        }
-                        // Continue the loop - wait for next signal from coordinator
-                    }
-                    Err(error) => {
-                        let _ = updates.send(Err(error));
-                        break;
-                    }
-                }
             }
-            Err(_) => {
-                // Channel closed - coordinator is done
+            Err(error) => {
+                let _ = updates.send(Err(error));
                 break;
             }
         }
@@ -487,7 +448,17 @@ mod tests {
         let upper = bounds.large();
         assert!(bounds.small() < &upper);
         assert!(bounds_width_leq(&bounds, &epsilon));
-        assert_eq!(computable.bounds().expect("bounds should succeed"), bounds);
+        // With autonomous refiners, bounds may continue to improve after refine_to returns.
+        // Verify that the current bounds are at least as good as what was returned.
+        let current_bounds = computable.bounds().expect("bounds should succeed");
+        assert!(
+            current_bounds.small() >= bounds.small(),
+            "lower bound should not get worse"
+        );
+        assert!(
+            &current_bounds.large() <= &upper,
+            "upper bound should not get worse"
+        );
     }
 
     #[test]
