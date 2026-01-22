@@ -356,7 +356,9 @@ mod tests {
     use super::*;
     use crate::binary::UBinary;
     use crate::computable::Computable;
-    use crate::test_utils::{bin, interval_noop_computable, ubin, unwrap_finite, unwrap_finite_uxbinary};
+    use crate::test_utils::{
+        bin, interval_noop_computable, ubin, unwrap_finite, unwrap_finite_uxbinary,
+    };
 
     /// Helper to create NonZeroU32 from a literal in tests.
     fn nz(n: u32) -> NonZeroU32 {

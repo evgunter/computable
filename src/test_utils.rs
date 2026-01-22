@@ -121,9 +121,5 @@ pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
 /// ```
 pub fn interval_noop_computable(lower: i64, upper: i64) -> Computable {
     let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
-    Computable::new(
-        interval_state,
-        |state| Ok(state.clone()),
-        |state| state,
-    )
+    Computable::new(interval_state, |state| Ok(state.clone()), |state| state)
 }
