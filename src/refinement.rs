@@ -289,8 +289,8 @@ mod tests {
     use crate::computable::Computable;
     use crate::error::ComputableError;
     use crate::test_utils::{
-        bin, interval_midpoint_computable, interval_refine, midpoint_between, ubin, unwrap_finite,
-        xbin,
+        bin, interval_midpoint_computable, interval_noop_computable, interval_refine,
+        midpoint_between, ubin, unwrap_finite, xbin,
     };
     use num_traits::Zero;
     use std::sync::{Arc, Barrier};
@@ -395,12 +395,7 @@ mod tests {
 
     #[test]
     fn refine_to_rejects_unchanged_state() {
-        let interval_state = Bounds::new(xbin(0, 0), xbin(2, 0));
-        let computable = Computable::new(
-            interval_state,
-            |inner_state| Ok(interval_bounds(inner_state)),
-            |inner_state| inner_state,
-        );
+        let computable = interval_noop_computable(0, 2);
         let epsilon = ubin(1, -2);
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(result, Err(ComputableError::StateUnchanged)));
