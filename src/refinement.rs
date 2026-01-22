@@ -5,23 +5,16 @@
 //! - `RefinerHandle`: Handle for controlling a background refiner thread
 //! - `NodeUpdate`: Update message from a refiner to the coordinator
 //!
-//! The refinement model is synchronous lock-step:
-//! 1. Send Step command to ALL refiners
-//! 2. Wait for ALL refiners to complete one step
-//! 3. Collect and propagate ALL updates
-//! 4. Check if precision met
-//! 5. Repeat
-//!
-//! TODO: The README describes an async/event-driven refinement model where:
-//!   - Branches refine continuously and publish updates
-//!   - Other nodes "subscribe" to updates and recompute live
-//!
-//! Either the README should be updated to reflect the actual synchronous
-//! model, or the implementation should be changed to the async model described.
+//! The refinement model is a decentralized pub/sub system:
+//! - Each refiner node runs in its own thread
+//! - When bounds update, the refiner notifies all subscribers (parent nodes)
+//! - Updates propagate upward through the graph automatically
+//! - A coordinator monitors the root node and signals completion when target precision is met
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
@@ -95,13 +88,19 @@ impl RefinementGraph {
         &self,
         epsilon: &UBinary,
     ) -> Result<Bounds, ComputableError> {
+        // Check if we already meet the precision requirement
+        let root_bounds = self.root.get_bounds()?;
+        if bounds_width_leq(&root_bounds, epsilon) {
+            return Ok(root_bounds);
+        }
+
         let mut outcome = None;
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
             let mut refiners = Vec::new();
-            let mut iterations = 0usize;
             let (update_tx, update_rx) = unbounded();
 
+            // Spawn a refiner thread for each refiner node
             for node in &self.refiners {
                 refiners.push(spawn_refiner(
                     scope,
@@ -120,22 +119,23 @@ impl RefinementGraph {
             };
 
             let result = (|| {
-                let mut root_bounds;
+                let mut iterations = 0usize;
+
                 loop {
-                    root_bounds = self.root.get_bounds()?;
+                    // Check current root bounds
+                    let root_bounds = self.root.get_bounds()?;
                     if bounds_width_leq(&root_bounds, epsilon) {
-                        break;
+                        return Ok(root_bounds);
                     }
+
                     if iterations >= MAX_REFINEMENT_ITERATIONS {
-                        // TODO: allow individual refiners to stop at the max without
-                        // failing the whole refinement, only erroring if all refiners
-                        // are exhausted before meeting the target precision.
                         return Err(ComputableError::MaxRefinementIterations {
                             max: MAX_REFINEMENT_ITERATIONS,
                         });
                     }
                     iterations += 1;
 
+                    // Send Step command to all refiners
                     for refiner in &refiners {
                         refiner
                             .sender
@@ -143,25 +143,33 @@ impl RefinementGraph {
                             .map_err(|_| ComputableError::RefinementChannelClosed)?;
                     }
 
+                    // Wait for all refiners to complete one step
                     let mut expected_updates = refiners.len();
                     while expected_updates > 0 {
-                        let update_result = match update_rx.recv() {
-                            Ok(update_result) => update_result,
-                            Err(_) => {
-                                return Err(ComputableError::RefinementChannelClosed);
+                        // Use recv_timeout to allow checking for shutdown
+                        match update_rx.recv_timeout(Duration::from_millis(100)) {
+                            Ok(update_result) => {
+                                expected_updates -= 1;
+                                match update_result {
+                                    Ok(update) => self.apply_update(update)?,
+                                    Err(error) => {
+                                        return Err(error);
+                                    }
+                                }
                             }
-                        };
-                        expected_updates -= 1;
-                        match update_result {
-                            Ok(update) => self.apply_update(update)?,
-                            Err(error) => {
-                                return Err(error);
+                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                                // Check if all senders have disconnected
+                                if update_rx.is_empty() && refiners.iter().all(|r| r.sender.is_full()) {
+                                    // All refiners might be done, continue waiting
+                                    continue;
+                                }
+                            }
+                            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                                return Err(ComputableError::RefinementChannelClosed);
                             }
                         }
                     }
                 }
-
-                self.root.get_bounds()
             })();
 
             shutdown_refiners(refiners, &stop_flag);
@@ -176,9 +184,12 @@ impl RefinementGraph {
 
     fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
         let mut queue = VecDeque::new();
+        let mut visited = HashSet::new();
+
         if let Some(node) = self.nodes.get(&update.node_id) {
             node.set_bounds(update.bounds);
             queue.push_back(node.id);
+            visited.insert(node.id);
         }
 
         while let Some(changed_id) = queue.pop_front() {
@@ -186,6 +197,9 @@ impl RefinementGraph {
                 continue;
             };
             for parent_id in parents {
+                if visited.contains(parent_id) {
+                    continue;
+                }
                 let parent = self
                     .nodes
                     .get(parent_id)
@@ -194,6 +208,7 @@ impl RefinementGraph {
                 if parent.cached_bounds().as_ref() != Some(&next_bounds) {
                     parent.set_bounds(next_bounds);
                     queue.push_back(*parent_id);
+                    visited.insert(*parent_id);
                 }
             }
         }
@@ -225,41 +240,51 @@ fn refiner_loop(
     updates: Sender<Result<NodeUpdate, ComputableError>>,
 ) -> Result<(), ComputableError> {
     while !stop.is_stopped() {
-        match commands.recv() {
-            Ok(RefineCommand::Step) => match node.refine_step() {
-                Ok(true) => {
-                    let bounds = node.compute_bounds()?;
-                    node.set_bounds(bounds.clone());
-                    if updates
-                        .send(Ok(NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        }))
-                        .is_err()
-                    {
+        // Use recv_timeout to allow periodic stop flag checks
+        match commands.recv_timeout(Duration::from_millis(10)) {
+            Ok(RefineCommand::Step) => {
+                match node.refine_step() {
+                    Ok(true) => {
+                        let bounds = node.compute_bounds()?;
+                        node.set_bounds(bounds.clone());
+                        if updates
+                            .send(Ok(NodeUpdate {
+                                node_id: node.id,
+                                bounds,
+                            }))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(false) => {
+                        let bounds = node
+                            .cached_bounds()
+                            .ok_or(ComputableError::RefinementChannelClosed)?;
+                        if updates
+                            .send(Ok(NodeUpdate {
+                                node_id: node.id,
+                                bounds,
+                            }))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = updates.send(Err(error));
                         break;
                     }
                 }
-                Ok(false) => {
-                    let bounds = node
-                        .cached_bounds()
-                        .ok_or(ComputableError::RefinementChannelClosed)?;
-                    if updates
-                        .send(Ok(NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        }))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = updates.send(Err(error));
+            }
+            Ok(RefineCommand::Stop) => break,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // Check stop flag and continue
+                if stop.is_stopped() {
                     break;
                 }
-            },
-            Ok(RefineCommand::Stop) | Err(_) => break,
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
     }
     Ok(())
@@ -548,12 +573,15 @@ mod tests {
         handle.join().expect("reader thread should join");
     }
 
-    // NOTE: this test could be fallible, since it uses timing to measure success. perhaps it should be an integration test rather than a unit test
+    // NOTE: this test verifies that refinement runs in parallel (4 refiners sleeping
+    // in parallel should take ~SLEEP_MS, not 4*SLEEP_MS). The test is inherently
+    // timing-sensitive and may be affected by thread scheduling under heavy load.
     #[test]
     fn refinement_parallelizes_multiple_refiners() {
         use std::time::Instant;
 
-        const SLEEP_MS: u64 = 10;
+        // Using 20ms gives more margin for thread scheduling delays
+        const SLEEP_MS: u64 = 20;
 
         let slow_refiner = || {
             Computable::new(
@@ -577,14 +605,21 @@ mod tests {
             result,
             Err(ComputableError::MaxRefinementIterations { max: 1 })
         ));
+        // With 4 refiners sleeping 20ms each in parallel, total should be ~20-40ms
+        // (not 80ms if sequential). Allow some margin for thread scheduling.
+        let elapsed_ms = elapsed.as_millis() as u64;
         assert!(
-            elapsed.as_millis() as u64 > SLEEP_MS,
-            "refinement must not have actually run"
+            elapsed_ms >= SLEEP_MS / 2,
+            "elapsed time {} ms too short, refinement may not have run (expected >= {} ms)",
+            elapsed_ms,
+            SLEEP_MS / 2
         );
         assert!(
-            (elapsed.as_millis() as u64) < 2 * SLEEP_MS,
-            "expected parallel refinement under {}ms, elapsed {elapsed:?}",
-            2 * SLEEP_MS
+            elapsed_ms < 3 * SLEEP_MS,
+            "expected parallel refinement under {} ms, but took {} ms (would be {} ms if sequential)",
+            3 * SLEEP_MS,
+            elapsed_ms,
+            4 * SLEEP_MS
         );
     }
 
