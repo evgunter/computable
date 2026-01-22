@@ -64,14 +64,6 @@ Replace with proper error handling.
 ```
 Type constraint addition.
 
-### <a id="binary-abs-method"></a>binary-abs-method: Add Binary::abs() -> UBinary method
-**Files:** `src/ops/sin.rs:236`, `src/ops/sin.rs:683`, `src/ops/nth_root.rs:270`
-```rust
-// TODO: add Binary::abs() -> UBinary method to avoid repeated is_negative checks and encode
-// non-negativity in the type system
-```
-Multiple locations compute absolute value with `if x.mantissa().is_negative() { x.neg() } else { x.clone() }`. Adding an `abs()` method that returns `UBinary` would (a) avoid repeated sign checks, (b) encode non-negativity at the type level, and (c) reduce code duplication.
-
 ### <a id="precision-option-type"></a>precision-option-type: Use Option for initialization state
 **File:** `src/ops/inv.rs:59`
 ```rust

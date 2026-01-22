@@ -265,11 +265,7 @@ fn compute_root_upper_bound(x: &Binary, _degree: u32) -> Binary {
     // Conservative upper bound: max(1, |x|)
     // This is always >= x^(1/n) for x >= 0 and n >= 1
     let one = Binary::new(BigInt::one(), BigInt::zero());
-    let abs_x = if x.mantissa().is_negative() {
-        x.neg()
-    } else {
-        x.clone()
-    };
+    let abs_x = x.magnitude().to_binary();
 
     if abs_x > one { abs_x } else { one }
 }
@@ -278,7 +274,6 @@ fn compute_root_upper_bound(x: &Binary, _degree: u32) -> Binary {
 /// Returns a value <= x^(1/n).
 fn compute_root_lower_bound(x: &Binary, _degree: u32) -> Binary {
     // Conservative lower bound: min(1, |x|) for x > 0, 0 otherwise
-    // TODO: use Binary::abs() -> UBinary to encode non-negativity and avoid repeated checks
     if x.mantissa().is_zero() || x.mantissa().is_negative() {
         return Binary::zero();
     }

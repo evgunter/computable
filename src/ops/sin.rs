@@ -243,24 +243,14 @@ enum ReductionResult {
 fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: usize) -> u64 {
     // Estimate k = |x| / (2*pi) using a rough approximation
     // We use the larger magnitude endpoint
-    // TODO: add Binary::abs() -> UBinary method to avoid repeated is_negative checks and encode
-    // non-negativity in the type system
-    let abs_lo = if lower.mantissa().is_negative() {
-        lower.neg()
-    } else {
-        lower.clone()
-    };
-    let abs_hi = if upper.mantissa().is_negative() {
-        upper.neg()
-    } else {
-        upper.clone()
-    };
+    let abs_lo = lower.magnitude();
+    let abs_hi = upper.magnitude();
     let max_abs = if abs_lo > abs_hi { abs_lo } else { abs_hi };
 
     // Rough estimate: k ~= max_abs / 6.28
     // We need: pi_precision > log2(k) + some_margin
     // log2(max_abs) ~= bit_length(mantissa) + exponent
-    let mantissa_bits = max_abs.mantissa().magnitude().bits() as i64;
+    let mantissa_bits = max_abs.mantissa().bits() as i64;
     let exp = max_abs
         .exponent()
         .to_i64()
@@ -692,12 +682,7 @@ fn taylor_sin_partial_sum(x: &Binary, n: usize, rounding: RoundingDirection) -> 
 /// Always rounds UP to be conservative.
 fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
     // Compute |x|^(2n+1)
-    // TODO: use Binary::abs() -> UBinary to avoid repeated is_negative checks
-    let abs_x = if x.mantissa().is_negative() {
-        x.neg()
-    } else {
-        x.clone()
-    };
+    let abs_x = x.magnitude().to_binary();
 
     let exp = 2 * n + 1;
     let mut power = Binary::new(BigInt::one(), BigInt::zero()); // 1
