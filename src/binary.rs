@@ -172,11 +172,11 @@ impl FiniteBounds {
         }
     }
 
-    /// Returns the midpoint of the interval: (lo + hi) / 2
+    /// Returns the midpoint of the interval: lo + width/2
     pub fn midpoint(&self) -> Binary {
-        let sum = self.lo().add(&self.hi());
-        // Divide by 2 by decrementing exponent
-        Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
+        let width = self.width().to_binary();
+        let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
+        self.lo().add(&half_width)
     }
 
     /// Checks if this interval contains a point.
@@ -217,8 +217,6 @@ impl AddWidth<BigInt, BigUint> for BigInt {
 #[cfg(test)]
 mod integration_tests {
     //! Integration tests that verify cross-module functionality.
-
-    #![allow(clippy::expect_used)]
 
     use super::*;
     use crate::test_utils::{bin, xbin};
@@ -294,5 +292,25 @@ mod integration_tests {
 
         assert_eq!(bounds.small(), &xbin(42, 0));
         assert_eq!(bounds.large(), xbin(42, 0));
+    }
+
+    #[test]
+    fn finite_bounds_interval_subtraction() {
+        // Test that [a,b] - [c,d] = [a-d, b-c]
+        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+
+        let result = a.interval_sub(&b);
+        // [1, 2] - [3, 5] = [1-5, 2-3] = [-4, -1]
+        assert_eq!(result.lo(), &bin(-4, 0));
+        assert_eq!(result.hi(), bin(-1, 0));
+    }
+
+    #[test]
+    fn finite_bounds_interval_negation() {
+        let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
+        let neg_a = a.interval_neg(); // [-3, -1]
+        assert_eq!(neg_a.lo(), &bin(-3, 0));
+        assert_eq!(neg_a.hi(), bin(-1, 0));
     }
 }

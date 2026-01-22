@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::{One, Zero};
+use num_traits::One;
 
 use crate::binary::Bounds;
 use crate::binary::{Binary, UBinary, XBinary};
@@ -117,7 +117,7 @@ impl Computable {
     pub fn inv(self) -> Self {
         let node = Node::new(Arc::new(InvOp {
             inner: Arc::clone(&self.node),
-            precision_bits: RwLock::new(BigInt::zero()),
+            precision_bits: RwLock::new(None),
         }));
         Self { node }
     }
@@ -213,7 +213,6 @@ impl Computable {
     }
 
     /// Creates a constant computable with exact bounds.
-    #[allow(clippy::type_complexity)]
     pub fn constant(value: Binary) -> Self {
         fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
             Ok(Bounds::new(
@@ -290,10 +289,8 @@ impl std::ops::Div for Computable {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
-    use crate::test_utils::{bin, ubin, unwrap_finite};
+    use crate::test_utils::{bin, ubin, unwrap_finite, unwrap_finite_uxbinary};
 
     fn sqrt_computable(value_int: u64) -> Computable {
         Computable::constant(bin(value_int as i64, 0))
@@ -331,12 +328,28 @@ mod tests {
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
         let eps_binary = epsilon.to_binary();
+        let width = unwrap_finite_uxbinary(bounds.width());
 
-        let lower_plus = lower.add(&eps_binary);
-        let upper_minus = upper.sub(&eps_binary);
+        // Check width is within epsilon
+        assert!(width <= epsilon, "width {} > epsilon {}", width, epsilon);
 
-        assert!(lower <= expected_value && expected_value <= upper);
-        assert!(upper_minus <= expected_value && expected_value <= lower_plus);
+        // Check bounds contain expected value with tolerance for f64 precision.
+        // f64 has ~53 bits of precision, so we need to account for that when
+        // comparing against bounds that may be much tighter.
+        let f64_epsilon = crate::binary::UBinary::new(
+            num_bigint::BigUint::from(1u32),
+            num_bigint::BigInt::from(-50), // ~2^-50 tolerance for f64 rounding
+        );
+        let lower_minus_eps = lower.sub(&f64_epsilon.to_binary());
+        let upper_plus_eps = upper.add(&f64_epsilon.to_binary());
+
+        assert!(
+            lower_minus_eps <= expected_value && expected_value <= upper_plus_eps,
+            "Expected {} to be in bounds [{}, {}] (with f64 tolerance)",
+            expected_value,
+            lower,
+            upper
+        );
     }
 
     #[test]

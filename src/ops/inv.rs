@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::Zero;
 use parking_lot::RwLock;
 
 use crate::binary::{
@@ -25,8 +24,8 @@ const MARGIN_SHIFT: u32 = 3;
 /// Starting at a reasonable value avoids unnecessary early iterations.
 pub const INV_INITIAL_PRECISION_BITS: i64 = 4;
 
-// TODO: Improve inv() precision strategy. Currently precision_bits starts at 0 and
-// doubles on each refine_step. This is simple but potentially inefficient:
+// TODO: Improve inv() precision strategy. Currently precision_bits starts uninitialized
+// and doubles on each refine_step. This is simple but potentially inefficient:
 // - For a given epsilon, we don't know how many bits are needed upfront
 // - Each step recomputes the reciprocal from scratch at the new precision
 // Consider: adaptive precision based on current bounds width, or Newton-Raphson iteration.
@@ -34,13 +33,15 @@ pub const INV_INITIAL_PRECISION_BITS: i64 = 4;
 /// Inverse (reciprocal) operation with precision-based refinement.
 pub struct InvOp {
     pub inner: Arc<Node>,
-    pub precision_bits: RwLock<BigInt>,
+    /// Precision bits for reciprocal computation. `None` means not yet initialized.
+    pub precision_bits: RwLock<Option<BigInt>>,
 }
 
 impl NodeOp for InvOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let existing = self.inner.get_bounds()?;
-        let raw_bounds = reciprocal_bounds(&existing, &self.precision_bits.read())?;
+        let precision = self.precision_bits.read();
+        let raw_bounds = reciprocal_bounds(&existing, precision.as_ref())?;
         // Simplify bounds to reduce precision bloat from high-precision reciprocal computation
         let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
         Ok(simplify_bounds_if_needed(
@@ -53,16 +54,12 @@ impl NodeOp for InvOp {
     fn refine_step(&self) -> Result<bool, ComputableError> {
         let mut precision = self.precision_bits.write();
         // Double precision each step for O(log n) convergence.
-        // If precision is 0, start with initial value to bootstrap.
         // Once the TODO above is implemented (reusing precision calculation state),
         // this should be changed back to linear increment to avoid unnecessary
         // computation to higher precision than requested.
-        // TODO: use Option<NonZeroOrPositiveBigInt> to encode "not initialized" vs "initialized"
-        // at the type level, avoiding is_zero() check and making initialization state explicit
-        if precision.is_zero() {
-            *precision = BigInt::from(INV_INITIAL_PRECISION_BITS);
-        } else {
-            *precision *= 2;
+        match precision.as_mut() {
+            None => *precision = Some(BigInt::from(INV_INITIAL_PRECISION_BITS)),
+            Some(p) => *p *= 2,
         }
         Ok(true)
     }
@@ -77,7 +74,14 @@ impl NodeOp for InvOp {
 }
 
 /// Computes reciprocal bounds for an interval.
-fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds, ComputableError> {
+///
+/// If `precision_bits` is `None`, the precision has not been initialized yet, so
+/// we return the widest possible bounds ((-inf, +inf) for intervals containing zero,
+/// or the appropriate infinite bounds for strictly positive/negative intervals).
+fn reciprocal_bounds(
+    bounds: &Bounds,
+    precision_bits: Option<&BigInt>,
+) -> Result<Bounds, ComputableError> {
     let lower = bounds.small();
     let upper = bounds.large();
     let zero = XBinary::zero();
@@ -85,19 +89,26 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
         return Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf));
     }
 
+    // If precision is not yet initialized, return infinite bounds in the appropriate direction
+    let Some(precision) = precision_bits else {
+        return if upper < zero {
+            Ok(Bounds::new(XBinary::NegInf, XBinary::zero()))
+        } else {
+            Ok(Bounds::new(XBinary::zero(), XBinary::PosInf))
+        };
+    };
+
     let (lower_bound, upper_bound) = if upper < zero {
         let lower_bound =
-            reciprocal_rounded_abs_extended(&upper, precision_bits, ReciprocalRounding::Ceil)?
-                .neg();
+            reciprocal_rounded_abs_extended(&upper, precision, ReciprocalRounding::Ceil)?.neg();
         let upper_bound =
-            reciprocal_rounded_abs_extended(lower, precision_bits, ReciprocalRounding::Floor)?
-                .neg();
+            reciprocal_rounded_abs_extended(lower, precision, ReciprocalRounding::Floor)?.neg();
         (lower_bound, upper_bound)
     } else {
         let lower_bound =
-            reciprocal_rounded_abs_extended(&upper, precision_bits, ReciprocalRounding::Floor)?;
+            reciprocal_rounded_abs_extended(&upper, precision, ReciprocalRounding::Floor)?;
         let upper_bound =
-            reciprocal_rounded_abs_extended(lower, precision_bits, ReciprocalRounding::Ceil)?;
+            reciprocal_rounded_abs_extended(lower, precision, ReciprocalRounding::Ceil)?;
         (lower_bound, upper_bound)
     };
 
@@ -107,8 +118,6 @@ fn reciprocal_bounds(bounds: &Bounds, precision_bits: &BigInt) -> Result<Bounds,
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use crate::binary::{Binary, Bounds, UBinary, XBinary};
     use crate::test_utils::{
         interval_midpoint_computable, ubin, unwrap_finite, unwrap_finite_uxbinary,
@@ -124,8 +133,28 @@ mod tests {
         let width = unwrap_finite_uxbinary(bounds.width());
         let upper = unwrap_finite(&upper_xb);
 
-        assert!(lower <= *expected && *expected <= upper);
-        assert!(width <= *epsilon);
+        // Check width is within epsilon
+        assert!(width <= *epsilon, "width {} > epsilon {}", width, epsilon);
+
+        // Check bounds contain expected value with tolerance for f64 precision.
+        // f64 has ~53 bits of precision, so we need to account for that when
+        // comparing against bounds that may be much tighter.
+        let f64_epsilon = crate::binary::UBinary::new(
+            num_bigint::BigUint::from(1u32),
+            num_bigint::BigInt::from(-50), // ~2^-50 tolerance for f64 rounding
+        );
+        let lower_minus_eps = lower.sub(&f64_epsilon.to_binary());
+        let upper_plus_eps = upper.add(&f64_epsilon.to_binary());
+
+        assert!(
+            lower_minus_eps <= *expected && *expected <= upper_plus_eps,
+            "Expected {} to be in bounds [{}, {}] (with f64 tolerance), width = {}, epsilon = {}",
+            expected,
+            lower,
+            upper,
+            width,
+            epsilon
+        );
     }
 
     #[test]

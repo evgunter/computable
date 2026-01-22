@@ -87,27 +87,49 @@ where
     }
 
     /// Refines the base state and computes the new bounds for that refined state.
+    ///
+    /// NOTE: The refine function is called OUTSIDE of the lock to avoid blocking
+    /// other threads that need to read bounds during parallel refinement.
     fn refine(&self) -> Result<(), ComputableError> {
-        let mut snapshot = self.snapshot.write();
-        let previous_bounds = self.snapshot_bounds(&mut snapshot)?;
-        let previous_state = snapshot.state.clone();
+        // Read current state and bounds with a short lock
+        let (previous_state, previous_bounds) = {
+            let mut snapshot = self.snapshot.write();
+            let bounds = self.snapshot_bounds(&mut snapshot)?;
+            (snapshot.state.clone(), bounds)
+        };
+
+        // Call refine function WITHOUT holding the lock
+        // This is the potentially slow operation that shouldn't block others
         let next_state = (self.refine)(previous_state.clone());
-        if next_state == previous_state {
-            if previous_bounds.small() == &previous_bounds.large() {
+
+        // Re-acquire lock and update if state changed
+        {
+            let mut snapshot = self.snapshot.write();
+
+            // Check if state hasn't changed during refinement
+            if snapshot.state != previous_state {
+                // Another thread updated the state, our work is stale
+                // This is rare but possible in concurrent refinement
                 return Ok(());
             }
-            return Err(ComputableError::StateUnchanged);
-        }
 
-        let next_bounds = (self.bounds)(&next_state)?;
-        let lower_worsened = next_bounds.small() < previous_bounds.small();
-        let upper_worsened = next_bounds.large() > previous_bounds.large();
-        if lower_worsened || upper_worsened {
-            return Err(ComputableError::BoundsWorsened);
-        }
+            if next_state == previous_state {
+                if previous_bounds.small() == &previous_bounds.large() {
+                    return Ok(());
+                }
+                return Err(ComputableError::StateUnchanged);
+            }
 
-        snapshot.state = next_state;
-        snapshot.bounds = Some(next_bounds);
+            let next_bounds = (self.bounds)(&next_state)?;
+            let lower_worsened = next_bounds.small() < previous_bounds.small();
+            let upper_worsened = next_bounds.large() > previous_bounds.large();
+            if lower_worsened || upper_worsened {
+                return Err(ComputableError::BoundsWorsened);
+            }
+
+            snapshot.state = next_state;
+            snapshot.bounds = Some(next_bounds);
+        }
 
         Ok(())
     }

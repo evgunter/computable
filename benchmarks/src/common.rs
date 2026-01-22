@@ -1,8 +1,6 @@
 use std::time::Duration;
 
 use computable::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
-use num_bigint::BigInt;
-use num_traits::One;
 
 /// Result of a float-based benchmark
 #[derive(Debug)]
@@ -47,14 +45,7 @@ pub fn try_finite_bounds(bounds: &Bounds) -> Option<FiniteBounds> {
     }
 }
 
-// TODO: remove all the implementations in other files of `midpoint` or `midpoint_between` etc and just use one implementation
-// (in the main module not benchmarks) which does the + width/2 strategy rather than redundantly computing the upper bound by
-// adding width to lower and then averaging that with lower
-
 /// Computes the midpoint of bounds.
 pub fn midpoint(bounds: &FiniteBounds) -> Binary {
-    let lower = bounds.small();
-    let width = bounds.width().to_binary();
-    let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
-    lower.add(&half_width)
+    bounds.midpoint()
 }

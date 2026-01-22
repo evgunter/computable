@@ -222,8 +222,6 @@ impl fmt::Display for XBinary {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::xbin;
     use num_bigint::BigInt;

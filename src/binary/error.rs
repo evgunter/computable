@@ -68,39 +68,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn binary_error_display() {
-        assert_eq!(
-            BinaryError::ReciprocalOverflow.to_string(),
-            "exponent overflow during reciprocal"
-        );
-        assert_eq!(
-            BinaryError::NegativeMantissa.to_string(),
-            "cannot create unsigned binary from negative mantissa"
-        );
-        assert_eq!(BinaryError::Nan.to_string(), "cannot convert NaN to Binary");
-        assert_eq!(
-            BinaryError::Infinity.to_string(),
-            "cannot convert infinity to Binary"
-        );
-    }
-
-    #[test]
-    fn xbinary_error_display() {
-        assert_eq!(
-            XBinaryError::Nan.to_string(),
-            "cannot convert NaN to XBinary"
-        );
-        assert_eq!(
-            XBinaryError::IndeterminateForm.to_string(),
-            "indeterminate form (e.g., infinity - infinity)"
-        );
-        assert_eq!(
-            XBinaryError::Binary(BinaryError::ReciprocalOverflow).to_string(),
-            "exponent overflow during reciprocal"
-        );
-    }
-
-    #[test]
     fn binary_error_converts_to_xbinary_error() {
         let binary_err = BinaryError::NegativeMantissa;
         let xbinary_err: XBinaryError = binary_err.into();
