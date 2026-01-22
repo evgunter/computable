@@ -2,13 +2,6 @@
 
 ## Tier 1: Easy
 
-### <a id="pi-neg-test"></a>pi-neg-test: Move or remove redundant neg test
-**File:** `src/ops/pi.rs:472`
-```rust
-// TODO: should this go with `neg` tests? is this actually needed or redundant?
-```
-Evaluate and either move or remove the interval negation test.
-
 ### <a id="precision-option-type"></a>precision-option-type: Use Option for initialization state
 **File:** `src/ops/inv.rs:60`
 ```rust
