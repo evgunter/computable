@@ -207,18 +207,8 @@ impl FiniteBounds {
     /// both inputs. Note that if the intervals are disjoint, the result includes
     /// points in neither original interval (i.e., this is the convex hull).
     pub fn join(&self, other: &Self) -> Self {
-        let min_lo = if self.lo() < other.lo() {
-            self.lo().clone()
-        } else {
-            other.lo().clone()
-        };
-        let self_hi = self.hi();
-        let other_hi = other.hi();
-        let max_hi = if self_hi > other_hi {
-            self_hi
-        } else {
-            other_hi
-        };
+        let min_lo = std::cmp::min(self.lo(), other.lo()).clone();
+        let max_hi = std::cmp::max(self.hi(), other.hi());
         Self::new(min_lo, max_hi)
     }
 
@@ -231,18 +221,8 @@ impl FiniteBounds {
         if !self.overlaps(other) {
             return None;
         }
-        let max_lo = if self.lo() > other.lo() {
-            self.lo().clone()
-        } else {
-            other.lo().clone()
-        };
-        let self_hi = self.hi();
-        let other_hi = other.hi();
-        let min_hi = if self_hi < other_hi {
-            self_hi
-        } else {
-            other_hi
-        };
+        let max_lo = std::cmp::max(self.lo(), other.lo()).clone();
+        let min_hi = std::cmp::min(self.hi(), other.hi());
         Some(Self::new(max_lo, min_hi))
     }
 }
