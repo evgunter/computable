@@ -57,14 +57,43 @@ All branches are based on `main` at commit `6f8e2b5`:
 
 All benchmarks run with `cargo run --package computable-benchmarks --release -- <index>`.
 
+**Note:** First runs often show caching penalties. Results below are from 3 consecutive runs each.
+
+### Raw Data (3 runs each)
+
+| Benchmark | Run | Main | Strategy 1 | Strategy 2 | Strategy 3 |
+|-----------|-----|------|------------|------------|------------|
+| **Complex (0)** | 1 | 91ms | 120ms | 119ms | 94ms |
+| | 2 | 100ms | 99ms | 98ms | 89ms |
+| | 3 | 95ms | 86ms | 93ms | 95ms |
+| **Summation (1)** | 1 | 350ms | 492ms | 361ms | 624ms |
+| | 2 | 452ms | 392ms | 405ms | 419ms |
+| | 3 | 352ms | 386ms | 392ms | 377ms |
+| **Integer roots (2)** | 1 | 619ms | 699ms | 780ms | 1701ms |
+| | 2 | 478ms | 740ms | 815ms | 1271ms |
+| | 3 | 564ms | 719ms | 869ms | 942ms |
+| **Inv (3)** | 1 | 30ms | 27ms | 29ms | 38ms |
+| | 2 | 19ms | 25ms | 26ms | 19ms |
+| | 3 | 20ms | 37ms | 26ms | 25ms |
+
+### Averages
+
 | Benchmark | Main | Strategy 1 | Strategy 2 | Strategy 3 |
 |-----------|------|------------|------------|------------|
-| Complex (0) | 110ms | **92ms** (-16%) | 126ms (+15%) | 102ms (-7%) |
-| Summation (1) | 361ms | 393ms (+9%) | 366ms (+1%) | 442ms (+22%) |
-| Integer roots (2) | 504ms | 674ms (+34%) | 731ms (+45%) | 1186ms (+135%) |
-| Inv (3) | 21ms | 30ms (+43%) | 27ms (+29%) | 34ms (+62%) |
+| Complex (0) | **95ms** | 101ms (+6%) | 103ms (+8%) | **92ms (-3%)** |
+| Summation (1) | **385ms** | 423ms (+10%) | 386ms (+0%) | 473ms (+23%) |
+| Integer roots (2) | **554ms** | 719ms (+30%) | 821ms (+48%) | 1305ms (+136%) |
+| Inv (3) | **23ms** | 30ms (+30%) | 27ms (+17%) | 27ms (+17%) |
 
 **Legend:** Negative % = faster than main (good), Positive % = slower (bad)
+
+### Key Observations
+
+1. **High variance:** Significant run-to-run variance, especially Integer roots on Main (478-619ms)
+2. **Strategy 3 wins Complex:** 92ms avg vs 95ms main (-3%)
+3. **Strategy 2 ties Summation:** 386ms vs 385ms main (+0%)
+4. **Integer roots regression is consistent:** All strategies 30-136% slower
+5. **First-run penalty:** Run 1 is often slower across all implementations
 
 ## Judge Evaluation Scores
 
@@ -78,13 +107,18 @@ All benchmarks run with `cargo run --package computable-benchmarks --release -- 
 
 **Do not merge any strategy yet.** Reasons:
 
-1. **Performance regressions:** All strategies regress on most benchmarks. Strategy 1's Complex win is offset by Integer roots (+34%) and Inv (+43%) losses.
+1. **Performance regressions on Integer roots:** All strategies regress significantly (30-136% slower). This benchmark involves many refinement iterations and exposes scaling issues.
 
-2. **Inv benchmark is critical:** The `inv` operation underlies division and many computations. 30-60% regression is unacceptable.
+2. **Inv benchmark regression:** All strategies are 17-30% slower on inv, which underlies division and many computations.
 
-3. **Integer roots shows scaling issues:** Up to 135% regression suggests these approaches break down for operations requiring many refinement iterations.
+3. **Mixed results on other benchmarks:**
+   - Strategy 3 wins Complex by 3% (within noise)
+   - Strategy 2 ties Summation
+   - But these gains don't offset the Integer roots losses
 
 4. **None truly implement pub/sub:** All still have coordinator managing refinement pace. True pub/sub would need autonomous refiners with subscriber mechanism.
+
+5. **High variance:** Run-to-run variance is significant, making small improvements hard to distinguish from noise.
 
 ## Action Items for Future Work
 
