@@ -172,11 +172,11 @@ impl FiniteBounds {
         }
     }
 
-    /// Returns the midpoint of the interval: (lo + hi) / 2
+    /// Returns the midpoint of the interval: lo + width/2
     pub fn midpoint(&self) -> Binary {
-        let sum = self.lo().add(&self.hi());
-        // Divide by 2 by decrementing exponent
-        Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
+        let width = self.width().to_binary();
+        let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
+        self.lo().add(&half_width)
     }
 
     /// Checks if this interval contains a point.
