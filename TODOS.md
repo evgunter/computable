@@ -2,13 +2,6 @@
 
 ## Tier 1: Easy
 
-### <a id="error-doctest"></a>error-doctest: Fix or investigate ignored doctest
-**File:** `src/error.rs:32`
-```rust
-/// TODO: why is the doctest ignored? does it not like macro_rules or something
-```
-Investigate why the doctest for the macro is ignored and fix if possible.
-
 ### <a id="clippy-expect"></a>clippy-expect: Investigate missing clippy warning
 **File:** `benchmarks/src/balanced_sum.rs:26`
 ```rust

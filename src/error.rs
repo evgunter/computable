@@ -29,11 +29,10 @@ use crate::binary::BinaryError;
 ///
 /// * `$msg` - A description of what case was encountered (e.g., "lower input bound is PosInf")
 ///
-/// TODO: why is the doctest ignored? does it not like macro_rules or something
 /// # Example
 ///
-/// ```ignore
-/// detected_computable_with_infinite_value!("lower input bound is PosInf");
+/// ```should_panic
+/// computable::detected_computable_with_infinite_value!("lower input bound is PosInf");
 /// ```
 #[macro_export]
 macro_rules! detected_computable_with_infinite_value {
