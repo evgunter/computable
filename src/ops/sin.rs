@@ -757,12 +757,8 @@ fn divide_by_factorial_directed(
         quot
     };
 
-    // Adjust sign
-    let signed_mantissa = if is_negative {
-        -BigInt::from(result_magnitude)
-    } else {
-        BigInt::from(result_magnitude)
-    };
+    // Restore original sign
+    let signed_mantissa = BigInt::from_biguint(mantissa.sign(), result_magnitude);
 
     // New exponent = original_exponent - precision_bits
     let new_exponent = exponent - BigInt::from(precision_bits);
