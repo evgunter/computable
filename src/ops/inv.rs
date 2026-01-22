@@ -25,10 +25,6 @@ const MARGIN_SHIFT: u32 = 3;
 /// Starting at a reasonable value avoids unnecessary early iterations.
 pub const INV_INITIAL_PRECISION_BITS: i64 = 8;
 
-/// How many bits to increase precision by on each refinement step.
-/// 16 bits provides a good balance between making progress and not overshooting.
-const PRECISION_INCREMENT: i64 = 16;
-
 /// Inverse (reciprocal) operation with precision-based refinement.
 pub struct InvOp {
     pub inner: Arc<Node>,
@@ -63,10 +59,10 @@ impl NodeOp for InvOp {
                 *precision = Some(BigInt::from(initial_precision));
             }
             Some(current) => {
-                // Subsequent steps: increase precision by a fixed increment.
-                // This provides predictable, linear convergence rather than exponential
-                // overshoot from doubling.
-                *precision = Some(current + PRECISION_INCREMENT);
+                // Double precision each step for O(log n) convergence to high precision.
+                // This is more efficient than linear increment for reaching high precision
+                // targets, as the reciprocal computation cost grows with precision.
+                *precision = Some(current * 2);
             }
         }
         Ok(true)
@@ -84,10 +80,12 @@ impl NodeOp for InvOp {
 /// Estimates an initial precision based on the input bounds.
 ///
 /// The idea is to start at a precision that's appropriate for the input:
-/// - If the input has finite bounds with width W, we estimate precision as -log2(W) + offset
+/// - If the input has finite bounds with width W, we estimate precision as -log2(W)
 /// - If the input has infinite bounds, we use the default initial precision
 ///
 /// This avoids wasting iterations on low precision when the input is already precise.
+/// Combined with the doubling strategy, this ensures we start at a reasonable point
+/// and quickly reach high precision targets.
 fn estimate_initial_precision(input_bounds: &Bounds) -> i64 {
     // Try to get effective precision from input width
     if let UXBinary::Finite(width) = input_bounds.width() {
@@ -96,8 +94,7 @@ fn estimate_initial_precision(input_bounds: &Bounds) -> i64 {
         // We use this as a starting point, with a minimum floor
         if let Some(exp) = width.exponent().to_i64() {
             // Precision ≈ -exponent, clamped to reasonable range
-            // Add a small offset to ensure we start with enough precision
-            let estimated = (-exp).max(INV_INITIAL_PRECISION_BITS) + PRECISION_INCREMENT;
+            let estimated = (-exp).max(INV_INITIAL_PRECISION_BITS);
             return estimated;
         }
     }
