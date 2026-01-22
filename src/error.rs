@@ -99,3 +99,36 @@ impl From<BinaryError> for ComputableError {
         Self::Binary(error)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_error_converts_to_computable_error() {
+        let binary_err = BinaryError::NegativeMantissa;
+        let computable_err: ComputableError = binary_err.into();
+        assert!(matches!(
+            computable_err,
+            ComputableError::Binary(BinaryError::NegativeMantissa)
+        ));
+    }
+
+    #[test]
+    fn computable_error_implements_std_error() {
+        let err: &dyn std::error::Error = &ComputableError::DomainError;
+        // Verify it implements the Error trait by calling source()
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn detected_computable_with_infinite_value_macro_compiles() {
+        // This test verifies the macro compiles and executes in release mode.
+        // In debug mode with debug_assertions enabled, this would panic,
+        // so we only test that the macro syntax is correct.
+        #[cfg(not(debug_assertions))]
+        {
+            detected_computable_with_infinite_value!("test message");
+        }
+    }
+}
