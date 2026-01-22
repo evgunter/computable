@@ -22,12 +22,12 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, XBinary, margin_from_width,
+    reciprocal_of_biguint, simplify_bounds_if_needed,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -717,53 +717,26 @@ fn divide_by_factorial_directed(
         return value.clone();
     }
 
-    let mantissa = value.mantissa();
-    let exponent = value.exponent();
+    // TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
+    const PRECISION_BITS: usize = 64;
 
-    // We need to compute mantissa / factorial with the result as a Binary.
-    // To get a good approximation, we shift the mantissa up by some bits before dividing.
-    // The number of bits we shift determines our precision.
-    let precision_bits = 64_u64; // Extra precision for intermediate computation
-
-    // shifted_mantissa = |mantissa| * 2^precision_bits
-    let abs_mantissa = mantissa.magnitude().clone();
-    let shifted_mantissa = &abs_mantissa << precision_bits as usize;
-
-    // Compute |mantissa| / factorial
-    let (quot, rem) = shifted_mantissa.div_rem(factorial.magnitude());
-
-    // Determine how to round based on direction and sign
+    // Determine rounding direction for reciprocal based on overall rounding and sign of value.
     // For directed rounding toward +/- infinity:
-    // - Round UP (+inf): positive values round away from zero, negative round toward zero
-    // - Round DOWN (-inf): positive values round toward zero, negative round away from zero
-    let is_negative = mantissa.is_negative();
-    let has_remainder = !rem.is_zero();
-
-    let result_magnitude = if has_remainder {
-        match (rounding, is_negative) {
-            // Rounding UP (toward +infinity):
-            // - Positive: round away from zero (add 1)
-            // - Negative: round toward zero (truncate)
-            (RoundingDirection::Up, false) => quot + BigInt::one().magnitude(),
-            (RoundingDirection::Up, true) => quot,
-            // Rounding DOWN (toward -infinity):
-            // - Positive: round toward zero (truncate)
-            // - Negative: round away from zero (add 1)
-            (RoundingDirection::Down, false) => quot,
-            (RoundingDirection::Down, true) => quot + BigInt::one().magnitude(),
-        }
-    } else {
-        // Exact division, no rounding needed
-        quot
+    // - Round UP (+inf): positive values need reciprocal rounded up, negative need it rounded down
+    // - Round DOWN (-inf): positive values need reciprocal rounded down, negative need it rounded up
+    let is_negative = value.mantissa().is_negative();
+    let recip_rounding = match (rounding, is_negative) {
+        (RoundingDirection::Up, false) => ReciprocalRounding::Ceil,
+        (RoundingDirection::Up, true) => ReciprocalRounding::Floor,
+        (RoundingDirection::Down, false) => ReciprocalRounding::Floor,
+        (RoundingDirection::Down, true) => ReciprocalRounding::Ceil,
     };
 
-    // Restore original sign
-    let signed_mantissa = BigInt::from_biguint(mantissa.sign(), result_magnitude);
+    // Compute 1/|factorial| with directed rounding
+    let reciprocal = reciprocal_of_biguint(factorial.magnitude(), PRECISION_BITS, recip_rounding);
 
-    // New exponent = original_exponent - precision_bits
-    let new_exponent = exponent - BigInt::from(precision_bits);
-
-    Binary::new(signed_mantissa, new_exponent)
+    // Multiply value by reciprocal
+    value.mul(&reciprocal)
 }
 
 // Test helpers - exposed for integration tests
