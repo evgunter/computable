@@ -254,18 +254,24 @@ Related to [pi-adaptive](#pi-adaptive).
 
 ### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
 **File:** `src/refinement.rs`
-**Status:** IN PROGRESS - See branch `try-strategies-1769039545-strategy-3`
+**Status:** COMPLETE - See branch `cursor/concurrency-strategy-specification-a15a`
 
-The async/event-driven refinement model has been partially implemented:
+The async/event-driven refinement model has been fully implemented:
 - ✅ Removed `RefineCommand` enum - refiners run autonomously
-- ✅ Refiners run continuously, publishing updates via bounded channel
+- ✅ Refiners run continuously, publishing updates via bounded channel (size 16)
 - ✅ Coordinator monitors updates asynchronously (no lock-step waiting)
 - ✅ Fixed `StopFlag` memory ordering (Release/Acquire)
+- ✅ Single-threaded bounds updates through coordinator to ensure consistency
+- ✅ Refiners release locks during expensive operations to enable parallelism
+- ✅ Tests updated to account for f64 precision limitations vs high-precision bounds
+- ✅ All tests pass reliably (190 tests)
 
-**Remaining issues:**
-- ⚠️ Race conditions cause occasional flaky test failures - bounds can be captured in inconsistent states
-- ⚠️ Some tests expect lock-step semantics that don't hold in async model
-- Need proper synchronization to ensure bounds consistency across the graph
+**Key fixes for race conditions:**
+1. Refiners don't call `set_bounds()` directly - coordinator is sole updater
+2. Coordinator recomputes bounds when applying updates (not using stale update bounds)
+3. Initialize all node bounds before spawning refiners
+4. Wait for first update before checking bounds (ensure refiners have initialized)
+5. Release write lock during `refine()` to prevent blocking parallel refinement
 
 **Blocks:** [nth-root-negative](#nth-root-negative), [nth-root-async](#nth-root-async), [refiners-stop](#refiners-stop)
 
