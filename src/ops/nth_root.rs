@@ -35,8 +35,8 @@ use crate::binary::{
     Binary, Bounds, FiniteBounds, UXBinary, XBinary, margin_from_width, simplify_bounds_if_needed,
 };
 use crate::binary_utils::bisection::{
-    BisectionComparison, NormalizedBisectionResult, NormalizedBounds, bisection_step_normalized,
-    midpoint, normalize_bounds,
+    NormalizedBisectionResult, NormalizedBounds, bisection_step_normalized, midpoint,
+    normalize_bounds,
 };
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
@@ -152,14 +152,8 @@ impl NodeOp for NthRootOp {
                 // Perform one bisection step
                 let degree = self.degree.get();
                 let target = &s.target;
-                let result = bisection_step_normalized(&s.bounds, |mid| {
-                    let mid_pow = binary_pow(mid, degree);
-                    match mid_pow.cmp(target) {
-                        std::cmp::Ordering::Less => BisectionComparison::Above,
-                        std::cmp::Ordering::Equal => BisectionComparison::Exact,
-                        std::cmp::Ordering::Greater => BisectionComparison::Below,
-                    }
-                });
+                let result =
+                    bisection_step_normalized(&s.bounds, |mid| binary_pow(mid, degree).cmp(target));
 
                 match result {
                     NormalizedBisectionResult::Narrowed(new_bounds) => {
