@@ -519,9 +519,6 @@ fn compute_sin_bounds_for_point_with_pi(
         let reduced_interval = pi.interval_add(&x_interval);
         let (sin_lo, sin_hi) = compute_sin_on_monotonic_interval(&reduced_interval, n);
         (sin_hi.neg(), sin_lo.neg())
-    // TODO: The two boundary region branches below have duplicated logic for computing
-    // conservative bounds from two branches. Consider extracting a helper function that
-    // takes two (lo, hi) pairs and returns conservative (min_lo, max_hi) bounds.
     } else if x >= half_pi.lo() {
         // x is in the boundary region around half_pi: [half_pi.lo, half_pi.hi]
         // Need to consider both the center branch and the upper branch
@@ -533,18 +530,7 @@ fn compute_sin_bounds_for_point_with_pi(
         let upper_reduced = pi.interval_sub(&x_interval);
         let (upper_lo, upper_hi) = compute_sin_on_monotonic_interval(&upper_reduced, n);
 
-        // Take conservative bounds
-        let result_lo = if center_lo < upper_lo {
-            center_lo
-        } else {
-            upper_lo
-        };
-        let result_hi = if center_hi > upper_hi {
-            center_hi
-        } else {
-            upper_hi
-        };
-        (result_lo, result_hi)
+        conservative_bounds((center_lo, center_hi), (upper_lo, upper_hi))
     } else {
         // x is in the boundary region around -half_pi: [neg_half_pi.lo, neg_half_pi.hi]
         // i.e., x is in [-half_pi.hi, -half_pi.lo]
@@ -558,19 +544,22 @@ fn compute_sin_bounds_for_point_with_pi(
         let (lower_sin_lo, lower_sin_hi) = compute_sin_on_monotonic_interval(&lower_reduced, n);
         let (lower_lo, lower_hi) = (lower_sin_hi.neg(), lower_sin_lo.neg());
 
-        // Take conservative bounds
-        let result_lo = if center_lo < lower_lo {
-            center_lo
-        } else {
-            lower_lo
-        };
-        let result_hi = if center_hi > lower_hi {
-            center_hi
-        } else {
-            lower_hi
-        };
-        (result_lo, result_hi)
+        conservative_bounds((center_lo, center_hi), (lower_lo, lower_hi))
     }
+}
+
+/// Computes conservative bounds from two interval bounds.
+///
+/// When a point falls within a boundary region where multiple branches could apply,
+/// we need to compute bounds from both branches and take the most conservative result.
+/// This function takes the minimum of the lower bounds and maximum of the upper bounds.
+fn conservative_bounds(
+    (lo1, hi1): (Binary, Binary),
+    (lo2, hi2): (Binary, Binary),
+) -> (Binary, Binary) {
+    let result_lo = if lo1 < lo2 { lo1 } else { lo2 };
+    let result_hi = if hi1 > hi2 { hi1 } else { hi2 };
+    (result_lo, result_hi)
 }
 
 /// Computes k = round(x / period).
