@@ -519,6 +519,9 @@ fn compute_sin_bounds_for_point_with_pi(
         let reduced_interval = pi.interval_add(&x_interval);
         let (sin_lo, sin_hi) = compute_sin_on_monotonic_interval(&reduced_interval, n);
         (sin_hi.neg(), sin_lo.neg())
+    // TODO: The two boundary region branches below have duplicated logic for computing
+    // conservative bounds from two branches. Consider extracting a helper function that
+    // takes two (lo, hi) pairs and returns conservative (min_lo, max_hi) bounds.
     } else if x >= half_pi.lo() {
         // x is in the boundary region around half_pi: [half_pi.lo, half_pi.hi]
         // Need to consider both the center branch and the upper branch
