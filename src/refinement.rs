@@ -2,20 +2,22 @@
 //!
 //! This module provides the machinery for refining computable numbers to a desired precision:
 //! - `RefinementGraph`: Snapshot of the computation graph for coordinating refinement
-//! - `RefinerHandle`: Handle for controlling a background refiner thread
-//! - `NodeUpdate`: Update message from a refiner to the coordinator
+//! - Refiner threads for leaf nodes that continuously refine and publish updates
+//! - Propagator threads for intermediate nodes that subscribe to children and propagate
 //!
-//! The refinement model is continuous/event-driven:
-//! 1. Refiners run continuously, pushing updates to a channel
-//! 2. Coordinator receives updates as they arrive and propagates immediately
-//! 3. Stop when target precision is met
+//! The refinement model is true pub/sub:
+//! 1. Refiners run continuously, publishing updates to a shared update bus
+//! 2. Intermediate nodes (propagators) subscribe to the bus, filter for child updates,
+//!    recompute their own bounds, and publish back to the bus
+//! 3. Coordinator monitors root node updates and stops when precision is met
+//! 4. Stop flag terminates all threads
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use crossbeam_channel::{Sender, bounded};
+use crossbeam_channel::{Receiver, Sender, bounded, select};
 
 use crate::binary::Bounds;
 use crate::binary::{UBinary, UXBinary};
@@ -26,12 +28,24 @@ use crate::node::Node;
 /// Backoff duration when a refiner makes no progress.
 const NO_PROGRESS_BACKOFF_US: u64 = 100;
 
+/// Timeout for propagator receive to check stop flag.
+const PROPAGATOR_TIMEOUT_MS: u64 = 1;
 
-/// Update message from a refiner thread.
+
+/// Notification sent when a node's bounds have been updated.
 #[derive(Clone)]
-pub struct NodeUpdate {
+pub struct BoundsNotification {
     pub node_id: usize,
-    pub bounds: Bounds,
+}
+
+/// Notification sent when a refiner completes an iteration.
+#[derive(Clone, Copy)]
+pub struct IterationNotification;
+
+/// Error notification from a thread.
+#[derive(Clone)]
+pub struct ErrorNotification {
+    pub error: ComputableError,
 }
 
 /// Snapshot of the node graph used to coordinate parallel refinement.
@@ -39,14 +53,18 @@ pub struct RefinementGraph {
     pub root: Arc<Node>,
     pub nodes: HashMap<usize, Arc<Node>>,    // node id -> node
     pub parents: HashMap<usize, Vec<usize>>, // child id -> parent ids
+    pub children: HashMap<usize, Vec<usize>>, // parent id -> child ids
     pub refiners: Vec<Arc<Node>>,
+    pub propagators: Vec<Arc<Node>>,          // intermediate nodes (non-refiners with children)
 }
 
 impl RefinementGraph {
     pub fn new(root: Arc<Node>) -> Result<Self, ComputableError> {
         let mut nodes = HashMap::new();
         let mut parents: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut refiners = Vec::new();
+        let mut propagators = Vec::new();
 
         let mut stack = vec![Arc::clone(&root)];
         while let Some(node) = stack.pop() {
@@ -56,12 +74,18 @@ impl RefinementGraph {
             let node_id = node.id;
             nodes.insert(node_id, Arc::clone(&node));
 
+            let node_children = node.children();
             if node.is_refiner() {
                 refiners.push(Arc::clone(&node));
+            } else if !node_children.is_empty() {
+                // Non-refiner with children = intermediate node needing propagator
+                propagators.push(Arc::clone(&node));
             }
-            for child in node.children() {
+
+            for child in &node_children {
                 parents.entry(child.id).or_default().push(node_id);
-                stack.push(child);
+                children.entry(node_id).or_default().push(child.id);
+                stack.push(Arc::clone(child));
             }
         }
 
@@ -69,7 +93,9 @@ impl RefinementGraph {
             root,
             nodes,
             parents,
+            children,
             refiners,
+            propagators,
         };
 
         Ok(graph)
@@ -82,74 +108,140 @@ impl RefinementGraph {
         let mut outcome = None;
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
-            let mut iterations = 0usize;
 
-            // Adjust max iterations by number of refiners since each refiner
-            // sends updates independently in continuous mode
-            let max_iterations_adjusted = MAX_REFINEMENT_ITERATIONS * self.refiners.len().max(1);
+            // Check if precision already met before spawning threads
+            let root_bounds = match self.root.get_bounds() {
+                Ok(b) => b,
+                Err(e) => {
+                    outcome = Some(Err(e));
+                    return;
+                }
+            };
+            if bounds_width_leq(&root_bounds, epsilon) {
+                outcome = Some(Ok(root_bounds));
+                return;
+            }
 
-            // Use synchronous channel (capacity 0) where send blocks until receive.
-            // This ensures refiners wait for coordinator to process each update before
-            // doing more work, preventing them from racing ahead with expensive operations
-            // like inv's precision doubling.
-            let (update_tx, update_rx) = bounded(0);
+            // Build subscription infrastructure:
+            // - Each parent (propagator + coordinator) has an inbox receiver
+            // - Children have senders to their parents' inboxes
+            let mut inbox_senders: HashMap<usize, Vec<Sender<BoundsNotification>>> = HashMap::new();
+            let mut inbox_receivers: HashMap<usize, Receiver<BoundsNotification>> = HashMap::new();
 
+            // Create inbox for each propagator
+            for propagator in &self.propagators {
+                let (tx, rx) = bounded(4); // Small buffer for backpressure
+                inbox_receivers.insert(propagator.id, rx);
+                // Register this inbox with all children
+                if let Some(child_ids) = self.children.get(&propagator.id) {
+                    for child_id in child_ids {
+                        inbox_senders.entry(*child_id).or_default().push(tx.clone());
+                    }
+                }
+            }
+
+            // Create inbox for coordinator (receives from root)
+            let (coord_tx, coord_rx) = bounded(4);
+            inbox_senders.entry(self.root.id).or_default().push(coord_tx);
+
+            // Iteration channel - refiners report each step for max_iterations tracking
+            let (iter_tx, iter_rx) = bounded::<IterationNotification>(16);
+
+            // Error channel for threads to report failures
+            let (error_tx, error_rx) = bounded::<ErrorNotification>(1);
+
+            // Spawn refiner threads - they send to their parents' inboxes + iteration channel
             for node in &self.refiners {
+                let senders = inbox_senders.get(&node.id).cloned().unwrap_or_default();
                 spawn_refiner(
                     scope,
                     Arc::clone(node),
                     Arc::clone(&stop_flag),
-                    update_tx.clone(),
+                    senders,
+                    iter_tx.clone(),
+                    error_tx.clone(),
                 );
             }
-            drop(update_tx);
+
+            // Spawn propagator threads - they receive from their inbox, send to parents' inboxes
+            for node in &self.propagators {
+                let inbox_rx = inbox_receivers.remove(&node.id).unwrap();
+                let senders = inbox_senders.get(&node.id).cloned().unwrap_or_default();
+                spawn_propagator(
+                    scope,
+                    Arc::clone(node),
+                    Arc::clone(&stop_flag),
+                    inbox_rx,
+                    senders,
+                    error_tx.clone(),
+                );
+            }
+
+            drop(iter_tx);
+            drop(error_tx);
+
+            // Coordinator: receive root updates and check precision
+            // Also receive iteration notifications for max_iterations tracking
+            // Adjust max iterations by number of refiners since each sends independently
+            let max_iterations_adjusted = MAX_REFINEMENT_ITERATIONS * self.refiners.len().max(1);
+            let mut iterations = 0usize;
 
             let result = (|| {
-                // Check if precision already met
-                let mut root_bounds = self.root.get_bounds()?;
-                if bounds_width_leq(&root_bounds, epsilon) {
-                    stop_flag.stop();
-                    return Ok(root_bounds);
-                }
-
-                // Receive updates as they arrive from refiners
-                for update_result in &update_rx {
-                    match update_result {
-                        Ok(update) => {
-                            self.apply_update(update)?;
-                            iterations += 1;
-
-                            // Check precision after applying update
-                            root_bounds = self.root.get_bounds()?;
-                            if bounds_width_leq(&root_bounds, epsilon) {
-                                stop_flag.stop();
-                                return Ok(root_bounds);
-                            }
-
-                            if iterations >= max_iterations_adjusted {
-                                stop_flag.stop();
-                                return Err(ComputableError::MaxRefinementIterations {
-                                    max: MAX_REFINEMENT_ITERATIONS,
-                                });
+                loop {
+                    select! {
+                        recv(coord_rx) -> msg => {
+                            match msg {
+                                Ok(_notification) => {
+                                    // Root updated - check precision
+                                    let root_bounds = self.root.get_bounds()?;
+                                    if bounds_width_leq(&root_bounds, epsilon) {
+                                        stop_flag.stop();
+                                        return Ok(root_bounds);
+                                    }
+                                }
+                                Err(_) => {
+                                    // Channel closed - check if precision met
+                                    let root_bounds = self.root.get_bounds()?;
+                                    if bounds_width_leq(&root_bounds, epsilon) {
+                                        return Ok(root_bounds);
+                                    }
+                                    return Err(ComputableError::RefinementChannelClosed);
+                                }
                             }
                         }
-                        Err(error) => {
-                            stop_flag.stop();
-                            return Err(error);
+                        recv(iter_rx) -> msg => {
+                            match msg {
+                                Ok(_) => {
+                                    iterations += 1;
+
+                                    // Check max iterations (adjusted for number of refiners)
+                                    if iterations >= max_iterations_adjusted {
+                                        stop_flag.stop();
+                                        return Err(ComputableError::MaxRefinementIterations {
+                                            max: MAX_REFINEMENT_ITERATIONS,
+                                        });
+                                    }
+                                }
+                                Err(_) => {
+                                    // All refiners done - check if precision met
+                                    let root_bounds = self.root.get_bounds()?;
+                                    if bounds_width_leq(&root_bounds, epsilon) {
+                                        return Ok(root_bounds);
+                                    }
+                                    return Err(ComputableError::RefinementChannelClosed);
+                                }
+                            }
+                        }
+                        recv(error_rx) -> msg => {
+                            if let Ok(err_notification) = msg {
+                                stop_flag.stop();
+                                return Err(err_notification.error);
+                            }
                         }
                     }
                 }
-
-                // Channel closed - check if we met precision
-                root_bounds = self.root.get_bounds()?;
-                if bounds_width_leq(&root_bounds, epsilon) {
-                    Ok(root_bounds)
-                } else {
-                    Err(ComputableError::RefinementChannelClosed)
-                }
             })();
 
-            // Ensure stop flag is set (in case of early channel closure)
             stop_flag.stop();
             outcome = Some(result);
         });
@@ -159,44 +251,19 @@ impl RefinementGraph {
             None => Err(ComputableError::RefinementChannelClosed),
         }
     }
-
-    fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
-        let mut queue = VecDeque::new();
-        if let Some(node) = self.nodes.get(&update.node_id) {
-            node.set_bounds(update.bounds);
-            queue.push_back(node.id);
-        }
-
-        while let Some(changed_id) = queue.pop_front() {
-            let Some(parents) = self.parents.get(&changed_id) else {
-                continue;
-            };
-            for parent_id in parents {
-                let parent = self
-                    .nodes
-                    .get(parent_id)
-                    .ok_or(ComputableError::RefinementChannelClosed)?;
-                let next_bounds = parent.compute_bounds()?;
-                if parent.cached_bounds().as_ref() != Some(&next_bounds) {
-                    parent.set_bounds(next_bounds);
-                    queue.push_back(*parent_id);
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
 fn spawn_refiner<'scope, 'env>(
     scope: &'scope thread::Scope<'scope, 'env>,
     node: Arc<Node>,
     stop: Arc<StopFlag>,
-    updates: Sender<Result<NodeUpdate, ComputableError>>,
+    parent_senders: Vec<Sender<BoundsNotification>>,
+    iter_tx: Sender<IterationNotification>,
+    error_tx: Sender<ErrorNotification>,
 ) {
     scope.spawn(move || {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            refiner_loop(node, stop, updates)
+            refiner_loop(node, stop, parent_senders, iter_tx, error_tx)
         }));
     });
 }
@@ -204,26 +271,38 @@ fn spawn_refiner<'scope, 'env>(
 fn refiner_loop(
     node: Arc<Node>,
     stop: Arc<StopFlag>,
-    updates: Sender<Result<NodeUpdate, ComputableError>>,
-) -> Result<(), ComputableError> {
+    parent_senders: Vec<Sender<BoundsNotification>>,
+    iter_tx: Sender<IterationNotification>,
+    error_tx: Sender<ErrorNotification>,
+) {
     while !stop.is_stopped() {
         match node.refine_step() {
             Ok(true) => {
+                // Report iteration for max_iterations tracking
+                if iter_tx.send(IterationNotification).is_err() {
+                    break;
+                }
+
                 // Check stop flag before computing bounds (early exit)
                 if stop.is_stopped() {
                     break;
                 }
-                // Made progress - compute and send update
-                let bounds = node.compute_bounds()?;
-                node.set_bounds(bounds.clone());
-                if updates
-                    .send(Ok(NodeUpdate {
-                        node_id: node.id,
-                        bounds,
-                    }))
-                    .is_err()
-                {
-                    break;
+                // Made progress - compute and update bounds
+                let bounds = match node.compute_bounds() {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = error_tx.send(ErrorNotification { error: e });
+                        break;
+                    }
+                };
+                node.set_bounds(bounds);
+
+                // Publish to all parent inboxes
+                let notification = BoundsNotification { node_id: node.id };
+                for sender in &parent_senders {
+                    // Use try_send to avoid blocking if parent is slow
+                    // Bounded channel provides backpressure
+                    let _ = sender.try_send(notification.clone());
                 }
             }
             Ok(false) => {
@@ -231,12 +310,89 @@ fn refiner_loop(
                 thread::sleep(Duration::from_micros(NO_PROGRESS_BACKOFF_US));
             }
             Err(error) => {
-                let _ = updates.send(Err(error));
+                let _ = error_tx.send(ErrorNotification { error });
                 break;
             }
         }
     }
-    Ok(())
+}
+
+fn spawn_propagator<'scope, 'env>(
+    scope: &'scope thread::Scope<'scope, 'env>,
+    node: Arc<Node>,
+    stop: Arc<StopFlag>,
+    inbox_rx: Receiver<BoundsNotification>,
+    parent_senders: Vec<Sender<BoundsNotification>>,
+    error_tx: Sender<ErrorNotification>,
+) {
+    scope.spawn(move || {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            propagator_loop(node, stop, inbox_rx, parent_senders, error_tx)
+        }));
+    });
+}
+
+fn propagator_loop(
+    node: Arc<Node>,
+    stop: Arc<StopFlag>,
+    inbox_rx: Receiver<BoundsNotification>,
+    parent_senders: Vec<Sender<BoundsNotification>>,
+    error_tx: Sender<ErrorNotification>,
+) {
+    // Initial bounds computation
+    let mut cached_bounds = match node.compute_bounds() {
+        Ok(b) => {
+            node.set_bounds(b.clone());
+            b
+        }
+        Err(e) => {
+            let _ = error_tx.send(ErrorNotification { error: e });
+            return;
+        }
+    };
+
+    // Publish initial bounds to all parents
+    let notification = BoundsNotification { node_id: node.id };
+    for sender in &parent_senders {
+        let _ = sender.try_send(notification.clone());
+    }
+
+    let timeout = Duration::from_millis(PROPAGATOR_TIMEOUT_MS);
+
+    while !stop.is_stopped() {
+        // Wait for any child update in our inbox
+        match inbox_rx.recv_timeout(timeout) {
+            Ok(_notification) => {
+                // A child updated - recompute our bounds
+                let new_bounds = match node.compute_bounds() {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = error_tx.send(ErrorNotification { error: e });
+                        return;
+                    }
+                };
+
+                // Only propagate if bounds actually changed
+                if new_bounds != cached_bounds {
+                    node.set_bounds(new_bounds.clone());
+                    cached_bounds = new_bounds;
+
+                    // Publish to parent inboxes
+                    let notification = BoundsNotification { node_id: node.id };
+                    for sender in &parent_senders {
+                        let _ = sender.try_send(notification.clone());
+                    }
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // Just check stop flag and continue
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                // Channel closed, exit
+                return;
+            }
+        }
+    }
 }
 
 /// Compares bounds width (UXBinary) against epsilon (UBinary).

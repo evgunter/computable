@@ -23,7 +23,12 @@ pub trait BoundsAccess {
 /// This is also the hook for future user-defined base nodes.
 pub trait BaseNode: Send + Sync {
     fn get_bounds(&self) -> Result<Bounds, ComputableError>;
-    fn refine(&self) -> Result<(), ComputableError>;
+    /// Refines the base state. Returns:
+    /// - Ok(true) if state changed (progress made)
+    /// - Ok(false) if state unchanged and bounds are exact (constant, no progress needed)
+    /// - Err(StateUnchanged) if state unchanged but bounds are not exact
+    /// - Err(...) for other errors
+    fn refine(&self) -> Result<bool, ComputableError>;
 }
 
 /// Cached base state plus bounds derived from that state.
@@ -87,14 +92,16 @@ where
     }
 
     /// Refines the base state and computes the new bounds for that refined state.
-    fn refine(&self) -> Result<(), ComputableError> {
+    /// Returns Ok(true) if state changed, Ok(false) if already converged (constant).
+    fn refine(&self) -> Result<bool, ComputableError> {
         let mut snapshot = self.snapshot.write();
         let previous_bounds = self.snapshot_bounds(&mut snapshot)?;
         let previous_state = snapshot.state.clone();
         let next_state = (self.refine)(previous_state.clone());
         if next_state == previous_state {
             if previous_bounds.small() == &previous_bounds.large() {
-                return Ok(());
+                // Constant case - no progress needed
+                return Ok(false);
             }
             return Err(ComputableError::StateUnchanged);
         }
@@ -109,7 +116,7 @@ where
         snapshot.state = next_state;
         snapshot.bounds = Some(next_bounds);
 
-        Ok(())
+        Ok(true)
     }
 }
 

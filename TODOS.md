@@ -252,12 +252,21 @@ Similar to [uxbinary-unreachable](#uxbinary-unreachable).
 ```
 Related to [pi-adaptive](#pi-adaptive).
 
-### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
-**File:** `src/refinement.rs:15`
-```rust
-//! TODO: The README describes an async/event-driven refinement model where:
-```
-Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative), [nth-root-async](#nth-root-async), [refiners-stop](#refiners-stop)
+### <a id="async-refinement"></a>async-refinement: Complete pub/sub refinement model
+**File:** `src/refinement.rs`
+**Status:** IN PROGRESS
+
+The pub/sub refinement model has been partially implemented on branch `try-strategies-1769039545-strategy-2`:
+- Refiner threads run continuously, publishing updates to parent subscription channels
+- Propagator threads subscribe to children, recompute on updates, publish to their parents
+- Coordinator monitors root updates and stops when precision is met
+
+**Remaining issues:**
+- 4 tests fail with bounds precision issues (`nth_root_in_expression`, `shared_operand_in_expression`, `integration_sqrt2_expression`, `inv_bounds_for_positive_interval`)
+- These appear to be race conditions in asynchronous bound propagation where bounds become too narrow
+- All 17 refinement tests pass; the failures are in integration tests with complex expressions
+
+**Blocks:** [nth-root-negative](#nth-root-negative), [nth-root-async](#nth-root-async), [refiners-stop](#refiners-stop)
 
 ---
 

@@ -17,8 +17,7 @@ impl NodeOp for BaseOp {
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
-        self.base.refine()?;
-        Ok(true)
+        self.base.refine()
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
