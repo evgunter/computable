@@ -310,11 +310,14 @@ fn reduce_to_pi_range_interval(
             return current;
         }
 
-        // Also check with outer bounds - if we're definitely out of range
+        // TODO(correctness): Returning when within [-pi_hi, pi_hi] rather than [-pi, pi]
+        // means the result could be slightly outside the true range. This appears to work
+        // because the trig identities sin(x) = sin(π-x) and sin(x) = -sin(π+x) used
+        // downstream are valid for all x. However, this needs rigorous verification:
+        // prove that for any x in [-pi_hi, pi_hi], the downstream transformations
+        // produce valid inputs to compute_sin_on_monotonic_interval.
         let neg_pi_hi = pi.hi().neg();
         if *current.lo() >= neg_pi_hi && current.hi() <= pi.hi() {
-            // TODO: this comment is sus, what's up with this
-            // We're in the outer range [-pi_hi, pi_hi], close enough
             return current;
         }
 
