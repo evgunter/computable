@@ -109,7 +109,9 @@ pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
 /// Creates a Computable that represents an interval [lower, upper] without refinement.
 ///
 /// Unlike `interval_midpoint_computable`, this helper does not refine the bounds at all.
-/// It simply returns the interval unchanged. This is useful for testing interval arithmetic
+/// It simply returns the interval unchanged. Therefore, it's actually an invalid computable number;
+/// it will never converge, and should get caught by refine_to's check that the state changes.
+/// Nevertheless, it is useful for testing interval arithmetic
 /// operations where you want to observe how bounds propagate without any refinement.
 ///
 /// # Examples
