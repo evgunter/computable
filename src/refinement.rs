@@ -316,23 +316,15 @@ pub fn bounds_width_leq(bounds: &Bounds, epsilon: &UBinary) -> bool {
     }
 }
 
-// TODO: make a macro for basically
-// mod tests {
-//     #![allow(clippy::expect_used, clippy::panic)]
-// and then put ratchet tests for clippy::expect_used and clippy:panic
-// (they should NEVER be allowed in the code except in tests--we ONLY use unreachable! and debug_assert! in non-test code)
-
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::binary::XBinary;
     use crate::computable::Computable;
     use crate::error::ComputableError;
     use crate::test_utils::{
-        bin, interval_midpoint_computable, interval_refine, midpoint_between, ubin, unwrap_finite,
-        xbin,
+        bin, interval_midpoint_computable, interval_noop_computable, interval_refine,
+        midpoint_between, ubin, unwrap_finite, xbin,
     };
     use num_traits::Zero;
     use std::sync::{Arc, Barrier};
@@ -437,12 +429,7 @@ mod tests {
 
     #[test]
     fn refine_to_rejects_unchanged_state() {
-        let interval_state = Bounds::new(xbin(0, 0), xbin(2, 0));
-        let computable = Computable::new(
-            interval_state,
-            |inner_state| Ok(interval_bounds(inner_state)),
-            |inner_state| inner_state,
-        );
+        let computable = interval_noop_computable(0, 2);
         let epsilon = ubin(1, -2);
         let result = computable.refine_to_default(epsilon);
         assert!(matches!(result, Err(ComputableError::StateUnchanged)));
@@ -605,8 +592,8 @@ mod tests {
     fn refinement_parallelizes_multiple_refiners() {
         use std::time::Instant;
 
-        // Using 20ms gives more margin for thread scheduling delays
-        const SLEEP_MS: u64 = 20;
+        const SLEEP_MS: u64 = 10;
+        let sleep_duration = Duration::from_millis(SLEEP_MS);
 
         let slow_refiner = || {
             Computable::new(
@@ -630,21 +617,16 @@ mod tests {
             result,
             Err(ComputableError::MaxRefinementIterations { max: 1 })
         ));
-        // With 4 refiners sleeping 20ms each in parallel, total should be ~20-40ms
-        // (not 80ms if sequential). Allow some margin for thread scheduling.
-        let elapsed_ms = elapsed.as_millis() as u64;
+        // Use Duration comparison instead of as_millis() truncation
+        // to avoid off-by-one issues when elapsed is e.g. 10.5ms
         assert!(
-            elapsed_ms >= SLEEP_MS / 2,
-            "elapsed time {} ms too short, refinement may not have run (expected >= {} ms)",
-            elapsed_ms,
-            SLEEP_MS / 2
+            elapsed >= sleep_duration,
+            "refinement must not have actually run, elapsed {elapsed:?}"
         );
         assert!(
-            elapsed_ms < 3 * SLEEP_MS,
-            "expected parallel refinement under {} ms, but took {} ms (would be {} ms if sequential)",
-            3 * SLEEP_MS,
-            elapsed_ms,
-            4 * SLEEP_MS
+            elapsed < 2 * sleep_duration,
+            "expected parallel refinement under {}ms, elapsed {elapsed:?}",
+            2 * SLEEP_MS
         );
     }
 

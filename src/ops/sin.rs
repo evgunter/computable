@@ -22,12 +22,12 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, XBinary, margin_from_width, simplify_bounds_if_needed,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, XBinary, margin_from_width,
+    reciprocal_of_biguint, simplify_bounds_if_needed,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -156,11 +156,11 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
             sign_flip,
         } => {
             // FiniteBounds is fully within [-pi/2, pi/2], use Taylor series
-            let (sin_lo, sin_hi) = compute_sin_on_monotonic_interval(&interval, n);
+            let sin_bounds = compute_sin_on_monotonic_interval(&interval, n);
             if sign_flip {
-                (sin_hi.neg(), sin_lo.neg())
+                (sin_bounds.hi().neg(), sin_bounds.lo().neg())
             } else {
-                (sin_lo, sin_hi)
+                (sin_bounds.lo().clone(), sin_bounds.hi())
             }
         }
         ReductionResult::ContainsMax { sin_min } => {
@@ -243,24 +243,14 @@ enum ReductionResult {
 fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: usize) -> u64 {
     // Estimate k = |x| / (2*pi) using a rough approximation
     // We use the larger magnitude endpoint
-    // TODO: add Binary::abs() -> UBinary method to avoid repeated is_negative checks and encode
-    // non-negativity in the type system
-    let abs_lo = if lower.mantissa().is_negative() {
-        lower.neg()
-    } else {
-        lower.clone()
-    };
-    let abs_hi = if upper.mantissa().is_negative() {
-        upper.neg()
-    } else {
-        upper.clone()
-    };
+    let abs_lo = lower.magnitude();
+    let abs_hi = upper.magnitude();
     let max_abs = if abs_lo > abs_hi { abs_lo } else { abs_hi };
 
     // Rough estimate: k ~= max_abs / 6.28
     // We need: pi_precision > log2(k) + some_margin
     // log2(max_abs) ~= bit_length(mantissa) + exponent
-    let mantissa_bits = max_abs.mantissa().magnitude().bits() as i64;
+    let mantissa_bits = max_abs.mantissa().bits() as i64;
     let exp = max_abs
         .exponent()
         .to_i64()
@@ -320,11 +310,14 @@ fn reduce_to_pi_range_interval(
             return current;
         }
 
-        // Also check with outer bounds - if we're definitely out of range
+        // Check if we're within the outer bounds [-pi_hi, pi_hi].
+        // This is acceptable because downstream code (reduce_to_half_pi_range_interval)
+        // uses conservative interval comparisons with pi/half_pi that properly account
+        // for the uncertainty in the pi approximation. The reduced value doesn't need
+        // to be exactly in [-π, π]; it just needs to be close enough that the interval
+        // comparisons can correctly determine which trigonometric identity to apply.
         let neg_pi_hi = pi.hi().neg();
         if *current.lo() >= neg_pi_hi && current.hi() <= pi.hi() {
-            // TODO: this comment is sus, what's up with this
-            // We're in the outer range [-pi_hi, pi_hi], close enough
             return current;
         }
 
@@ -424,12 +417,12 @@ fn reduce_to_half_pi_range_interval(
 
         // Conservative: compute sin at both adjusted endpoints and take min
         // Use interval-based pi for proper error tracking
-        let (sin_at_lo, _) = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
-        let (sin_at_hi, _) = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
-        let sin_min = if sin_at_lo < sin_at_hi {
-            sin_at_lo
+        let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
+        let sin_min = if sin_bounds_at_lo.lo() < sin_bounds_at_hi.lo() {
+            sin_bounds_at_lo.lo().clone()
         } else {
-            sin_at_hi
+            sin_bounds_at_hi.lo().clone()
         };
 
         return ReductionResult::ContainsMax { sin_min };
@@ -439,12 +432,12 @@ fn reduce_to_half_pi_range_interval(
     // reduced.lo < neg_half_pi.hi AND reduced.hi > neg_half_pi.lo
     if *reduced.lo() < neg_half_pi.hi() && reduced.hi() > *neg_half_pi.lo() {
         // The interval contains -pi/2 where sin = -1
-        let (_, sin_at_lo) = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
-        let (_, sin_at_hi) = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
-        let sin_max = if sin_at_lo > sin_at_hi {
-            sin_at_lo
+        let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
+        let sin_max = if sin_bounds_at_lo.hi() > sin_bounds_at_hi.hi() {
+            sin_bounds_at_lo.hi()
         } else {
-            sin_at_hi
+            sin_bounds_at_hi.hi()
         };
 
         return ReductionResult::ContainsMin { sin_max };
@@ -464,24 +457,14 @@ fn reduce_to_half_pi_range_interval(
         return ReductionResult::ContainsBoth;
     }
 
-    // Otherwise compute bounds at endpoints using interval-based pi
-    let (sin_lo_1, sin_hi_1) = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
-    let (sin_lo_2, sin_hi_2) = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
-
-    let overall_lo = if sin_lo_1 < sin_lo_2 {
-        sin_lo_1
-    } else {
-        sin_lo_2
-    };
-    let overall_hi = if sin_hi_1 > sin_hi_2 {
-        sin_hi_1
-    } else {
-        sin_hi_2
-    };
+    // Otherwise compute bounds at endpoints using interval-based pi and take their union
+    let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
+    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
+    let combined = sin_bounds_1.join(&sin_bounds_2);
 
     ReductionResult::SpansMultipleBranches {
-        overall_lo: overall_lo.max(neg_one),
-        overall_hi: overall_hi.min(pos_one),
+        overall_lo: combined.lo().clone().max(neg_one),
+        overall_hi: combined.hi().min(pos_one),
     }
 }
 
@@ -490,45 +473,71 @@ fn reduce_to_half_pi_range_interval(
 /// This function uses the same structure as the original but with interval-based pi
 /// for proper error tracking. The point x is assumed to already be reduced to
 /// approximately [-pi, pi].
+///
+/// When x falls within the uncertainty interval of a branch boundary (half_pi or -half_pi),
+/// both possible branches are evaluated and the union of their bounds is returned.
 fn compute_sin_bounds_for_point_with_pi(
     x: &Binary,
     n: usize,
     pi: &FiniteBounds,
     half_pi: &FiniteBounds,
-) -> (Binary, Binary) {
-    // TODO: it's suspicious that this uses midpoints rather than bounds
-    // Use interval midpoints for comparisons (same approach as original but with
-    // interval-based pi instead of hardcoded constant)
-    let half_pi_mid = half_pi.midpoint();
-    let neg_half_pi_mid = half_pi_mid.neg();
+) -> FiniteBounds {
+    let neg_half_pi = half_pi.interval_neg(); // [-pi/2_hi, -pi/2_lo]
 
     // For the transformation, we use the full interval to get proper bounds
     let x_interval = FiniteBounds::point(x.clone());
 
-    // Check which region x is in and transform accordingly
-    let mut sign_flip = false;
+    // Determine which branch(es) x could be in using interval bounds.
+    // We use conservative comparisons:
+    // - x is definitively above half_pi if x > half_pi.hi()
+    // - x is definitively below -half_pi if x < neg_half_pi.lo() (i.e., x < -half_pi.hi())
+    // - Otherwise, x might be in a boundary region where we need to consider multiple branches
 
-    let reduced_interval = if x > &half_pi_mid {
-        // x is in (pi/2, pi], transform: sin(x) = sin(pi - x)
-        // Using interval: [pi_lo - x, pi_hi - x]
-        pi.interval_sub(&x_interval)
-    } else if x < &neg_half_pi_mid {
-        // x is in [-pi, -pi/2), transform: sin(x) = -sin(pi + x)
-        // Using interval: [pi_lo + x, pi_hi + x]
-        sign_flip = true;
-        pi.interval_add(&x_interval)
+    let definitely_above_half_pi = x > &half_pi.hi();
+    let definitely_below_neg_half_pi = *x < *neg_half_pi.lo();
+    let definitely_in_center = *x >= neg_half_pi.hi() && x <= half_pi.lo();
+
+    if definitely_in_center {
+        // x is definitively in [-pi/2, pi/2], use directly
+        compute_sin_on_monotonic_interval(&x_interval, n)
+    } else if definitely_above_half_pi {
+        // x is definitively in (pi/2, pi], transform: sin(x) = sin(pi - x)
+        let reduced_interval = pi.interval_sub(&x_interval);
+        compute_sin_on_monotonic_interval(&reduced_interval, n)
+    } else if definitely_below_neg_half_pi {
+        // x is definitively in [-pi, -pi/2), transform: sin(x) = -sin(pi + x)
+        let reduced_interval = pi.interval_add(&x_interval);
+        let sin_bounds = compute_sin_on_monotonic_interval(&reduced_interval, n);
+        FiniteBounds::new(sin_bounds.hi().neg(), sin_bounds.lo().neg())
+    } else if x >= half_pi.lo() {
+        // x is in the boundary region around half_pi: [half_pi.lo, half_pi.hi]
+        // Need to consider both the center branch and the upper branch
+
+        // Center branch: use x directly
+        let center_bounds = compute_sin_on_monotonic_interval(&x_interval, n);
+
+        // Upper branch: transform sin(x) = sin(pi - x)
+        let upper_reduced = pi.interval_sub(&x_interval);
+        let upper_bounds = compute_sin_on_monotonic_interval(&upper_reduced, n);
+
+        // Take the union of bounds from both branches
+        center_bounds.join(&upper_bounds)
     } else {
-        // x is in [-pi/2, pi/2], use directly as point interval
-        x_interval
-    };
+        // x is in the boundary region around -half_pi: [neg_half_pi.lo, neg_half_pi.hi]
+        // i.e., x is in [-half_pi.hi, -half_pi.lo]
+        // Need to consider both the center branch and the lower branch
 
-    // Compute sin on the (potentially interval) reduced value
-    let (sin_lo, sin_hi) = compute_sin_on_monotonic_interval(&reduced_interval, n);
+        // Center branch: use x directly
+        let center_bounds = compute_sin_on_monotonic_interval(&x_interval, n);
 
-    if sign_flip {
-        (sin_hi.neg(), sin_lo.neg())
-    } else {
-        (sin_lo, sin_hi)
+        // Lower branch: transform sin(x) = -sin(pi + x)
+        let lower_reduced = pi.interval_add(&x_interval);
+        let lower_sin_bounds = compute_sin_on_monotonic_interval(&lower_reduced, n);
+        let lower_bounds =
+            FiniteBounds::new(lower_sin_bounds.hi().neg(), lower_sin_bounds.lo().neg());
+
+        // Take the union of bounds from both branches
+        center_bounds.join(&lower_bounds)
     }
 }
 
@@ -604,7 +613,7 @@ fn truncate_precision(x: &Binary, precision_bits: usize) -> Binary {
 ///
 /// Since sin is monotonically increasing on [-pi/2, pi/2], we can simply
 /// evaluate at the endpoints.
-fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> (Binary, Binary) {
+fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> FiniteBounds {
     // sin is monotonic increasing on [-pi/2, pi/2]
     // So: sin([a, b]) = [sin(a)_lo, sin(b)_hi]
 
@@ -616,7 +625,7 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> (Bina
     let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n);
     let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n);
 
-    (sin_lo_bounds_lo, sin_hi_bounds_hi)
+    FiniteBounds::new(sin_lo_bounds_lo, sin_hi_bounds_hi)
 }
 
 /// Rounding direction for directed rounding in interval arithmetic.
@@ -692,12 +701,7 @@ fn taylor_sin_partial_sum(x: &Binary, n: usize, rounding: RoundingDirection) -> 
 /// Always rounds UP to be conservative.
 fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
     // Compute |x|^(2n+1)
-    // TODO: use Binary::abs() -> UBinary to avoid repeated is_negative checks
-    let abs_x = if x.mantissa().is_negative() {
-        x.neg()
-    } else {
-        x.clone()
-    };
+    let abs_x = x.magnitude().to_binary();
 
     let exp = 2 * n + 1;
     let mut power = Binary::new(BigInt::one(), BigInt::zero()); // 1
@@ -732,57 +736,26 @@ fn divide_by_factorial_directed(
         return value.clone();
     }
 
-    let mantissa = value.mantissa();
-    let exponent = value.exponent();
+    // TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
+    const PRECISION_BITS: usize = 64;
 
-    // We need to compute mantissa / factorial with the result as a Binary.
-    // To get a good approximation, we shift the mantissa up by some bits before dividing.
-    // The number of bits we shift determines our precision.
-    let precision_bits = 64_u64; // Extra precision for intermediate computation
-
-    // shifted_mantissa = |mantissa| * 2^precision_bits
-    let abs_mantissa = mantissa.magnitude().clone();
-    let shifted_mantissa = &abs_mantissa << precision_bits as usize;
-
-    // Compute |mantissa| / factorial
-    let (quot, rem) = shifted_mantissa.div_rem(factorial.magnitude());
-
-    // Determine how to round based on direction and sign
+    // Determine rounding direction for reciprocal based on overall rounding and sign of value.
     // For directed rounding toward +/- infinity:
-    // - Round UP (+inf): positive values round away from zero, negative round toward zero
-    // - Round DOWN (-inf): positive values round toward zero, negative round away from zero
-    let is_negative = mantissa.is_negative();
-    let has_remainder = !rem.is_zero();
-
-    let result_magnitude = if has_remainder {
-        match (rounding, is_negative) {
-            // Rounding UP (toward +infinity):
-            // - Positive: round away from zero (add 1)
-            // - Negative: round toward zero (truncate)
-            (RoundingDirection::Up, false) => quot + BigInt::one().magnitude(),
-            (RoundingDirection::Up, true) => quot,
-            // Rounding DOWN (toward -infinity):
-            // - Positive: round toward zero (truncate)
-            // - Negative: round away from zero (add 1)
-            (RoundingDirection::Down, false) => quot,
-            (RoundingDirection::Down, true) => quot + BigInt::one().magnitude(),
-        }
-    } else {
-        // Exact division, no rounding needed
-        quot
+    // - Round UP (+inf): positive values need reciprocal rounded up, negative need it rounded down
+    // - Round DOWN (-inf): positive values need reciprocal rounded down, negative need it rounded up
+    let is_negative = value.mantissa().is_negative();
+    let recip_rounding = match (rounding, is_negative) {
+        (RoundingDirection::Up, false) => ReciprocalRounding::Ceil,
+        (RoundingDirection::Up, true) => ReciprocalRounding::Floor,
+        (RoundingDirection::Down, false) => ReciprocalRounding::Floor,
+        (RoundingDirection::Down, true) => ReciprocalRounding::Ceil,
     };
 
-    // Adjust sign
-    let signed_mantissa = if is_negative {
-        -BigInt::from(result_magnitude)
-    } else {
-        BigInt::from(result_magnitude)
-    };
+    // Compute 1/|factorial| with directed rounding
+    let reciprocal = reciprocal_of_biguint(factorial.magnitude(), PRECISION_BITS, recip_rounding);
 
-    // New exponent = original_exponent - precision_bits
-    let new_exponent = exponent - BigInt::from(precision_bits);
-
-    Binary::new(signed_mantissa, new_exponent)
+    // Multiply value by reciprocal
+    value.mul(&reciprocal)
 }
 
 // Test helpers - exposed for integration tests
@@ -803,8 +776,6 @@ pub fn taylor_sin_partial_sum_test(x: &Binary, n: usize, down: bool) -> Binary {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::binary::UBinary;
     use crate::computable::Computable;

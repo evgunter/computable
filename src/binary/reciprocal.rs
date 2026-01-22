@@ -115,8 +115,6 @@ fn precision_bits_to_exponent(precision_bits: &BigInt) -> Result<BigInt, BinaryE
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::xbin;
 

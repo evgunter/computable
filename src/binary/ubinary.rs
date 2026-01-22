@@ -191,8 +191,6 @@ impl fmt::Display for UBinary {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use crate::test_utils::{bin, ubin};
 

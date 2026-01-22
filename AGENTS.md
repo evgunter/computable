@@ -8,4 +8,5 @@
 - Use the power of the type system to constrain your code and provide some assurance of correctness. If some required property can't be guaranteed by the type system, it should be runtime checked (i.e. explode if it fails) and should have a corresponding unit test.
 - To reiterate: code correctness and quality is the most important concern here.
 - Include a `Co-authored-by: <agent name>` trailer on commits you create (e.g., `Co-authored-by: Codex`).
-- Always run `cargo test` before completing a task. Run `cargo clippy` before creating a pull request.
+- Always run `cargo test` before completing a task. Run `cargo clippy && cargo fmt` before creating a pull request.
+- If the repo state starts out as dirty or you have any other reason to believe another agent might be working in parallel with you, do your work in a new git worktree. When you're done, clean up the worktree and either (a) if you're confident the task was completed correctly, merge it into main; or (b) report the branch you were working on and its status.

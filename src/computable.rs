@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::{One, Zero};
+use num_traits::One;
 
 use crate::binary::Bounds;
 use crate::binary::{Binary, UBinary, XBinary};
@@ -117,7 +117,7 @@ impl Computable {
     pub fn inv(self) -> Self {
         let node = Node::new(Arc::new(InvOp {
             inner: Arc::clone(&self.node),
-            precision_bits: RwLock::new(BigInt::zero()),
+            precision_bits: RwLock::new(None),
         }));
         Self { node }
     }
@@ -213,7 +213,6 @@ impl Computable {
     }
 
     /// Creates a constant computable with exact bounds.
-    #[allow(clippy::type_complexity)]
     pub fn constant(value: Binary) -> Self {
         fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
             Ok(Bounds::new(
@@ -290,8 +289,6 @@ impl std::ops::Div for Computable {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::test_utils::{bin, ubin, unwrap_finite};
 
