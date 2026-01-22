@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::{One, Zero};
+use num_traits::One;
 
 use crate::binary::Bounds;
 use crate::binary::{Binary, UBinary, XBinary};
@@ -117,7 +117,7 @@ impl Computable {
     pub fn inv(self) -> Self {
         let node = Node::new(Arc::new(InvOp {
             inner: Arc::clone(&self.node),
-            precision_bits: RwLock::new(BigInt::zero()),
+            precision_bits: RwLock::new(None),
         }));
         Self { node }
     }
