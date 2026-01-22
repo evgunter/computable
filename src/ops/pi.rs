@@ -456,5 +456,4 @@ mod tests {
             PRECISION_BITS - 1
         );
     }
-
 }
