@@ -717,6 +717,7 @@ fn divide_by_factorial_directed(
         return value.clone();
     }
 
+    // TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
     const PRECISION_BITS: usize = 64;
 
     // Determine rounding direction for reciprocal based on overall rounding and sign of value.
