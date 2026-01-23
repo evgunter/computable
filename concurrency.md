@@ -34,10 +34,11 @@ We need a mechanism to prevent leaf computable numbers from refining forever whi
 Current direction:
 - **Top-down activation with epsilon scaling**: parents activate children with a target epsilon (similar to `refine_to`), children refine while publishing intermediate updates, and then stop once they hit epsilon or are explicitly deactivated. Parents can reactivate if higher precision is needed.
   - For binary combination nodes (current assumption), pass down a smaller epsilon to each child (e.g., `epsilon / 16`) so faster children can keep contributing meaningful improvements while slower ones catch up, instead of splitting evenly (`epsilon / 2`).
+  - Consider a **parent-to-child stop channel**: when a parent reaches its target precision, it sends a stop signal to all children. Children check this channel each refinement loop (e.g., right after publishing an update) and halt promptly when a stop is observed.
 
 ## questions to resolve
 - **Activation granularity**: do parents activate children based on absolute epsilon, relative epsilon, or a mix?
-- **Stopping conditions**: when a parent reaches target precision, how do we signal children to stop promptly without races?
+- **Stopping conditions**: should we use a parent-to-child stop channel so children can exit promptly without races?
 - **Fairness**: how do we prevent starvation if some children refine slowly or have stale update signals?
 - **Error handling**: how should recoverable/irrecoverable errors propagate to parents and terminate refinement?
 - **Cancellation**: how do we cancel in-flight refinements when a higher-level computation finishes or fails?
@@ -80,7 +81,7 @@ Please confirm the decisions above, especially the approach to preventing leaf r
      - recomputes its own bounds and publishes if changed.
 4) **Convergence detection**
    - The root checks whether bounds width meets epsilon.
-   - If met, it signals cancellation/deactivation to children (mechanism TBD).
+   - If met, it signals cancellation/deactivation to children (candidate: a parent-to-child stop channel).
 5) **Conclusion**
-   - Children stop refining once deactivated or when their local epsilon is met.
+   - Children stop refining once deactivated or when their local epsilon is met; if using a stop channel, children check it each loop and exit promptly.
    - The root returns final bounds (or an error if irrecoverable conditions occur).
