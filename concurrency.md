@@ -34,7 +34,9 @@ We need a mechanism to prevent leaf computables from refining forever while they
 Current direction:
 - **Top-down activation with epsilon scaling**: parents activate children with a target epsilon (similar to `refine_to`), children refine while publishing intermediate updates, and then stop once they hit epsilon or are explicitly deactivated. Parents can reactivate if higher precision is needed.
   - For binary combination nodes (current assumption), pass down a smaller epsilon to each child (e.g., `epsilon / 16`) so faster children can keep contributing meaningful improvements while slower ones catch up, instead of splitting evenly (`epsilon / 2`).
-  - Consider a **parent-to-child stop channel**: when a parent reaches its target precision, it sends a stop signal to all children. Children check this channel each refinement loop (e.g., right after publishing an update) and halt promptly when a stop is observed.
+  - **Parent-to-child stop channel**: when a parent reaches its target precision, it sends a stop signal to all children. Children check this channel each refinement loop (e.g., right after publishing an update) and halt promptly when a stop is observed.
+  - **Refinement responsibility stays with the parent**: instead of globally storing the tightest epsilon on the child, the parent that needs extra precision should keep listening until the child finishes its current refinement run and then request a narrower refinement (to avoid conflicts if another parent with the tightest epsilon stops).
+  - Consider sending a **completion signal** to parents when a child finishes its current refinement run. This can be done by changing the update message from `()` to an enum (e.g., `Update` vs `Done`), which also supports the stop-channel handshake.
 
 ## alternative models to consider (before implementation)
 ### Dedicated update aggregation thread per composition
@@ -77,7 +79,7 @@ Current direction:
 
 ## questions to resolve
 - **Activation granularity**: do parents activate children based on absolute epsilon, relative epsilon, or a mix?
-- **Stopping conditions**: should we use a parent-to-child stop channel so children can exit promptly without races?
+- **Stopping conditions**: should we use a parent-to-child stop channel plus a child-to-parent completion signal (e.g., enum message) so parents can decide when to re-issue a narrower refinement?
 - **Fairness**: how do we prevent starvation if some children refine slowly or have stale update signals?
 - **Error handling**: how should recoverable/irrecoverable errors propagate to parents and terminate refinement?
 - **Cancellation**: how do we cancel in-flight refinements when a higher-level computation finishes or fails?
