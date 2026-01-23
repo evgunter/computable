@@ -46,6 +46,7 @@ Current direction:
 ### C) Dedicated update aggregation thread per composition
 - Each composition has a manager that subscribes to children and serializes recomputation.
 - The manager is a dedicated task/thread that owns the parent recomputation loop and aggregates child updates into a single recompute path.
+- **Difference from the main approach**: in the main approach, each parent recomputes in the same execution context that receives child signals (no dedicated manager thread). In this alternative, recomputation is centralized into one manager per composition, which can simplify scheduling and batching at the cost of extra threads and less parallel parent recomputation.
 - Parents never recompute in parallel; allows batching but adds thread overhead.
 
 ## extensions to evaluate later
@@ -58,6 +59,7 @@ Please confirm the decisions above, especially the approach to preventing leaf r
 ## detailed plan (draft)
 1) **Initialization**
    - Build the computation graph (parents/children) and allocate per-parent bounded channels.
+   - Each child stores a list of parent senders in its node state so refinements can publish updates.
    - Wrap each computable's bounds in an `RwLock`.
    - Register each parent's receiver with `select!` to wait for child updates.
 2) **Refinement kickoff**
