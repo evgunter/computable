@@ -32,7 +32,8 @@ This ensures parents always see a consistent bounds snapshot without requiring v
 We need a mechanism to prevent leaf computable numbers from refining forever while they no longer improve the final result.
 
 Current direction:
-- **Top-down activation window**: parents activate children with a target epsilon (similar to `refine_to`), children refine while publishing intermediate updates, and then stop once they hit epsilon or are explicitly deactivated. Parents can reactivate if higher precision is needed.
+- **Top-down activation with epsilon scaling**: parents activate children with a target epsilon (similar to `refine_to`), children refine while publishing intermediate updates, and then stop once they hit epsilon or are explicitly deactivated. Parents can reactivate if higher precision is needed.
+  - For binary combination nodes (current assumption), pass down a smaller epsilon to each child (e.g., `epsilon / 16`) so faster children can keep contributing meaningful improvements while slower ones catch up, instead of splitting evenly (`epsilon / 2`).
 
 ## questions to resolve
 - **Activation granularity**: do parents activate children based on absolute epsilon, relative epsilon, or a mix?
@@ -53,6 +54,7 @@ Current direction:
 ## extensions to evaluate later
 - **Parent-side batching**: introduce short batching windows to reduce recomputation, and benchmark to confirm it helps.
 - **Priority-based scheduling**: explore a thread pool where refiners that improve global precision fastest get higher priority.
+- **Epsilon allocation strategy**: revisit how parents distribute epsilon to children; benchmark whether `epsilon / 16` (or other heuristics) yields better convergence behavior.
 
 ## next step
 Please confirm the decisions above, especially the approach to preventing leaf refiners from spinning. Once we pick a specific model, I can start implementing it.
@@ -65,7 +67,7 @@ Please confirm the decisions above, especially the approach to preventing leaf r
    - Register each parent's receiver with `select!` to wait for child updates.
 2) **Refinement kickoff**
    - Top-level `refine_to` (or equivalent) activates the root with a target epsilon.
-   - The root activates children with derived epsilons (current proposal: absolute epsilon passed downward).
+   - The root activates children with derived epsilons (current proposal: pass `epsilon / 16` to each child for binary combinators).
 3) **Refinement loop**
    - Each refiner:
      - refines its local state,
