@@ -42,6 +42,8 @@ Current direction:
 - **Parent-side batching**: introduce short batching windows to reduce recomputation, and benchmark to confirm it helps.
 - **Priority-based scheduling**: explore a thread pool where refiners that improve global precision fastest get higher priority.
 - **Epsilon allocation strategy**: revisit how parents distribute epsilon to children; benchmark whether `epsilon / 16` (or other heuristics) yields better convergence behavior.
+- **Activation granularity**: revisit whether parents should activate children based on absolute epsilon, relative epsilon, or a mix.
+- **Resource limits**: consider caps on per-refinement CPU time or iteration counts beyond existing `refine_to` limits.
 
 ## detailed plan (draft)
 1) **Initialization**
@@ -70,12 +72,10 @@ Current direction:
    - The root returns final bounds (or an error if irrecoverable conditions occur).
 
 ## questions to resolve
-- **Activation granularity**: do parents activate children based on absolute epsilon, relative epsilon, or a mix?
-- **Stopping conditions**: should we use a parent-to-child stop channel plus a child-to-parent completion signal (e.g., enum message) so parents can decide when to re-issue a narrower refinement?
-- **Fairness**: how do we prevent starvation if some children refine slowly or have stale update signals?
-- **Error handling**: how should recoverable/irrecoverable errors propagate to parents and terminate refinement?
-- **Cancellation**: how do we cancel in-flight refinements when a higher-level computation finishes or fails?
-- **Resource limits**: do we cap per-refinement CPU time or iteration counts beyond existing `refine_to` limits?
+- **Stopping conditions**: use a parent-to-child stop channel plus a child-to-parent completion signal (enum message) so parents can decide when to re-issue a narrower refinement.
+- **Fairness**: does the update coalescing risk starving slower children (e.g., fast-updating siblings repeatedly trigger recompute before slower children contribute), and if so do we need a policy to ensure occasional inclusion?
+- **Error handling**: should completion messages distinguish success/failure, or should parents read error state from the child bounds when they observe a completion?
+- **Cancellation**: use the stop channel.
 
 ## next step
 Please confirm the refinement control approach (epsilon scaling and stop signaling). Once those are settled, I can start implementing it.
