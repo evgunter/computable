@@ -38,14 +38,6 @@ Current direction:
   - **Refinement responsibility stays with the parent**: instead of globally storing the tightest epsilon on the child, the parent that needs extra precision should keep listening until the child finishes its current refinement run and then request a narrower refinement (to avoid conflicts if another parent with the tightest epsilon stops).
   - Consider sending a **completion signal** to parents when a child finishes its current refinement run. This can be done by changing the update message from `()` to an enum (e.g., `Update` vs `Done`), which also supports the stop-channel handshake.
 
-## alternative models to consider (before implementation)
-### Dedicated update aggregation thread per composition
-- Each composition has a manager that subscribes to children and serializes recomputation.
-- The manager is a dedicated task/thread that owns the parent recomputation loop and aggregates child updates into a single recompute path.
-- **Difference from the main approach**: in the main approach, each parent recomputes in the same execution context that receives child signals (no dedicated manager thread). In this alternative, recomputation is centralized into one manager per composition, which can simplify scheduling and batching at the cost of extra threads and less parallel parent recomputation.
-- Parents never recompute in parallel; allows batching but adds thread overhead.
-- Downside: introduces a top-level coordinator per composition, which breaks the “equal footing” feel of each level in the composition tree.
-
 ## extensions to evaluate later
 - **Parent-side batching**: introduce short batching windows to reduce recomputation, and benchmark to confirm it helps.
 - **Priority-based scheduling**: explore a thread pool where refiners that improve global precision fastest get higher priority.
