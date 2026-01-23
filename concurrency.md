@@ -28,21 +28,13 @@ Parents must not read bounds mid-update. A standard `RwLock` around each computa
 
 This ensures parents always see a consistent bounds snapshot without requiring versioned reads.
 
-## refiners: preventing leaf spinning
-We need a mechanism to prevent leaf computable numbers from refining forever while they no longer improve the final result.
+## refinement control (preventing leaf spinning)
+We need a mechanism to prevent leaf computables from refining forever while they no longer improve the final result.
 
 Current direction:
 - **Top-down activation with epsilon scaling**: parents activate children with a target epsilon (similar to `refine_to`), children refine while publishing intermediate updates, and then stop once they hit epsilon or are explicitly deactivated. Parents can reactivate if higher precision is needed.
   - For binary combination nodes (current assumption), pass down a smaller epsilon to each child (e.g., `epsilon / 16`) so faster children can keep contributing meaningful improvements while slower ones catch up, instead of splitting evenly (`epsilon / 2`).
   - Consider a **parent-to-child stop channel**: when a parent reaches its target precision, it sends a stop signal to all children. Children check this channel each refinement loop (e.g., right after publishing an update) and halt promptly when a stop is observed.
-
-## questions to resolve
-- **Activation granularity**: do parents activate children based on absolute epsilon, relative epsilon, or a mix?
-- **Stopping conditions**: should we use a parent-to-child stop channel so children can exit promptly without races?
-- **Fairness**: how do we prevent starvation if some children refine slowly or have stale update signals?
-- **Error handling**: how should recoverable/irrecoverable errors propagate to parents and terminate refinement?
-- **Cancellation**: how do we cancel in-flight refinements when a higher-level computation finishes or fails?
-- **Resource limits**: do we cap per-refinement CPU time or iteration counts beyond existing `refine_to` limits?
 
 ## alternative models to consider (before implementation)
 ### Dedicated update aggregation thread per composition
@@ -56,9 +48,6 @@ Current direction:
 - **Parent-side batching**: introduce short batching windows to reduce recomputation, and benchmark to confirm it helps.
 - **Priority-based scheduling**: explore a thread pool where refiners that improve global precision fastest get higher priority.
 - **Epsilon allocation strategy**: revisit how parents distribute epsilon to children; benchmark whether `epsilon / 16` (or other heuristics) yields better convergence behavior.
-
-## next step
-Please confirm the decisions above, especially the approach to preventing leaf refiners from spinning. Once we pick a specific model, I can start implementing it.
 
 ## detailed plan (draft)
 1) **Initialization**
@@ -85,3 +74,14 @@ Please confirm the decisions above, especially the approach to preventing leaf r
 5) **Conclusion**
    - Children stop refining once deactivated or when their local epsilon is met; if using a stop channel, children check it each loop and exit promptly.
    - The root returns final bounds (or an error if irrecoverable conditions occur).
+
+## questions to resolve
+- **Activation granularity**: do parents activate children based on absolute epsilon, relative epsilon, or a mix?
+- **Stopping conditions**: should we use a parent-to-child stop channel so children can exit promptly without races?
+- **Fairness**: how do we prevent starvation if some children refine slowly or have stale update signals?
+- **Error handling**: how should recoverable/irrecoverable errors propagate to parents and terminate refinement?
+- **Cancellation**: how do we cancel in-flight refinements when a higher-level computation finishes or fails?
+- **Resource limits**: do we cap per-refinement CPU time or iteration counts beyond existing `refine_to` limits?
+
+## next step
+Please confirm the refinement control approach (epsilon scaling and stop signaling). Once those are settled, I can start implementing it.
