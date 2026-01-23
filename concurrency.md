@@ -11,7 +11,7 @@
 Each computable publishes updates to its parents via **per-parent capacity-1 channels** using `crossbeam_channel`.
 
 - For each parent edge, the child holds a sender to a capacity-1 channel.
-- The signal payload is `()` for now; it should be straightforward to evolve later if we need metadata.
+- The signal payload is currently an enum (e.g., `Update` vs `Done`) so parents can distinguish intermediate updates from completion; it should be straightforward to evolve later if we need more metadata.
 - When the child updates its bounds, it **non-blockingly** sends a "bounds updated" signal to each parent.
   - If the send fails because the channel is full, **the child continues without retrying**, since the parent has already been told that an update is available.
 - The parent listens to all children channels. When it receives at least one signal, it:
