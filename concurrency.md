@@ -11,7 +11,7 @@
 Each computable publishes updates to its parents via **per-parent capacity-1 channels** using `crossbeam_channel`.
 
 - For each parent edge, the child holds a sender to a capacity-1 channel.
-- The signal payload is currently an enum (e.g., `Update` vs `Done`) so parents can distinguish intermediate updates from completion.
+- The signal payload is an enum (e.g., `Update` vs `Done`) so parents can distinguish intermediate updates from completion.
 - When the child updates its bounds, it **non-blockingly** sends a "bounds updated" signal to each parent.
   - If the send fails because the channel is full, **the child continues without retrying**, since the parent has already been told that an update is available.
 - The parent listens to all children channels. When it receives at least one signal, it:
@@ -36,7 +36,8 @@ Current direction:
   - For binary combination nodes (current assumption), pass down a smaller epsilon to each child (e.g., `epsilon / 16`) so faster children can keep contributing meaningful improvements while slower ones catch up, instead of splitting evenly (`epsilon / 2`).
   - **Parent-to-child stop channel**: when a parent reaches its target precision, it sends a stop signal to all children. Children check this channel each refinement loop (e.g., right after publishing an update) and halt promptly when a stop is observed.
   - **Refinement responsibility stays with the parent**: instead of globally storing the tightest epsilon on the child, the parent that needs extra precision should keep listening until the child finishes its current refinement run and then request a narrower refinement (to avoid conflicts if another parent with the tightest epsilon stops).
-  - Consider sending a **completion signal** to parents when a child finishes its current refinement run. This can be done by changing the update message from `()` to an enum (e.g., `Update` vs `Done`), which also supports the stop-channel handshake.
+  - Children send a **completion signal** to parents when they finish a refinement run. This is captured in the update enum (`Update` vs `Done`) and supports the stop-channel handshake.
+  - **Error handling**: parents read error state from child bounds when they observe a completion.
 
 ## extensions to evaluate later
 - **Parent-side batching**: introduce short batching windows to reduce recomputation, and benchmark to confirm it helps.
@@ -58,24 +59,23 @@ Current direction:
    - Each refiner:
      - refines its local state,
      - updates bounds under a write lock,
-     - attempts a non-blocking send on each parent channel.
+     - attempts a non-blocking send on each parent channel with an `Update` message.
+     - checks the stop channel after publishing and exits promptly if a stop is observed.
    - Each parent:
      - waits for at least one child signal,
      - drains all inbound signals,
      - reads child bounds under shared locks,
      - recomputes its own bounds and publishes if changed.
+     - if it observes a `Done` from a child, it may choose to request a narrower refinement from that child if needed.
 4) **Convergence detection**
    - The root checks whether bounds width meets epsilon.
-   - If met, it signals cancellation/deactivation to children (candidate: a parent-to-child stop channel).
+   - If met, it signals cancellation/deactivation to children via the stop channel.
 5) **Conclusion**
-   - Children stop refining once deactivated or when their local epsilon is met; if using a stop channel, children check it each loop and exit promptly.
+   - Children stop refining once deactivated or when their local epsilon is met, emitting a `Done` signal to parents.
    - The root returns final bounds (or an error if irrecoverable conditions occur).
 
 ## questions to resolve
-- **Stopping conditions**: use a parent-to-child stop channel plus a child-to-parent completion signal (enum message) so parents can decide when to re-issue a narrower refinement.
-- **Fairness**: does the update coalescing risk starving slower children (e.g., fast-updating siblings repeatedly trigger recompute before slower children contribute), and if so do we need a policy to ensure occasional inclusion?
-- **Error handling**: should completion messages distinguish success/failure, or should parents read error state from the child bounds when they observe a completion?
-- **Cancellation**: use the stop channel.
+No open questions at the moment. Remaining uncertainties are tracked in **extensions to evaluate later**.
 
 ## next step
 Please confirm the refinement control approach (epsilon scaling and stop signaling). Once those are settled, I can start implementing it.
