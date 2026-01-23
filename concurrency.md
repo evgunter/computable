@@ -43,11 +43,12 @@ Current direction:
 - **Resource limits**: do we cap per-refinement CPU time or iteration counts beyond existing `refine_to` limits?
 
 ## alternative models to consider (before implementation)
-### C) Dedicated update aggregation thread per composition
+### Dedicated update aggregation thread per composition
 - Each composition has a manager that subscribes to children and serializes recomputation.
 - The manager is a dedicated task/thread that owns the parent recomputation loop and aggregates child updates into a single recompute path.
 - **Difference from the main approach**: in the main approach, each parent recomputes in the same execution context that receives child signals (no dedicated manager thread). In this alternative, recomputation is centralized into one manager per composition, which can simplify scheduling and batching at the cost of extra threads and less parallel parent recomputation.
 - Parents never recompute in parallel; allows batching but adds thread overhead.
+- Downside: introduces a top-level coordinator per composition, which breaks the “equal footing” feel of each level in the composition tree.
 
 ## extensions to evaluate later
 - **Parent-side batching**: introduce short batching windows to reduce recomputation, and benchmark to confirm it helps.
