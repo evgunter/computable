@@ -22,7 +22,7 @@ Each computable publishes updates to its parents via **per-parent capacity-1 cha
 This provides a coalescing behavior: multiple updates from the same child are collapsed into a single recomputation at the parent.
 
 ## bounds consistency: locking
-Parents must not read bounds mid-update. A standard `RwLock` around each computable's bounds should be sufficient:
+Parents must not read bounds mid-update. A standard `RwLock` around each computable's bounds should be sufficient (storing `Result<Bounds, RefinementError>` so parents can read error state on completion):
 - writers take an exclusive lock during refinement updates,
 - parents read under a shared lock when recomputing.
 
@@ -33,7 +33,7 @@ We need a mechanism to prevent leaf computables from refining forever while they
 
 Current direction:
 - **Top-down activation with epsilon scaling**: parents activate children with a target epsilon (similar to `refine_to`), children refine while publishing intermediate updates, and then stop once they hit epsilon or are explicitly deactivated. Parents can reactivate if higher precision is needed.
-  - For binary combination nodes (current assumption), pass down a smaller epsilon to each child (e.g., `epsilon / 16`) so faster children can keep contributing meaningful improvements while slower ones catch up, instead of splitting evenly (`epsilon / 2`).
+  - For binary combination nodes (current assumption), pass down a smaller epsilon to each child (e.g., `epsilon / EPSILON_SPLIT_FACTOR`) so faster children can keep contributing meaningful improvements while slower ones catch up, instead of splitting evenly (`epsilon / 2`). Define `EPSILON_SPLIT_FACTOR` as a named constant (currently `16`).
   - **Parent-to-child stop channel**: when a parent reaches its target precision, it sends a stop signal to all children. Children check this channel each refinement loop (e.g., right after publishing an update) and halt promptly when a stop is observed.
   - **Refinement responsibility stays with the parent**: instead of globally storing the tightest epsilon on the child, the parent that needs extra precision should keep listening until the child finishes its current refinement run and then request a narrower refinement (to avoid conflicts if another parent with the tightest epsilon stops).
   - Children send a **completion signal** to parents when they finish a refinement run. This is captured in the update enum (`Update` vs `Done`) and supports the stop-channel handshake.
@@ -54,7 +54,7 @@ Current direction:
    - Register each parent's receiver with `select!` to wait for child updates.
 2) **Refinement kickoff**
    - Top-level `refine_to` (or equivalent) activates the root with a target epsilon.
-   - The root activates children with derived epsilons (current proposal: pass `epsilon / 16` to each child for binary combinators).
+   - The root activates children with derived epsilons (current proposal: pass `epsilon / EPSILON_SPLIT_FACTOR` to each child for binary combinators).
 3) **Refinement loop**
    - Each refiner:
      - refines its local state,
@@ -68,14 +68,8 @@ Current direction:
      - recomputes its own bounds and publishes if changed.
      - if it observes a `Done` from a child, it may choose to request a narrower refinement from that child if needed.
 4) **Convergence detection**
-   - The root checks whether bounds width meets epsilon.
+   - Each node checks whether its bounds width meets its target epsilon.
    - If met, it signals cancellation/deactivation to children via the stop channel.
 5) **Conclusion**
-   - Children stop refining once deactivated or when their local epsilon is met, emitting a `Done` signal to parents.
+   - Children stop refining once deactivated, when their local epsilon is met, or when they hit an error, emitting a `Done` signal to parents.
    - The root returns final bounds (or an error if irrecoverable conditions occur).
-
-## questions to resolve
-No open questions at the moment. Remaining uncertainties are tracked in **extensions to evaluate later**.
-
-## next step
-Please confirm the refinement control approach (epsilon scaling and stop signaling). Once those are settled, I can start implementing it.
