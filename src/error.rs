@@ -66,6 +66,12 @@ pub enum ComputableError {
     DomainError,
     /// Input bounds are infinite where finite bounds are required.
     InfiniteBounds,
+    /// A self-referential computation was detected (would cause deadlock).
+    ///
+    /// This occurs when a thread tries to access a blackholed value that it is
+    /// currently computing. This indicates a bug in the computation graph where
+    /// a node depends on itself.
+    SelfReferentialComputation,
 }
 
 impl fmt::Display for ComputableError {
@@ -86,6 +92,10 @@ impl fmt::Display for ComputableError {
             Self::InfiniteBounds => write!(
                 f,
                 "input bounds are infinite where finite bounds are required"
+            ),
+            Self::SelfReferentialComputation => write!(
+                f,
+                "self-referential computation detected (would cause deadlock)"
             ),
         }
     }
