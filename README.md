@@ -69,7 +69,7 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$
 - the current value of the expression is computed
     - step inside the $\sqrt{}$
         - consider both sides of the addition in parallel
-            - left branch: get the current bounds on $a$. suppose these are $(-1, 0.5)$
+            - left branch: get the current bounds on $a$ (if not yet computed, blackholing ensures only one thread computes while others wait). suppose these are $(-1, 0.5)$
             - right branch
                 - consider both sides of the multiplication in parallel
                     - get the current bounds on $a$: $(-1, 0.5)$
