@@ -42,9 +42,19 @@ sadly, the implementation cannot exactly realize the formalism.
 - no recomputation: if the same computable number is used multiple times in an expression, when that expression is refined, the refinement of the computable number is shared between all instances
 - hiding internal state: although the computable number will mutate its state $x$ on refinement, the users of the computable number can't see the state directly. they may only perceive it indirectly via time required to return (if long, the state must not have been refined much yet) and returned precision (if in excess of requested, the computable number was probably already refined to a greater precision than requested).
 - parallelism: if an expression being refined has multiple components that need to be refined separately, those sub-refinements run in parallel.
+- blackholing: bounds computation uses a GHC-inspired "blackholing" mechanism for concurrent lazy evaluation. when a thread starts computing bounds for a node, the node is marked as "being evaluated" (blackholed). other threads that try to get the same bounds will wait rather than duplicate work. this prevents redundant computation in concurrent scenarios while maintaining correct semantics for lazy evaluation.
 
 ## threading model
 the implementation spawns one thread per refiner node (base computable numbers and `inv` operations) using `std::thread::scope`. there is no thread pool or work-stealing; threads are created per refinement call and cleaned up when refinement completes. this may need to be modified to improve performance.
+
+### blackholing for bounds computation
+bounds caching in nodes uses a synchronization pattern inspired by GHC's runtime system for Haskell thunks. each node has a "blackhole" that tracks the state of its bounds computation:
+- **NotEvaluated**: bounds have never been computed
+- **BeingEvaluated**: a thread is currently computing the bounds (the "blackhole" state)
+- **Evaluated**: bounds have been computed and cached
+- **Failed**: computation failed with an error
+
+when multiple threads try to get bounds from the same node concurrently, only one thread performs the computation while others wait on a condition variable. this uses `parking_lot` primitives for efficient synchronization.
 
 ## design
 - i use the term 'composition' to refer to a computable number which contains multiple base computable numbers. for example, $\sqrt{a + ab}$ is a composition. $a + a$ is also considered a composition even though the constituent computable numbers are identical. (however, $2a$ is not a composition; it has only a single constituent to refine.)
