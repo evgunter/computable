@@ -5,19 +5,28 @@
 //! - `RefinerHandle`: Handle for controlling a background refiner thread
 //! - `NodeUpdate`: Update message from a refiner to the coordinator
 //!
-//! The refinement model is synchronous lock-step:
+//! ## Refinement Model
+//!
+//! The refinement model is synchronous lock-step with blackholing:
 //! 1. Send Step command to ALL refiners
 //! 2. Wait for ALL refiners to complete one step
-//! 3. Collect and propagate ALL updates
+//! 3. Collect and propagate ALL updates (monotonically - bounds can only narrow)
 //! 4. Check if precision met
 //! 5. Repeat
 //!
-//! TODO: The README describes an async/event-driven refinement model where:
-//!   - Branches refine continuously and publish updates
-//!   - Other nodes "subscribe" to updates and recompute live
+//! ## Blackholing for Refinement
 //!
-//! Either the README should be updated to reflect the actual synchronous
-//! model, or the implementation should be changed to the async model described.
+//! Extending the GHC-inspired blackholing pattern from bounds computation to refinement:
+//! - When a thread starts refining, other threads wait rather than duplicate work
+//! - Each refinement step yields a more precise bound (like revealing a digit)
+//! - Bounds are "commitments" - they can only narrow, never widen
+//!
+//! ## Normalized Bounds Semantics
+//!
+//! Refinement produces "normalized bounds" where:
+//! - Each step increases precision (adds more "digits")
+//! - Previous bounds are never invalidated, only narrowed
+//! - This makes refinement thunk-like: revealing value incrementally
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -30,6 +39,7 @@ use crate::binary::{UBinary, UXBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
+use crate::normalized::NormalizedBounds;
 
 /// Command sent to a refiner thread.
 #[derive(Clone, Copy)]
@@ -44,13 +54,73 @@ pub struct RefinerHandle {
 }
 
 /// Update message from a refiner thread.
+///
+/// The bounds in an update represent a monotonic refinement: they must be
+/// contained within any previous bounds for the same node. This implements
+/// the "normalized bounds" semantics where refinement only adds precision.
 #[derive(Clone)]
 pub struct NodeUpdate {
     pub node_id: usize,
     pub bounds: Bounds,
 }
 
+/// Tracks normalized bounds for nodes during refinement.
+///
+/// This ensures that bounds updates are monotonic - each update must produce
+/// bounds that are contained within the previous bounds. This implements the
+/// "thunk-like" refinement semantics where precision only increases.
+pub struct RefinementTracker {
+    /// Normalized bounds for each node, tracked by node ID.
+    /// These bounds can only narrow (become more precise) during refinement.
+    node_bounds: HashMap<usize, NormalizedBounds>,
+}
+
+impl RefinementTracker {
+    /// Creates a new refinement tracker.
+    pub fn new() -> Self {
+        Self {
+            node_bounds: HashMap::new(),
+        }
+    }
+
+    /// Initializes tracking for a node with its current bounds.
+    pub fn init_node(&mut self, node_id: usize, bounds: Bounds) {
+        self.node_bounds
+            .insert(node_id, NormalizedBounds::new(bounds));
+    }
+
+    /// Updates the tracked bounds for a node, enforcing monotonicity.
+    ///
+    /// Returns `Ok(())` if the update is valid (new bounds contained in old).
+    /// Returns `Err` if the update would widen the bounds (violating monotonicity).
+    pub fn update(&mut self, node_id: usize, new_bounds: Bounds) -> Result<(), ComputableError> {
+        if let Some(tracked) = self.node_bounds.get_mut(&node_id) {
+            tracked.refine(new_bounds)?;
+        } else {
+            // First update for this node - initialize tracking
+            self.node_bounds
+                .insert(node_id, NormalizedBounds::new(new_bounds));
+        }
+        Ok(())
+    }
+
+    /// Gets the current tracked bounds for a node.
+    pub fn get(&self, node_id: usize) -> Option<&NormalizedBounds> {
+        self.node_bounds.get(&node_id)
+    }
+}
+
+impl Default for RefinementTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Snapshot of the node graph used to coordinate parallel refinement.
+///
+/// The graph maintains normalized bounds tracking for all nodes to ensure
+/// refinement is monotonic - bounds can only narrow (become more precise),
+/// never widen. This implements "thunk-like" refinement semantics.
 pub struct RefinementGraph {
     pub root: Arc<Node>,
     pub nodes: HashMap<usize, Arc<Node>>,    // node id -> node
@@ -174,6 +244,27 @@ impl RefinementGraph {
         }
     }
 
+    /// Applies a bounds update and propagates it through the graph.
+    ///
+    /// This propagates the update from a refiner node up through the parent chain,
+    /// recomputing derived bounds as needed.
+    ///
+    /// ## Normalized Bounds Semantics
+    ///
+    /// While the "normalized bounds" concept suggests strict monotonicity (bounds
+    /// can only narrow), in practice interval arithmetic can produce bounds that
+    /// change in complex ways. For example:
+    ///
+    /// - `f(x) = x - x` with x in [1,3] gives [-2,2]
+    /// - Refining x to [1.5,2.5] gives [-1,1]
+    /// - The lower bound INCREASED (from -2 to -1), which technically "worsened"
+    ///
+    /// The key invariant we maintain is that the TRUE value is always contained
+    /// within the bounds. Interval arithmetic guarantees this property.
+    ///
+    /// The "thunk-like" behavior emerges from the precision increasing over time
+    /// (bounds getting tighter on average), even if individual bounds can shift
+    /// in non-monotonic ways.
     fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {

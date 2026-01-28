@@ -58,6 +58,7 @@ mod ordered_pair;
 mod computable;
 mod error;
 mod node;
+mod normalized;
 mod ops;
 mod refinement;
 

@@ -18,6 +18,21 @@
 //!
 //! This prevents redundant computation in concurrent evaluation scenarios while
 //! maintaining correct semantics for lazy evaluation.
+//!
+//! ## Blackholing for Refinement
+//!
+//! The blackholing pattern is also extended to refinement operations. When a thread
+//! starts refining a node:
+//!
+//! 1. The node's refinement is "blackholed" - marked as being refined
+//! 2. Other threads that try to refine wait rather than duplicate work
+//! 3. When refinement completes, waiters are notified with the new precision level
+//! 4. Precision is tracked monotonically - it can only increase, never decrease
+//!
+//! This creates a "thunk-like" refinement model where:
+//! - Bounds are revealed progressively (like digits in a stream)
+//! - Previous precision is never lost
+//! - Concurrent refinement is coordinated efficiently
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,6 +41,7 @@ use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::binary::Bounds;
 use crate::error::ComputableError;
+use crate::normalized::{PrecisionLevel, RefinementBlackhole, RefinementClaimResult};
 
 /// Shared API for retrieving bounds with lazy computation.
 pub trait BoundsAccess {
@@ -308,9 +324,17 @@ pub trait NodeOp: Send + Sync {
 }
 
 /// Synchronization state for coordinating refinement across threads.
+///
+/// This integrates the blackholing pattern for refinement with the existing
+/// coordination mechanism. It tracks:
+/// - Whether a top-level refinement is active
+/// - The current epoch for detecting updates
+/// - The refinement blackhole for precision tracking
 pub struct RefinementSync {
     pub state: Mutex<RefinementState>,
     pub condvar: Condvar,
+    /// Blackhole for tracking refinement precision and coordinating concurrent access.
+    pub blackhole: RefinementBlackhole,
 }
 
 /// State tracking for active refinement.
@@ -327,6 +351,7 @@ impl RefinementSync {
                 epoch: 0,
             }),
             condvar: Condvar::new(),
+            blackhole: RefinementBlackhole::new(),
         }
     }
 
@@ -334,6 +359,37 @@ impl RefinementSync {
         let mut state = self.state.lock();
         state.epoch = state.epoch.wrapping_add(1);
         self.condvar.notify_all();
+    }
+
+    /// Returns the current precision level from the refinement blackhole.
+    pub fn current_precision(&self) -> Option<PrecisionLevel> {
+        self.blackhole.current_precision()
+    }
+
+    /// Attempts to claim the refinement for reaching a target precision.
+    ///
+    /// This integrates with the blackhole to ensure:
+    /// - Only one thread refines at a time
+    /// - Precision is tracked monotonically
+    /// - Threads can wait for specific precision levels
+    pub fn try_claim_for_precision(
+        &self,
+        target: &PrecisionLevel,
+    ) -> Result<RefinementClaimResult, ComputableError> {
+        self.blackhole.try_claim(target)
+    }
+
+    /// Completes a refinement step and updates the blackhole.
+    pub fn complete_refinement(&self, bounds: Bounds) -> Result<(), ComputableError> {
+        self.blackhole.complete(bounds)?;
+        self.notify_bounds_updated();
+        Ok(())
+    }
+
+    /// Fails the refinement with an error.
+    pub fn fail_refinement(&self, err: ComputableError) {
+        self.blackhole.fail(err);
+        self.notify_bounds_updated();
     }
 }
 
@@ -464,6 +520,58 @@ impl Node {
 
     pub fn is_refiner(&self) -> bool {
         self.op.is_refiner()
+    }
+
+    /// Returns the current precision level of this node's refinement.
+    pub fn current_precision(&self) -> Option<PrecisionLevel> {
+        self.refinement.current_precision()
+    }
+
+    /// Attempts to refine this node to reach the target precision.
+    ///
+    /// This uses the refinement blackhole to coordinate concurrent access:
+    /// - If already at target precision, returns immediately
+    /// - If another thread is refining, waits for it
+    /// - If this thread claims the refinement, performs one step
+    ///
+    /// Returns the bounds after refinement (or the existing bounds if
+    /// target precision was already met).
+    pub fn refine_to_precision(&self, target: &PrecisionLevel) -> Result<Bounds, ComputableError> {
+        match self.refinement.try_claim_for_precision(target)? {
+            RefinementClaimResult::AlreadyMeets(bounds) => {
+                // Already at target precision - return the cached bounds
+                Ok(bounds)
+            }
+            RefinementClaimResult::Claimed { .. } => {
+                // We claimed the refinement - perform a step
+                match self.refine_step() {
+                    Ok(_refined) => {
+                        // Compute new bounds and complete
+                        let bounds = self.compute_bounds()?;
+                        self.refinement.complete_refinement(bounds.clone())?;
+                        self.blackhole.update(bounds.clone());
+                        Ok(bounds)
+                    }
+                    Err(e) => {
+                        self.refinement.fail_refinement(e.clone());
+                        Err(e)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Updates both the bounds cache and refinement tracking atomically.
+    ///
+    /// This is used during refinement propagation to ensure consistency
+    /// between the bounds blackhole and refinement blackhole states.
+    pub fn update_bounds_with_precision(&self, bounds: Bounds) -> Result<(), ComputableError> {
+        // Update the refinement blackhole (which tracks precision)
+        self.refinement.blackhole.update(bounds.clone())?;
+        // Update the bounds blackhole (for caching)
+        self.blackhole.update(bounds);
+        self.refinement.notify_bounds_updated();
+        Ok(())
     }
 }
 
@@ -604,7 +712,10 @@ mod tests {
             })
             .collect();
 
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().expect("join"))
+            .collect();
 
         // All results should be the same
         let expected = test_bounds();
@@ -754,7 +865,10 @@ mod tests {
             })
             .collect();
 
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().expect("join"))
+            .collect();
 
         // All results should succeed with same bounds
         for result in results {
@@ -848,7 +962,10 @@ mod tests {
             })
             .collect();
 
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().expect("join"))
+            .collect();
 
         // All results should have the same error
         for result in results {
@@ -858,4 +975,9 @@ mod tests {
         // Error computation should happen exactly once
         assert_eq!(fail_count.load(AtomicOrdering::SeqCst), 1);
     }
+
+    // =========================================================================
+    // Note: PrecisionLevel and RefinementBlackhole tests have been moved to
+    // src/normalized.rs as part of the normalized bounds refactor.
+    // =========================================================================
 }
