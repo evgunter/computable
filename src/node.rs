@@ -52,12 +52,8 @@ pub trait BoundsAccess {
 // Blackhole - now imported from normalized.rs
 // ============================================================================
 //
-// The unified BoundsBlackhole in normalized.rs replaces the previous separate
-// Blackhole (for bounds caching) and RefinementBlackhole (for precision tracking).
-// See normalized.rs for the implementation.
-
-/// Re-export for backward compatibility with existing code.
-pub type Blackhole = BoundsBlackhole;
+// The unified BoundsBlackhole in normalized.rs handles both bounds caching
+// and precision tracking. See normalized.rs for the implementation.
 
 /// Type-erased base node so we can store heterogeneous leaf states in a single graph.
 /// This is also the hook for future user-defined base nodes.
@@ -264,6 +260,7 @@ impl Node {
     }
 
     /// Returns the current precision level of cached bounds.
+    #[allow(dead_code)] // Used in tests and reserved for future use
     pub fn current_precision(&self) -> Option<PrecisionLevel> {
         self.blackhole.current_precision()
     }
@@ -346,6 +343,7 @@ impl Node {
     /// * `max_iterations` - Maximum refinement steps to prevent infinite loops
     ///
     /// Returns the bounds after refinement reaches target precision.
+    #[allow(dead_code)] // Used in tests and reserved for future use
     pub fn refine_to_precision(
         &self,
         target: &PrecisionLevel,
@@ -403,7 +401,7 @@ mod tests {
     }
 
     // =========================================================================
-    // BoundsBlackhole Unit Tests (using Blackhole alias)
+    // BoundsBlackhole Unit Tests
     // =========================================================================
     // Note: The full BoundsBlackhole tests are in normalized.rs
     // These tests verify the integration with Node.

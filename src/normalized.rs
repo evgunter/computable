@@ -61,6 +61,7 @@ pub enum PrecisionLevel {
     Exact,
 }
 
+#[allow(dead_code)] // Complete API - some methods reserved for future use
 impl PrecisionLevel {
     pub fn zero() -> Self { PrecisionLevel::Zero }
     pub fn infinite() -> Self { PrecisionLevel::Zero }
@@ -157,6 +158,7 @@ pub enum ClaimResult {
     /// Target precision already met - return cached bounds.
     AlreadyMeets(Bounds),
     /// Claimed for computation/refinement - caller should compute.
+    #[allow(dead_code)] // Fields reserved for future use
     Claimed { current_bounds: Option<Bounds>, current_precision: PrecisionLevel },
 }
 
@@ -201,17 +203,6 @@ impl BoundsBlackhole {
             state: Mutex::new(BoundsBlackholeState::NotEvaluated),
             condvar: Condvar::new(),
             epoch: AtomicU64::new(0),
-        }
-    }
-
-    /// Creates a blackhole with pre-computed bounds (for constants).
-    #[cfg(test)]
-    pub fn with_value(bounds: Bounds) -> Self {
-        let precision = PrecisionLevel::from_width(bounds.width());
-        Self {
-            state: Mutex::new(BoundsBlackholeState::Evaluated { bounds, precision }),
-            condvar: Condvar::new(),
-            epoch: AtomicU64::new(1),
         }
     }
 
@@ -281,11 +272,13 @@ impl BoundsBlackhole {
     }
 
     /// Returns the epoch counter for quick change detection.
+    #[allow(dead_code)] // Reserved for future use
     pub fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::Acquire)
     }
 
     /// Returns the current precision level, if evaluated.
+    #[allow(dead_code)] // Used in tests and reserved for future use
     pub fn current_precision(&self) -> Option<PrecisionLevel> {
         let state = self.state.lock();
         match &*state {
@@ -318,21 +311,19 @@ impl Default for BoundsBlackhole {
     fn default() -> Self { Self::new() }
 }
 
-// Keep the old names as aliases for backward compatibility during transition
-pub type RefinementBlackhole = BoundsBlackhole;
-pub type RefinementBlackholeState = BoundsBlackholeState;
-pub type RefinementClaimResult = ClaimResult;
-
 // ============================================================================
 // NormalizedBounds
 // ============================================================================
 
 #[derive(Clone, Debug)]
 pub struct NormalizedBounds {
+    #[allow(dead_code)] // Used via bounds() accessor
     bounds: Bounds,
+    #[allow(dead_code)] // Used via precision() accessor
     precision: PrecisionLevel,
 }
 
+#[allow(dead_code)] // Complete API - some methods reserved for future use
 impl NormalizedBounds {
     pub fn new(bounds: Bounds) -> Self {
         let precision = PrecisionLevel::from_width(bounds.width());

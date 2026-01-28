@@ -89,7 +89,7 @@ impl Computable {
                 state_guard.active = true;
                 drop(state_guard);
 
-                let graph = RefinementGraph::new(Arc::clone(&self.node))?;
+                let mut graph = RefinementGraph::new(Arc::clone(&self.node))?;
                 let result = graph.refine_to::<MAX_REFINEMENT_ITERATIONS>(&epsilon);
 
                 let mut completion_guard = self.node.refinement.state.lock();
