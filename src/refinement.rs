@@ -336,6 +336,21 @@ fn spawn_refiner<'scope, 'env>(
     RefinerHandle { sender: command_tx }
 }
 
+/// The refiner loop for a single node.
+///
+/// This loop runs in a dedicated thread and processes refinement commands.
+/// Each `Step` command triggers one refinement iteration, which:
+/// 1. Calls `refine_step()` to perform the actual refinement
+/// 2. Computes the new bounds from the refined state
+/// 3. Updates the node's bounds through the precision-tracking mechanism
+/// 4. Sends the update back to the coordinator
+///
+/// ## Blackholing Integration
+///
+/// While this loop uses the simple `refine_step()` pattern, the bounds updates
+/// are tracked through the `RefinementBlackhole` mechanism. The coordinator
+/// (via `apply_update`) uses `update_bounds_with_precision` to maintain
+/// monotonic precision tracking across all nodes.
 fn refiner_loop(
     node: Arc<Node>,
     stop: Arc<StopFlag>,
@@ -346,8 +361,10 @@ fn refiner_loop(
         match commands.recv() {
             Ok(RefineCommand::Step) => match node.refine_step() {
                 Ok(true) => {
+                    // Refinement was applied - compute and track new bounds
                     let bounds = node.compute_bounds()?;
-                    node.set_bounds(bounds.clone());
+                    // Update through precision tracking mechanism
+                    node.update_bounds_with_precision(bounds.clone());
                     if updates
                         .send(Ok(NodeUpdate {
                             node_id: node.id,
@@ -359,6 +376,7 @@ fn refiner_loop(
                     }
                 }
                 Ok(false) => {
+                    // No refinement applied - return cached bounds
                     let bounds = node
                         .cached_bounds()
                         .ok_or(ComputableError::RefinementChannelClosed)?;
@@ -373,6 +391,7 @@ fn refiner_loop(
                     }
                 }
                 Err(error) => {
+                    // Refinement failed - propagate error
                     let _ = updates.send(Err(error));
                     break;
                 }
