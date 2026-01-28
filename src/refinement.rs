@@ -295,13 +295,13 @@ impl RefinementGraph {
     /// from the precision increasing over time (bounds getting tighter on average),
     /// even if individual bounds can shift in non-monotonic ways.
     ///
-    /// The `update_bounds_with_precision` method on each node updates both the
+    /// The `set_bounds` method on each node updates both the
     /// bounds cache and the precision tracking atomically.
     fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
             // Update the node's bounds through its refinement tracking
-            node.update_bounds_with_precision(update.bounds);
+            node.set_bounds(update.bounds);
             queue.push_back(node.id);
         }
 
@@ -317,7 +317,7 @@ impl RefinementGraph {
                 let next_bounds = parent.compute_bounds()?;
                 if parent.cached_bounds().as_ref() != Some(&next_bounds) {
                     // Update through the precision-tracking mechanism
-                    parent.update_bounds_with_precision(next_bounds);
+                    parent.set_bounds(next_bounds);
                     queue.push_back(*parent_id);
                 }
             }
@@ -356,7 +356,7 @@ fn spawn_refiner<'scope, 'env>(
 ///
 /// While this loop uses the simple `refine_step()` pattern, the bounds updates
 /// are tracked through the `RefinementBlackhole` mechanism. The coordinator
-/// (via `apply_update`) uses `update_bounds_with_precision` to maintain
+/// (via `apply_update`) uses `set_bounds` to maintain
 /// monotonic precision tracking across all nodes.
 fn refiner_loop(
     node: Arc<Node>,
@@ -371,7 +371,7 @@ fn refiner_loop(
                     // Refinement was applied - compute and track new bounds
                     let bounds = node.compute_bounds()?;
                     // Update through precision tracking mechanism
-                    node.update_bounds_with_precision(bounds.clone());
+                    node.set_bounds(bounds.clone());
                     if updates
                         .send(Ok(NodeUpdate {
                             node_id: node.id,

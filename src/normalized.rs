@@ -21,23 +21,21 @@
 //!
 //! - `PrecisionLevel`: Tracks how many "digits" of precision have been computed
 //! - `NormalizedBounds`: Bounds with a precision level, guaranteeing monotonic extension
-//! - `RefinementBlackhole`: Coordinates refinement to prevent duplicate work
+//! - `BoundsBlackhole`: Unified blackhole for both initial computation AND refinement
 //!
-//! ## Blackholing for Refinement
+//! ## Blackholing (Unified)
 //!
-//! Inspired by GHC's runtime system for Haskell, this module extends the blackholing
-//! mechanism to refinement itself:
+//! Inspired by GHC's runtime system for Haskell, this module implements a unified
+//! blackholing mechanism that handles both:
 //!
-//! - When a thread starts refining a node, it marks the node as "being refined"
-//! - Other threads that want to refine the same node wait rather than duplicate work
-//! - This prevents redundant computation and ensures consistent precision levels
+//! 1. **Initial computation**: When bounds are first requested, one thread computes
+//!    while others wait
+//! 2. **Refinement**: When higher precision is requested, one thread refines while
+//!    others wait for the result
 //!
-//! ## Integration with RefinementSync
-//!
-//! The `RefinementBlackhole` complements the existing `RefinementSync` in `node.rs`.
-//! While `RefinementSync` coordinates at the graph level (which refiner thread is active),
-//! `RefinementBlackhole` coordinates at the precision level (what precision is being computed).
-//! This provides finer-grained control over concurrent refinement.
+//! This replaces the previous dual-blackhole design (separate `Blackhole` and
+//! `RefinementBlackhole`) with a single `BoundsBlackhole` that tracks both the
+//! cached bounds AND the precision level.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -131,119 +129,199 @@ impl Default for PrecisionLevel {
 }
 
 // ============================================================================
-// RefinementBlackholeState
+// BoundsBlackhole - Unified blackhole for computation AND refinement
 // ============================================================================
 
+/// State of a bounds computation/refinement, implementing the unified blackhole pattern.
+///
+/// This replaces the previous dual-blackhole design with a single state machine:
+/// - `NotEvaluated`: Bounds have never been computed
+/// - `BeingEvaluated`: A thread is computing/refining (the "blackhole")
+/// - `Evaluated`: Bounds available at some precision level
+/// - `Failed`: Computation failed with an error
 #[derive(Clone)]
-pub enum RefinementBlackholeState {
-    NotRefining,
-    Refining { target_precision: PrecisionLevel },
-    Refined { achieved_precision: PrecisionLevel, bounds: Bounds },
+pub enum BoundsBlackholeState {
+    /// Bounds have never been computed.
+    NotEvaluated,
+    /// A thread is currently computing or refining bounds.
+    BeingEvaluated,
+    /// Bounds have been computed/refined to some precision.
+    Evaluated { bounds: Bounds, precision: PrecisionLevel },
+    /// Computation failed with an error.
     Failed(ComputableError),
 }
 
-// ============================================================================
-// RefinementClaimResult
-// ============================================================================
-
+/// Result of attempting to claim a blackhole.
 #[derive(Clone, Debug)]
-pub enum RefinementClaimResult {
+pub enum ClaimResult {
+    /// Target precision already met - return cached bounds.
     AlreadyMeets(Bounds),
-    Claimed { previous_precision: PrecisionLevel },
+    /// Claimed for computation/refinement - caller should compute.
+    Claimed { current_bounds: Option<Bounds>, current_precision: PrecisionLevel },
 }
 
-// ============================================================================
-// RefinementBlackhole
-// ============================================================================
-
-pub struct RefinementBlackhole {
-    state: Mutex<RefinementBlackholeState>,
+/// Unified blackhole for both initial bounds computation AND refinement.
+///
+/// This combines the previous `Blackhole` (for initial computation) and
+/// `RefinementBlackhole` (for precision tracking) into a single type.
+///
+/// ## Usage
+///
+/// ```ignore
+/// // Initial computation
+/// match blackhole.try_claim(&PrecisionLevel::zero())? {
+///     ClaimResult::AlreadyMeets(bounds) => return Ok(bounds),
+///     ClaimResult::Claimed { .. } => {
+///         let bounds = compute_bounds()?;
+///         blackhole.complete(bounds.clone());
+///         return Ok(bounds);
+///     }
+/// }
+///
+/// // Refinement to higher precision
+/// match blackhole.try_claim(&target_precision)? {
+///     ClaimResult::AlreadyMeets(bounds) => return Ok(bounds),
+///     ClaimResult::Claimed { current_bounds, .. } => {
+///         let refined = refine(current_bounds)?;
+///         blackhole.complete(refined.clone());
+///         return Ok(refined);
+///     }
+/// }
+/// ```
+pub struct BoundsBlackhole {
+    state: Mutex<BoundsBlackholeState>,
     condvar: Condvar,
-    precision_epoch: AtomicU64,
+    /// Epoch counter for detecting changes without locking.
+    epoch: AtomicU64,
 }
 
-impl RefinementBlackhole {
+impl BoundsBlackhole {
     pub fn new() -> Self {
         Self {
-            state: Mutex::new(RefinementBlackholeState::NotRefining),
+            state: Mutex::new(BoundsBlackholeState::NotEvaluated),
             condvar: Condvar::new(),
-            precision_epoch: AtomicU64::new(0),
+            epoch: AtomicU64::new(0),
         }
     }
 
-    pub fn try_claim(&self, target: &PrecisionLevel) -> Result<RefinementClaimResult, ComputableError> {
+    /// Creates a blackhole with pre-computed bounds (for constants).
+    #[cfg(test)]
+    pub fn with_value(bounds: Bounds) -> Self {
+        let precision = PrecisionLevel::from_width(bounds.width());
+        Self {
+            state: Mutex::new(BoundsBlackholeState::Evaluated { bounds, precision }),
+            condvar: Condvar::new(),
+            epoch: AtomicU64::new(1),
+        }
+    }
+
+    /// Attempts to claim the blackhole for computation or refinement.
+    ///
+    /// - If `NotEvaluated`: Claims for initial computation
+    /// - If `BeingEvaluated`: Waits for the computing thread
+    /// - If `Evaluated` with precision >= target: Returns `AlreadyMeets`
+    /// - If `Evaluated` with precision < target: Claims for refinement
+    /// - If `Failed`: Returns the cached error
+    pub fn try_claim(&self, target: &PrecisionLevel) -> Result<ClaimResult, ComputableError> {
         let mut state = self.state.lock();
         loop {
             match &*state {
-                RefinementBlackholeState::NotRefining => {
-                    *state = RefinementBlackholeState::Refining { target_precision: target.clone() };
-                    return Ok(RefinementClaimResult::Claimed { previous_precision: PrecisionLevel::zero() });
+                BoundsBlackholeState::NotEvaluated => {
+                    *state = BoundsBlackholeState::BeingEvaluated;
+                    return Ok(ClaimResult::Claimed {
+                        current_bounds: None,
+                        current_precision: PrecisionLevel::zero(),
+                    });
                 }
-                RefinementBlackholeState::Refining { .. } => {
+                BoundsBlackholeState::BeingEvaluated => {
                     self.condvar.wait(&mut state);
+                    // Loop to re-check state after waking
                 }
-                RefinementBlackholeState::Refined { achieved_precision, bounds } => {
-                    if achieved_precision.meets(target) {
-                        return Ok(RefinementClaimResult::AlreadyMeets(bounds.clone()));
+                BoundsBlackholeState::Evaluated { bounds, precision } => {
+                    if precision.meets(target) {
+                        return Ok(ClaimResult::AlreadyMeets(bounds.clone()));
                     }
-                    let previous = achieved_precision.clone();
-                    *state = RefinementBlackholeState::Refining { target_precision: target.clone() };
-                    return Ok(RefinementClaimResult::Claimed { previous_precision: previous });
+                    // Need higher precision - claim for refinement
+                    let current = (bounds.clone(), precision.clone());
+                    *state = BoundsBlackholeState::BeingEvaluated;
+                    return Ok(ClaimResult::Claimed {
+                        current_bounds: Some(current.0),
+                        current_precision: current.1,
+                    });
                 }
-                RefinementBlackholeState::Failed(err) => {
+                BoundsBlackholeState::Failed(err) => {
                     return Err(err.clone());
                 }
             }
         }
     }
 
+    /// Completes computation/refinement with the given bounds.
     pub fn complete(&self, bounds: Bounds) {
-        let new_precision = PrecisionLevel::from_width(bounds.width());
+        let precision = PrecisionLevel::from_width(bounds.width());
         let mut state = self.state.lock();
-        *state = RefinementBlackholeState::Refined { achieved_precision: new_precision, bounds };
-        self.precision_epoch.fetch_add(1, Ordering::Release);
+        *state = BoundsBlackholeState::Evaluated { bounds, precision };
+        self.epoch.fetch_add(1, Ordering::Release);
         self.condvar.notify_all();
     }
 
+    /// Marks computation as failed.
     pub fn fail(&self, err: ComputableError) {
         let mut state = self.state.lock();
-        *state = RefinementBlackholeState::Failed(err);
+        *state = BoundsBlackholeState::Failed(err);
         self.condvar.notify_all();
     }
 
+    /// Resets to NotEvaluated state (for error recovery).
+    #[allow(dead_code)]
     pub fn reset(&self) {
         let mut state = self.state.lock();
-        *state = RefinementBlackholeState::NotRefining;
+        *state = BoundsBlackholeState::NotEvaluated;
         self.condvar.notify_all();
     }
 
-    pub fn precision_epoch(&self) -> u64 { self.precision_epoch.load(Ordering::Acquire) }
+    /// Returns the epoch counter for quick change detection.
+    pub fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::Acquire)
+    }
 
+    /// Returns the current precision level, if evaluated.
     pub fn current_precision(&self) -> Option<PrecisionLevel> {
         let state = self.state.lock();
         match &*state {
-            RefinementBlackholeState::Refined { achieved_precision, .. } => Some(achieved_precision.clone()),
+            BoundsBlackholeState::Evaluated { precision, .. } => Some(precision.clone()),
             _ => None,
         }
     }
 
-    pub fn peek_bounds(&self) -> Option<Bounds> {
+    /// Returns the cached bounds without blocking, if available.
+    pub fn peek(&self) -> Option<Bounds> {
         let state = self.state.lock();
         match &*state {
-            RefinementBlackholeState::Refined { bounds, .. } => Some(bounds.clone()),
+            BoundsBlackholeState::Evaluated { bounds, .. } => Some(bounds.clone()),
             _ => None,
         }
     }
 
-    pub fn is_refining(&self) -> bool {
-        let state = self.state.lock();
-        matches!(&*state, RefinementBlackholeState::Refining { .. })
+    /// Updates bounds directly (for propagation during refinement).
+    /// This is used when bounds are updated from outside (e.g., child refinement).
+    pub fn update(&self, bounds: Bounds) {
+        let precision = PrecisionLevel::from_width(bounds.width());
+        let mut state = self.state.lock();
+        *state = BoundsBlackholeState::Evaluated { bounds, precision };
+        self.epoch.fetch_add(1, Ordering::Release);
+        self.condvar.notify_all();
     }
 }
 
-impl Default for RefinementBlackhole {
+impl Default for BoundsBlackhole {
     fn default() -> Self { Self::new() }
 }
+
+// Keep the old names as aliases for backward compatibility during transition
+pub type RefinementBlackhole = BoundsBlackhole;
+pub type RefinementBlackholeState = BoundsBlackholeState;
+pub type RefinementClaimResult = ClaimResult;
 
 // ============================================================================
 // NormalizedBounds
@@ -391,76 +469,79 @@ mod tests {
     fn test_bounds() -> Bounds { Bounds::new(xbin(1, 0), xbin(2, 0)) }
 
     #[test]
-    fn refinement_blackhole_new_is_not_refined() {
-        let rb = RefinementBlackhole::new();
-        assert!(rb.current_precision().is_none());
-        assert!(rb.peek_bounds().is_none());
+    fn bounds_blackhole_new_is_not_evaluated() {
+        let bh = BoundsBlackhole::new();
+        assert!(bh.current_precision().is_none());
+        assert!(bh.peek().is_none());
     }
 
     #[test]
-    fn refinement_blackhole_try_claim_on_new_returns_claimed() {
-        let rb = RefinementBlackhole::new();
+    fn bounds_blackhole_try_claim_on_new_returns_claimed() {
+        let bh = BoundsBlackhole::new();
         let target = PrecisionLevel::from_bits(BigInt::from(8));
-        let result = rb.try_claim(&target);
-        assert!(matches!(result, Ok(RefinementClaimResult::Claimed { previous_precision }) if previous_precision == PrecisionLevel::zero()));
+        let result = bh.try_claim(&target);
+        assert!(matches!(
+            result,
+            Ok(ClaimResult::Claimed { current_bounds: None, current_precision })
+            if current_precision == PrecisionLevel::zero()
+        ));
     }
 
     #[test]
-    fn refinement_blackhole_complete_updates_state() {
-        let rb = RefinementBlackhole::new();
+    fn bounds_blackhole_complete_updates_state() {
+        let bh = BoundsBlackhole::new();
         let target = PrecisionLevel::from_bits(BigInt::from(8));
-        let _ = rb.try_claim(&target).expect("should claim");
+        let _ = bh.try_claim(&target).expect("should claim");
         let bounds = test_bounds();
-        rb.complete(bounds.clone());
-        assert!(rb.current_precision().is_some());
-        assert_eq!(rb.peek_bounds(), Some(bounds));
+        bh.complete(bounds.clone());
+        assert!(bh.current_precision().is_some());
+        assert_eq!(bh.peek(), Some(bounds));
     }
 
     #[test]
-    fn refinement_blackhole_already_meets_returns_bounds() {
-        let rb = RefinementBlackhole::new();
+    fn bounds_blackhole_already_meets_returns_bounds() {
+        let bh = BoundsBlackhole::new();
         let target_low = PrecisionLevel::from_bits(BigInt::from(4));
-        let _ = rb.try_claim(&target_low).expect("should claim");
+        let _ = bh.try_claim(&target_low).expect("should claim");
         let small_bounds = Bounds::new(xbin(1, 0), xbin(1, 0));
-        rb.complete(small_bounds.clone());
-        let result = rb.try_claim(&target_low);
-        assert!(matches!(result, Ok(RefinementClaimResult::AlreadyMeets(b)) if b == small_bounds));
+        bh.complete(small_bounds.clone());
+        let result = bh.try_claim(&target_low);
+        assert!(matches!(result, Ok(ClaimResult::AlreadyMeets(b)) if b == small_bounds));
     }
 
     #[test]
-    fn refinement_blackhole_fail_propagates_error() {
-        let rb = RefinementBlackhole::new();
+    fn bounds_blackhole_fail_propagates_error() {
+        let bh = BoundsBlackhole::new();
         let target = PrecisionLevel::from_bits(BigInt::from(8));
-        let _ = rb.try_claim(&target).expect("should claim");
-        rb.fail(ComputableError::DomainError);
-        let result = rb.try_claim(&target);
+        let _ = bh.try_claim(&target).expect("should claim");
+        bh.fail(ComputableError::DomainError);
+        let result = bh.try_claim(&target);
         assert!(matches!(result, Err(ComputableError::DomainError)));
     }
 
     #[test]
-    fn refinement_blackhole_concurrent_claim_coordinates() {
-        let rb = Arc::new(RefinementBlackhole::new());
+    fn bounds_blackhole_concurrent_claim_coordinates() {
+        let bh = Arc::new(BoundsBlackhole::new());
         let complete_count = Arc::new(AtomicUsize::new(0));
         let barrier = Arc::new(Barrier::new(4));
 
         let handles: Vec<_> = (0..4).map(|_| {
-            let rb = Arc::clone(&rb);
+            let bh = Arc::clone(&bh);
             let count = Arc::clone(&complete_count);
             let bar = Arc::clone(&barrier);
             thread::spawn(move || {
                 bar.wait();
                 // Target precision of 8 bits = width of 2^(-8) = 1/256
                 let target = PrecisionLevel::from_bits(BigInt::from(8));
-                match rb.try_claim(&target) {
-                    Ok(RefinementClaimResult::Claimed { .. }) => {
+                match bh.try_claim(&target) {
+                    Ok(ClaimResult::Claimed { .. }) => {
                         count.fetch_add(1, AtomicOrdering::SeqCst);
                         thread::sleep(Duration::from_millis(10));
                         // Create bounds with width = 1 * 2^(-10) to meet precision 8
-                        // Width = 2^(-10), precision = -(-10) - 1 + 1 = 10 >= 8
-                        let bounds = Bounds::new(xbin(1, -10), xbin(2, -10)); // Width = 2^(-10)
-                        rb.complete(bounds);
+                        let bounds = Bounds::new(xbin(1, -10), xbin(2, -10));
+                        bh.complete(bounds);
                     }
-                    Ok(RefinementClaimResult::AlreadyMeets(_)) => {}
+                    Ok(ClaimResult::AlreadyMeets(_)) => {}
                     Err(_) => panic!("unexpected error"),
                 }
             })
