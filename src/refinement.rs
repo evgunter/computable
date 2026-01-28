@@ -121,6 +121,25 @@ impl Default for RefinementTracker {
 /// The graph maintains normalized bounds tracking for all nodes to ensure
 /// refinement is monotonic - bounds can only narrow (become more precise),
 /// never widen. This implements "thunk-like" refinement semantics.
+///
+/// ## Normalized Bounds Invariant
+///
+/// While interval arithmetic operations can produce bounds that shift in
+/// non-monotonic ways (e.g., `x - x` narrowing from [-2,2] to [-1,1] as x
+/// narrows from [1,3] to [1.5,2.5]), we maintain the following invariant:
+///
+/// **The precision level (as measured by bounds width) monotonically increases.**
+///
+/// This is enforced by the `RefinementTracker` which rejects updates that would
+/// widen the bounds. In practice, interval arithmetic rarely widens bounds, and
+/// when it does (due to edge effects), we simply skip that update.
+///
+/// ## Blackholing Integration
+///
+/// Each node has a `RefinementBlackhole` that coordinates concurrent refinement:
+/// - Only one thread refines a node at a time
+/// - Other threads wait rather than duplicate work
+/// - Precision is tracked and can only increase
 pub struct RefinementGraph {
     pub root: Arc<Node>,
     pub nodes: HashMap<usize, Arc<Node>>,    // node id -> node
@@ -262,13 +281,20 @@ impl RefinementGraph {
     /// The key invariant we maintain is that the TRUE value is always contained
     /// within the bounds. Interval arithmetic guarantees this property.
     ///
-    /// The "thunk-like" behavior emerges from the precision increasing over time
-    /// (bounds getting tighter on average), even if individual bounds can shift
-    /// in non-monotonic ways.
+    /// ## Blackholing Integration
+    ///
+    /// Each node's bounds are updated through its internal blackhole mechanism,
+    /// which tracks the precision level achieved. The "thunk-like" behavior emerges
+    /// from the precision increasing over time (bounds getting tighter on average),
+    /// even if individual bounds can shift in non-monotonic ways.
+    ///
+    /// The `update_bounds_with_precision` method on each node updates both the
+    /// bounds cache and the precision tracking atomically.
     fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
-            node.set_bounds(update.bounds);
+            // Update the node's bounds through its refinement tracking
+            node.update_bounds_with_precision(update.bounds);
             queue.push_back(node.id);
         }
 
@@ -283,7 +309,8 @@ impl RefinementGraph {
                     .ok_or(ComputableError::RefinementChannelClosed)?;
                 let next_bounds = parent.compute_bounds()?;
                 if parent.cached_bounds().as_ref() != Some(&next_bounds) {
-                    parent.set_bounds(next_bounds);
+                    // Update through the precision-tracking mechanism
+                    parent.update_bounds_with_precision(next_bounds);
                     queue.push_back(*parent_id);
                 }
             }
