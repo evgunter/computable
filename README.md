@@ -56,6 +56,23 @@ bounds caching in nodes uses a synchronization pattern inspired by GHC's runtime
 
 when multiple threads try to get bounds from the same node concurrently, only one thread performs the computation while others wait on a condition variable. this uses `parking_lot` primitives for efficient synchronization.
 
+### blackholing for refinement (thunk-like semantics)
+the blackholing pattern extends to refinement itself, making the refinement process more like Haskell's lazy evaluation where thunks reveal their values incrementally:
+
+- **precision tracking**: each node tracks its current precision level (measured in bits of accuracy). precision can only increase, never decrease—this is the "normalized bounds" invariant.
+- **monotonic narrowing**: bounds can only narrow (become more precise) during refinement. the `NormalizedBounds` type enforces this invariant: new bounds must be contained within the previous bounds.
+- **coordination**: when multiple threads want to refine the same node, the `RefinementBlackhole` coordinates access:
+  - if no refinement is in progress, the first thread claims the blackhole and performs refinement
+  - if another thread is refining, waiters block until refinement completes
+  - if the target precision is already met, the cached bounds are returned immediately
+
+this creates a "thunk-like" model for refinement:
+- bounds are revealed progressively, like digits in a stream
+- once a precision level is achieved, it's a commitment that can't be reverted
+- concurrent threads efficiently share refinement results rather than duplicating work
+
+see `src/normalized.rs` for the implementation of `PrecisionLevel`, `RefinementBlackhole`, and `NormalizedBounds`.
+
 ## design
 - i use the term 'composition' to refer to a computable number which contains multiple base computable numbers. for example, $\sqrt{a + ab}$ is a composition. $a + a$ is also considered a composition even though the constituent computable numbers are identical. (however, $2a$ is not a composition; it has only a single constituent to refine.)
 - compositions are structured as binary trees; each composition may have at most two children. (note that the same computable number can occur multiple times in a single expression, so it's logically a DAG, but it's still structured as a binary tree) <!-- it's possible that this binary tree requirement will need to be relaxed, but i'm going to start out assuming that it does not -->
