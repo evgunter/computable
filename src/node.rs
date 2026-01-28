@@ -380,10 +380,9 @@ impl RefinementSync {
     }
 
     /// Completes a refinement step and updates the blackhole.
-    pub fn complete_refinement(&self, bounds: Bounds) -> Result<(), ComputableError> {
-        self.blackhole.complete(bounds)?;
+    pub fn complete_refinement(&self, bounds: Bounds) {
+        self.blackhole.complete(bounds);
         self.notify_bounds_updated();
-        Ok(())
     }
 
     /// Fails the refinement with an error.
@@ -548,7 +547,7 @@ impl Node {
                     Ok(_refined) => {
                         // Compute new bounds and complete
                         let bounds = self.compute_bounds()?;
-                        self.refinement.complete_refinement(bounds.clone())?;
+                        self.refinement.complete_refinement(bounds.clone());
                         self.blackhole.update(bounds.clone());
                         Ok(bounds)
                     }
@@ -565,13 +564,12 @@ impl Node {
     ///
     /// This is used during refinement propagation to ensure consistency
     /// between the bounds blackhole and refinement blackhole states.
-    pub fn update_bounds_with_precision(&self, bounds: Bounds) -> Result<(), ComputableError> {
+    pub fn update_bounds_with_precision(&self, bounds: Bounds) {
         // Update the refinement blackhole (which tracks precision)
-        self.refinement.blackhole.update(bounds.clone())?;
+        self.refinement.blackhole.complete(bounds.clone());
         // Update the bounds blackhole (for caching)
         self.blackhole.update(bounds);
         self.refinement.notify_bounds_updated();
-        Ok(())
     }
 }
 
