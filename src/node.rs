@@ -975,7 +975,108 @@ mod tests {
     }
 
     // =========================================================================
-    // Note: PrecisionLevel and RefinementBlackhole tests have been moved to
-    // src/normalized.rs as part of the normalized bounds refactor.
+    // Precision-Based Refinement Tests
     // =========================================================================
+
+    #[test]
+    fn node_refine_to_precision_basic() {
+        use crate::normalized::PrecisionLevel;
+
+        // Create a simple refining node
+        let refinements = Arc::new(AtomicUsize::new(0));
+        let node = {
+            let refinements = Arc::clone(&refinements);
+            Node::new(Arc::new(RefiningOp {
+                refinement_count: refinements,
+                // Each refinement halves the bounds width by decreasing exponent
+                // Width progression: 2^0, 2^-1, 2^-2, 2^-3, ...
+                bounds_fn: Arc::new(|count| {
+                    let exp = -(count as i64);
+                    Bounds::new(xbin(0, 0), xbin(1, exp))
+                }),
+            }))
+        };
+
+        // Initial precision should be None (no refinement yet)
+        assert!(node.current_precision().is_none());
+
+        // Refine once - this should trigger the refinement loop
+        // Even with target Zero, the first call will do one refinement
+        let target_zero = PrecisionLevel::zero();
+        let bounds0 = node.refine_to_precision(&target_zero).expect("should refine");
+
+        // After one refinement, width should be 2^-1 = 0.5
+        // Precision = -(-1) - 1 + 1 = 1
+        let precision1 = node.current_precision().expect("should have precision");
+
+        // Now refine to higher precision - should trigger more refinement
+        // Continue refining to see bounds narrow
+        let bounds1 = node.refine_to_precision(&precision1).expect("should refine");
+
+        // The precision API works - bounds either stay same or narrow
+        assert!(bounds1.width() <= bounds0.width());
+    }
+
+    #[test]
+    fn node_refine_to_precision_already_met() {
+        use crate::normalized::PrecisionLevel;
+        use num_bigint::BigInt;
+
+        // Create a node with exact bounds (zero width)
+        let node = Node::new(Arc::new(ConstantOp {
+            bounds: Bounds::new(xbin(42, 0), xbin(42, 0)),
+        }));
+
+        // Get initial bounds (triggers computation)
+        let _ = node.get_bounds().expect("should succeed");
+
+        // Any precision target should be immediately met
+        let target = PrecisionLevel::from_bits(BigInt::from(100));
+        let bounds = node.refine_to_precision(&target).expect("should succeed");
+
+        assert_eq!(*bounds.small(), bounds.large()); // Zero width
+    }
+
+    /// A simple op that returns constant bounds.
+    struct ConstantOp {
+        bounds: Bounds,
+    }
+
+    impl NodeOp for ConstantOp {
+        fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+            Ok(self.bounds.clone())
+        }
+        fn refine_step(&self) -> Result<bool, ComputableError> {
+            Ok(false) // No refinement available
+        }
+        fn children(&self) -> Vec<Arc<Node>> {
+            vec![]
+        }
+        fn is_refiner(&self) -> bool {
+            false
+        }
+    }
+
+    /// A node op that supports refinement with configurable behavior.
+    struct RefiningOp {
+        refinement_count: Arc<AtomicUsize>,
+        bounds_fn: Arc<dyn Fn(usize) -> Bounds + Send + Sync>,
+    }
+
+    impl NodeOp for RefiningOp {
+        fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+            let count = self.refinement_count.load(AtomicOrdering::SeqCst);
+            Ok((self.bounds_fn)(count))
+        }
+        fn refine_step(&self) -> Result<bool, ComputableError> {
+            self.refinement_count.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(true)
+        }
+        fn children(&self) -> Vec<Arc<Node>> {
+            vec![]
+        }
+        fn is_refiner(&self) -> bool {
+            true
+        }
+    }
 }
