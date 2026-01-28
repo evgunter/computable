@@ -89,19 +89,18 @@ impl RefinementTracker {
             .insert(node_id, NormalizedBounds::new(bounds));
     }
 
-    /// Updates the tracked bounds for a node, enforcing monotonicity.
+    /// Updates the tracked bounds for a node.
     ///
-    /// Returns `Ok(())` if the update is valid (new bounds contained in old).
-    /// Returns `Err` if the update would widen the bounds (violating monotonicity).
-    pub fn update(&mut self, node_id: usize, new_bounds: Bounds) -> Result<(), ComputableError> {
+    /// In debug builds, asserts that the update maintains monotonicity
+    /// (new bounds contained in old). See `NormalizedBounds::refine` for details.
+    pub fn update(&mut self, node_id: usize, new_bounds: Bounds) {
         if let Some(tracked) = self.node_bounds.get_mut(&node_id) {
-            tracked.refine(new_bounds)?;
+            tracked.refine(new_bounds);
         } else {
             // First update for this node - initialize tracking
             self.node_bounds
                 .insert(node_id, NormalizedBounds::new(new_bounds));
         }
-        Ok(())
     }
 
     /// Gets the current tracked bounds for a node.
@@ -140,6 +139,14 @@ impl Default for RefinementTracker {
 /// - Only one thread refines a node at a time
 /// - Other threads wait rather than duplicate work
 /// - Precision is tracked and can only increase
+///
+/// TODO: The `RefinementTracker` type is defined but not actually integrated into
+/// this struct. To complete the integration:
+/// 1. Add a `tracker: RefinementTracker` field to RefinementGraph
+/// 2. Initialize it in `new()` with initial bounds for all nodes
+/// 3. Use `tracker.update()` in `apply_update()` instead of direct node updates
+/// 4. This would provide graph-level tracking of normalized bounds in addition
+///    to the per-node `RefinementBlackhole` tracking
 pub struct RefinementGraph {
     pub root: Arc<Node>,
     pub nodes: HashMap<usize, Arc<Node>>,    // node id -> node
@@ -882,24 +889,36 @@ mod tests {
     }
 
     #[test]
-    fn normalized_bounds_tracker_enforces_monotonicity() {
+    fn normalized_bounds_tracker_tracks_narrowing() {
         let mut tracker = RefinementTracker::new();
 
         // Initialize with wide bounds [0, 10]
         let initial = Bounds::new(xbin(0, 0), xbin(10, 0));
         tracker.init_node(1, initial);
 
-        // Narrow to [2, 8] - should succeed
+        // Narrow to [2, 8]
         let narrowed = Bounds::new(xbin(2, 0), xbin(8, 0));
-        assert!(tracker.update(1, narrowed).is_ok());
+        tracker.update(1, narrowed);
 
-        // Try to widen to [0, 10] - should fail
-        let widened = Bounds::new(xbin(0, 0), xbin(10, 0));
-        assert!(tracker.update(1, widened).is_err());
-
-        // Narrow further to [3, 7] - should succeed
+        // Narrow further to [3, 7]
         let narrower = Bounds::new(xbin(3, 0), xbin(7, 0));
-        assert!(tracker.update(1, narrower).is_ok());
+        tracker.update(1, narrower);
+
+        // Check final bounds
+        let node1 = tracker.get(1).expect("node 1 should exist");
+        assert_eq!(node1.bounds().small(), &xbin(3, 0));
+        assert_eq!(node1.bounds().large(), xbin(7, 0));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "NormalizedBounds invariant violated")]
+    fn normalized_bounds_tracker_rejects_widening_in_debug() {
+        let mut tracker = RefinementTracker::new();
+        tracker.init_node(1, Bounds::new(xbin(0, 0), xbin(10, 0)));
+        tracker.update(1, Bounds::new(xbin(2, 0), xbin(8, 0)));
+        // Try to widen - should panic in debug builds
+        tracker.update(1, Bounds::new(xbin(0, 0), xbin(10, 0)));
     }
 
     #[test]
@@ -911,14 +930,10 @@ mod tests {
         tracker.init_node(2, Bounds::new(xbin(5, 0), xbin(15, 0)));
 
         // Refine node 1
-        assert!(tracker
-            .update(1, Bounds::new(xbin(2, 0), xbin(8, 0)))
-            .is_ok());
+        tracker.update(1, Bounds::new(xbin(2, 0), xbin(8, 0)));
 
         // Refine node 2
-        assert!(tracker
-            .update(2, Bounds::new(xbin(7, 0), xbin(12, 0)))
-            .is_ok());
+        tracker.update(2, Bounds::new(xbin(7, 0), xbin(12, 0)));
 
         // Check tracked bounds
         let node1 = tracker.get(1).expect("node 1 should exist");

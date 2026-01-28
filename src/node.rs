@@ -420,6 +420,12 @@ impl Default for RefinementSync {
 /// Updates are explicitly propagated via apply_update during refinement. If get_bounds()
 /// is called between refinement steps (outside of refine_to), it may return stale cached
 /// values. Consider whether this is acceptable for your use case.
+///
+/// TODO: There is redundancy between `blackhole` (for bounds caching) and
+/// `refinement.blackhole` (for precision tracking). Both track bounds state with
+/// similar synchronization patterns. Consider unifying these into a single
+/// `BoundsBlackhole` that tracks both the cached bounds AND the precision level,
+/// eliminating the need for `update_bounds_with_precision()` to update both.
 pub struct Node {
     pub id: usize,
     pub op: Arc<dyn NodeOp>,
@@ -535,6 +541,12 @@ impl Node {
     ///
     /// Returns the bounds after refinement (or the existing bounds if
     /// target precision was already met).
+    ///
+    /// TODO: This currently only performs ONE refinement step, not a loop until
+    /// target precision is reached. This is incomplete - see `Computable::refine_to`
+    /// for the expected looping behavior. The fix requires either:
+    /// 1. Loop here until target precision is met (with max iterations guard)
+    /// 2. Or integrate with the existing RefinementGraph infrastructure
     pub fn refine_to_precision(&self, target: &PrecisionLevel) -> Result<Bounds, ComputableError> {
         match self.refinement.try_claim_for_precision(target)? {
             RefinementClaimResult::AlreadyMeets(bounds) => {

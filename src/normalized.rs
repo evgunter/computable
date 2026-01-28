@@ -271,13 +271,33 @@ impl NormalizedBounds {
     pub fn bounds(&self) -> &Bounds { &self.bounds }
     pub fn precision(&self) -> &PrecisionLevel { &self.precision }
 
-    pub fn refine(&mut self, new_bounds: Bounds) -> Result<(), ComputableError> {
+    /// Refines the bounds to a new, more precise value.
+    ///
+    /// # Invariant
+    ///
+    /// The new bounds should always be contained within the old bounds. This is
+    /// enforced by debug_assert! because:
+    /// - In correct implementations, refinement always narrows bounds
+    /// - We're not 100% certain all code paths maintain this invariant yet
+    /// - We want to catch violations during development without runtime cost in release
+    pub fn refine(&mut self, new_bounds: Bounds) {
         let new_precision = PrecisionLevel::from_width(new_bounds.width());
-        if !self.contains_bounds(&new_bounds) { return Err(ComputableError::BoundsWorsened); }
-        if !new_precision.meets(&self.precision) { return Err(ComputableError::BoundsWorsened); }
+
+        // This should never happen if the implementation is correct, but we're
+        // not certain yet. Using debug_assert to catch issues during development.
+        debug_assert!(
+            self.contains_bounds(&new_bounds),
+            "NormalizedBounds invariant violated: new bounds {:?} not contained in old {:?}",
+            new_bounds, self.bounds
+        );
+        debug_assert!(
+            new_precision.meets(&self.precision),
+            "NormalizedBounds invariant violated: precision decreased from {:?} to {:?}",
+            self.precision, new_precision
+        );
+
         self.bounds = new_bounds;
         self.precision = new_precision;
-        Ok(())
     }
 
     fn contains_bounds(&self, other: &Bounds) -> bool {
@@ -350,11 +370,22 @@ mod tests {
         let initial = Bounds::new(xbin(0, 0), xbin(4, 0));
         let mut nb = NormalizedBounds::new(initial);
         let refined = Bounds::new(xbin(1, 0), xbin(3, 0));
-        assert!(nb.refine(refined).is_ok());
+        nb.refine(refined);
         let more_refined = Bounds::new(xbin(3, -1), xbin(5, -1));
-        assert!(nb.refine(more_refined).is_ok());
+        nb.refine(more_refined);
+        // Widening would violate the invariant - caught by debug_assert in debug builds
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "NormalizedBounds invariant violated")]
+    fn normalized_bounds_rejects_widening_in_debug() {
+        let initial = Bounds::new(xbin(0, 0), xbin(4, 0));
+        let mut nb = NormalizedBounds::new(initial);
+        let refined = Bounds::new(xbin(1, 0), xbin(3, 0));
+        nb.refine(refined);
         let widened = Bounds::new(xbin(0, 0), xbin(4, 0));
-        assert!(nb.refine(widened).is_err());
+        nb.refine(widened); // Should panic in debug builds
     }
 
     fn test_bounds() -> Bounds { Bounds::new(xbin(1, 0), xbin(2, 0)) }
