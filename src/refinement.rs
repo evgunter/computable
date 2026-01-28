@@ -820,4 +820,94 @@ mod tests {
         reader.join().expect("reader should join");
         assert_width_nonnegative(&refined);
     }
+
+    // =========================================================================
+    // Normalized Bounds / Precision Tracking Tests
+    // =========================================================================
+
+    #[test]
+    fn precision_increases_during_refinement() {
+        use crate::normalized::PrecisionLevel;
+
+        let computable = interval_midpoint_computable(0, 16);
+        let epsilon = ubin(1, -10);
+
+        // Get initial bounds and precision
+        let initial_bounds = computable.bounds().expect("initial bounds");
+        let initial_precision = PrecisionLevel::from_width(initial_bounds.width());
+
+        // Refine
+        let refined_bounds = computable
+            .refine_to_default(epsilon)
+            .expect("refinement should succeed");
+
+        // Get final precision
+        let final_precision = PrecisionLevel::from_width(refined_bounds.width());
+
+        // Final precision should be strictly better than initial
+        assert!(
+            final_precision.meets(&initial_precision),
+            "Final precision should meet initial precision"
+        );
+
+        // Width should have decreased significantly
+        match (initial_bounds.width(), refined_bounds.width()) {
+            (UXBinary::Finite(initial_w), UXBinary::Finite(refined_w)) => {
+                assert!(
+                    *refined_w < *initial_w,
+                    "Refined width should be smaller than initial"
+                );
+            }
+            _ => panic!("Expected finite widths"),
+        }
+    }
+
+    #[test]
+    fn normalized_bounds_tracker_enforces_monotonicity() {
+        let mut tracker = RefinementTracker::new();
+
+        // Initialize with wide bounds [0, 10]
+        let initial = Bounds::new(xbin(0, 0), xbin(10, 0));
+        tracker.init_node(1, initial);
+
+        // Narrow to [2, 8] - should succeed
+        let narrowed = Bounds::new(xbin(2, 0), xbin(8, 0));
+        assert!(tracker.update(1, narrowed).is_ok());
+
+        // Try to widen to [0, 10] - should fail
+        let widened = Bounds::new(xbin(0, 0), xbin(10, 0));
+        assert!(tracker.update(1, widened).is_err());
+
+        // Narrow further to [3, 7] - should succeed
+        let narrower = Bounds::new(xbin(3, 0), xbin(7, 0));
+        assert!(tracker.update(1, narrower).is_ok());
+    }
+
+    #[test]
+    fn refinement_tracker_tracks_multiple_nodes() {
+        let mut tracker = RefinementTracker::new();
+
+        // Initialize two nodes
+        tracker.init_node(1, Bounds::new(xbin(0, 0), xbin(10, 0)));
+        tracker.init_node(2, Bounds::new(xbin(5, 0), xbin(15, 0)));
+
+        // Refine node 1
+        assert!(tracker
+            .update(1, Bounds::new(xbin(2, 0), xbin(8, 0)))
+            .is_ok());
+
+        // Refine node 2
+        assert!(tracker
+            .update(2, Bounds::new(xbin(7, 0), xbin(12, 0)))
+            .is_ok());
+
+        // Check tracked bounds
+        let node1 = tracker.get(1).expect("node 1 should exist");
+        assert_eq!(node1.bounds().small(), &xbin(2, 0));
+        assert_eq!(node1.bounds().large(), xbin(8, 0));
+
+        let node2 = tracker.get(2).expect("node 2 should exist");
+        assert_eq!(node2.bounds().small(), &xbin(7, 0));
+        assert_eq!(node2.bounds().large(), xbin(12, 0));
+    }
 }
