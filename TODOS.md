@@ -61,12 +61,12 @@ Correctness issue in range reduction.
 ```
 May need adaptive precision.
 
-### <a id="sin-arbitrary-precision"></a>sin-arbitrary-precision: Support arbitrary precision in divide_by_factorial_directed
-**File:** `src/ops/sin.rs:721`
+### <a id="sin-arbitrary-precision"></a>sin-arbitrary-precision: Support arbitrary precision in sin Taylor series
+**File:** `src/ops/sin.rs:769` and `src/ops/sin.rs:652-653`
 ```rust
 // TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
 ```
-The `divide_by_factorial_directed` function uses a fixed 64-bit precision for reciprocal computation. This caps achievable accuracy and should be made adaptive based on the requested output precision, similar to the issues in pi.rs.
+Two related hardcoded 64-bit caps limit sin accuracy: (1) `divide_by_factorial_directed` uses fixed 64-bit precision for reciprocal computation, and (2) `compute_sin_on_monotonic_interval` truncates interval endpoints to 64-bit mantissas before evaluating Taylor bounds. Both should be made adaptive based on the requested output precision, similar to the issues in pi.rs.
 
 ### <a id="sin-refine-default"></a>sin-refine-default: Use refine_to_default instead of custom loop
 **File:** `src/ops/sin.rs:301`
