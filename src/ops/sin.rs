@@ -650,13 +650,9 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> Finit
     // Round lo DOWN and hi UP so the truncated interval contains the original,
     // preserving soundness: sin(truncated_lo) <= sin(lo) and sin(truncated_hi) >= sin(hi).
     //
-    // Compute target precision adaptively: the Taylor series with n terms yields
-    // roughly n*10 bits of accuracy (conservative estimate for |x| ≤ π/2).
-    // The truncation and reciprocal precision must match this to avoid being
-    // the bottleneck. Also preserve at least the input endpoints' mantissa precision.
-    let lo_bits = interval.lo().mantissa().magnitude().bits() as usize;
-    let hi_bits = interval.hi().mantissa().magnitude().bits() as usize;
-    let target_precision = (n * 10).max(lo_bits).max(hi_bits).max(64);
+    // The Taylor series with n terms yields roughly n*10 bits of accuracy
+    // (conservative estimate for |x| ≤ π/2). Intermediate precision must match.
+    let target_precision = n * 10;
     let truncated_lo = truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
     let truncated_hi = truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
 
@@ -806,13 +802,12 @@ fn divide_by_factorial_directed(
 // Test helpers - exposed for integration tests
 #[cfg(test)]
 pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
-    let target_precision = (n * 10).max(x.mantissa().magnitude().bits() as usize).max(64);
-    taylor_sin_bounds(x, n, target_precision)
+    taylor_sin_bounds(x, n, n * 10)
 }
 
 #[cfg(test)]
 pub fn taylor_sin_partial_sum_test(x: &Binary, n: usize, down: bool) -> Binary {
-    let target_precision = (n * 10).max(x.mantissa().magnitude().bits() as usize).max(64);
+    let target_precision = n * 10;
     let rounding = if down {
         RoundingDirection::Down
     } else {
