@@ -54,13 +54,6 @@ Use the type system to prevent invalid bounds ordering rather than runtime check
 ```
 Correctness issue in range reduction.
 
-### <a id="sin-256-cap"></a>sin-256-cap: Fix capped 256-bit precision
-**File:** `src/ops/sin.rs:273`
-```rust
-// TODO(correctness): Capping at 256 bits may not provide sufficient pi precision
-```
-May need adaptive precision.
-
 ### <a id="sin-refine-default"></a>sin-refine-default: Use refine_to_default instead of custom loop
 **File:** `src/ops/sin.rs:301`
 ```rust

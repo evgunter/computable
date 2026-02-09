@@ -271,13 +271,8 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
         .saturating_mul(3)
         .saturating_add(log2_k);
 
-    // Take max, with reasonable bounds
-    let precision = precision_for_branch.max(precision_for_answer);
-
-    // TODO(correctness): Capping at 256 bits may not provide sufficient pi precision for very
-    // large inputs or high-precision requirements. Should either remove the cap or make it
-    // scale with input magnitude.
-    precision.clamp(64, 256)
+    // Take max of the two precision requirements
+    precision_for_branch.max(precision_for_answer)
 }
 
 /// Reduces an input interval to [-pi, pi] using interval arithmetic.
