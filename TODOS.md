@@ -26,13 +26,6 @@ Cases using `simplify_bounds` don't appear to track refinement progress properly
 
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
-### <a id="sin-k-midpoint"></a>sin-k-midpoint: Fix midpoint usage for k computation
-**File:** `src/ops/sin.rs:292`
-```rust
-// TODO(correctness): Using midpoints for k computation could cause incorrect range reduction.
-```
-Correctness issue in range reduction math.
-
 ### <a id="bounds-dedup"></a>bounds-dedup: Deduplicate FiniteBounds and Bounds
 **File:** `src/binary.rs:77`
 ```rust
@@ -46,27 +39,6 @@ Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters
 // TODO: can the type system ensure that the bounds remain ordered?
 ```
 Use the type system to prevent invalid bounds ordering rather than runtime checks.
-
-### <a id="sin-midpoint-correctness"></a>sin-midpoint-correctness: Fix midpoint usage for correctness
-**File:** `src/ops/sin.rs:131`
-```rust
-// TODO(correctness): Using midpoint instead of two_pi_interval.lo could cause incorrect
-```
-Correctness issue in range reduction.
-
-### <a id="sin-refine-default"></a>sin-refine-default: Use refine_to_default instead of custom loop
-**File:** `src/ops/sin.rs:301`
-```rust
-// TODO: should use the thing with refine_to_default rather than a custom loop with custom max iterations
-```
-Refactor to use existing pattern.
-
-### <a id="sin-large-inputs"></a>sin-large-inputs: Handle extremely large inputs in sin
-**File:** `src/ops/sin.rs:298`
-```rust
-// TODO(correctness): For extremely large inputs where |x| >> 2^10 * 2*pi
-```
-Edge case handling.
 
 ### <a id="pi-f64"></a>pi-f64: Replace f64 with rigorous computation in pi
 **File:** `src/ops/pi.rs:84`
