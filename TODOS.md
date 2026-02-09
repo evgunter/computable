@@ -47,20 +47,6 @@ Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters
 ```
 Use the type system to prevent invalid bounds ordering rather than runtime checks.
 
-### <a id="sin-truncation-tracking"></a>sin-truncation-tracking: Fix truncation precision tracking
-**File:** `src/ops/sin.rs:565`
-```rust
-/// TODO(correctness): Truncating discards precision without tracking the error.
-```
-Need to track truncation error properly.
-
-### <a id="sin-truncation-sus"></a>sin-truncation-sus: Suspicious precision truncation in sin
-**File:** `src/ops/sin.rs:598`
-```rust
-// TODO: this precision truncation is very suspicious!
-```
-Related to [sin-truncation-tracking](#sin-truncation-tracking).
-
 ### <a id="sin-midpoint-correctness"></a>sin-midpoint-correctness: Fix midpoint usage for correctness
 **File:** `src/ops/sin.rs:131`
 ```rust
