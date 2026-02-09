@@ -89,19 +89,6 @@ Memory safety for edge cases.
 ```
 Type-level prevention of invalid states.
 
-### <a id="pi-adaptive"></a>pi-adaptive: Make pi precision adaptive (128-bit limitation)
-**File:** `src/ops/pi.rs:243`
-```rust
-// TODO(correctness): Fixed 128-bit precision caps the achievable accuracy to ~118 bits.
-```
-**Blocks:** [pi-128-plus](#pi-128-plus), [pi-dead-code](#pi-dead-code), [pi-benchmark-reenable](#pi-benchmark-reenable)
-
-### <a id="pi-adaptive-2"></a>pi-adaptive-2: Make pi precision adaptive (second instance)
-**File:** `src/ops/pi.rs:286`
-```rust
-// TODO(correctness): Fixed 128-bit precision here has the same limitation as in
-```
-Related to [pi-adaptive](#pi-adaptive).
 
 ### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
 **File:** `src/refinement.rs:15`
@@ -114,26 +101,6 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 
 ## Blocked (Waiting on other items)
 
-### <a id="pi-128-plus"></a>pi-128-plus: Re-enable 128+ bit precision levels
-**File:** `benchmarks/src/pi.rs:15`
-```rust
-// TODO: Re-enable 128+ bit precision levels once the fixed 128-bit intermediate precision
-```
-**Blocked by:** [pi-adaptive](#pi-adaptive)
-
-### <a id="pi-dead-code"></a>pi-dead-code: Remove dead_code annotation
-**File:** `benchmarks/src/pi.rs:234`
-```rust
-#[allow(dead_code)] // TODO: Re-enable once fixed 128-bit precision in src/ops/pi.rs is made adaptive
-```
-**Blocked by:** [pi-adaptive](#pi-adaptive)
-
-### <a id="pi-benchmark-reenable"></a>pi-benchmark-reenable: Re-enable benchmark
-**File:** `benchmarks/src/pi.rs:273`
-```rust
-// TODO: Re-enable once fixed 128-bit intermediate precision in src/ops/pi.rs is made adaptive.
-```
-**Blocked by:** [pi-adaptive](#pi-adaptive)
 
 ### <a id="nth-root-negative"></a>nth-root-negative: Handle negative inputs for even-degree roots
 **File:** `src/ops/nth_root.rs:15`
