@@ -649,8 +649,14 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> Finit
     //
     // Round lo DOWN and hi UP so the truncated interval contains the original,
     // preserving soundness: sin(truncated_lo) <= sin(lo) and sin(truncated_hi) >= sin(hi).
-    let truncated_lo = truncate_precision_directed(interval.lo(), 64, RoundingDirection::Down);
-    let truncated_hi = truncate_precision_directed(&interval.hi(), 64, RoundingDirection::Up);
+    //
+    // Use adaptive precision based on the input endpoints' mantissa sizes,
+    // so that truncation doesn't bottleneck overall accuracy.
+    let lo_bits = interval.lo().mantissa().magnitude().bits() as usize;
+    let hi_bits = interval.hi().mantissa().magnitude().bits() as usize;
+    let precision_bits = lo_bits.max(hi_bits).max(64);
+    let truncated_lo = truncate_precision_directed(interval.lo(), precision_bits, RoundingDirection::Down);
+    let truncated_hi = truncate_precision_directed(&interval.hi(), precision_bits, RoundingDirection::Up);
 
     let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n);
     let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n);
@@ -766,8 +772,9 @@ fn divide_by_factorial_directed(
         return value.clone();
     }
 
-    // TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
-    const PRECISION_BITS: usize = 64;
+    // Use adaptive precision based on the input value's mantissa size,
+    // so that the reciprocal computation doesn't bottleneck overall accuracy.
+    let precision_bits = (value.mantissa().magnitude().bits() as usize).max(64);
 
     // Determine rounding direction for reciprocal based on overall rounding and sign of value.
     // For directed rounding toward +/- infinity:
@@ -782,7 +789,7 @@ fn divide_by_factorial_directed(
     };
 
     // Compute 1/|factorial| with directed rounding
-    let reciprocal = reciprocal_of_biguint(factorial.magnitude(), PRECISION_BITS, recip_rounding);
+    let reciprocal = reciprocal_of_biguint(factorial.magnitude(), precision_bits, recip_rounding);
 
     // Multiply value by reciprocal
     value.mul(&reciprocal)
