@@ -181,18 +181,20 @@ fn compute_pi_bounds(num_terms: usize) -> (Binary, Binary) {
 ///
 /// Returns (lower_bound, upper_bound) for arctan(1/k).
 fn arctan_recip_bounds(k: u64, num_terms: usize) -> (Binary, Binary) {
+    let target_precision = num_terms * 10;
+
     if num_terms == 0 {
         // No terms computed, just return error bound interval centered at 0
-        let error = arctan_recip_error_bound(k, 0);
+        let error = arctan_recip_error_bound(k, 0, target_precision);
         return (error.neg(), error);
     }
 
     // Compute partial sum with directed rounding
-    let sum_lo = arctan_recip_partial_sum(k, num_terms, RoundDir::Down);
-    let sum_hi = arctan_recip_partial_sum(k, num_terms, RoundDir::Up);
+    let sum_lo = arctan_recip_partial_sum(k, num_terms, RoundDir::Down, target_precision);
+    let sum_hi = arctan_recip_partial_sum(k, num_terms, RoundDir::Up, target_precision);
 
     // Compute error bound for truncation (always round up for conservative bound)
-    let error = arctan_recip_error_bound(k, num_terms);
+    let error = arctan_recip_error_bound(k, num_terms, target_precision);
 
     // Final bounds: [sum_lo - error, sum_hi + error]
     (sum_lo.sub(&error), sum_hi.add(&error))
@@ -201,7 +203,12 @@ fn arctan_recip_bounds(k: u64, num_terms: usize) -> (Binary, Binary) {
 /// Computes partial sum of arctan(1/k) Taylor series with directed rounding.
 ///
 /// sum = sum_{i=0}^{n-1} (-1)^i / ((2i+1) * k^(2i+1))
-fn arctan_recip_partial_sum(k: u64, num_terms: usize, rounding: RoundDir) -> Binary {
+fn arctan_recip_partial_sum(
+    k: u64,
+    num_terms: usize,
+    rounding: RoundDir,
+    target_precision: usize,
+) -> Binary {
     let mut sum = Binary::zero();
     let k_big = BigInt::from(k);
     let k_squared = &k_big * &k_big;
@@ -219,7 +226,7 @@ fn arctan_recip_partial_sum(k: u64, num_terms: usize, rounding: RoundDir) -> Bin
         // For negative terms (odd i): round up for lower, round down for upper
         let is_positive_term = i % 2 == 0;
 
-        let term = divide_one_by_bigint(&denominator, rounding, is_positive_term);
+        let term = divide_one_by_bigint(&denominator, rounding, is_positive_term, target_precision);
         sum = sum.add(&term);
 
         // Prepare for next iteration: k^(2i+1) -> k^(2(i+1)+1) = k^(2i+3)
@@ -243,19 +250,8 @@ fn divide_one_by_bigint(
     denominator: &BigInt,
     rounding: RoundDir,
     is_positive_term: bool,
+    target_precision: usize,
 ) -> Binary {
-    // TODO(correctness): Fixed 128-bit precision caps the achievable accuracy to ~118 bits.
-    // This causes the refinement loop to hang when requesting precision > 118 bits, because
-    // the computed width (~2^-119) never reaches epsilon (e.g., 2^-128). Should make precision
-    // adaptive based on the requested output precision.
-    const PRECISION_BITS: usize = 128;
-
-    // Determine the rounding direction for the reciprocal based on the overall rounding
-    // direction and whether the term is positive or negative:
-    // - Positive term, Down rounding: floor (to get lower bound)
-    // - Positive term, Up rounding: ceil (to get upper bound)
-    // - Negative term, Down rounding: ceil then negate (more negative = smaller = lower bound)
-    // - Negative term, Up rounding: floor then negate (less negative = larger = upper bound)
     let recip_rounding = match (rounding, is_positive_term) {
         (RoundDir::Down, true) => ReciprocalRounding::Floor,
         (RoundDir::Up, true) => ReciprocalRounding::Ceil,
@@ -263,12 +259,9 @@ fn divide_one_by_bigint(
         (RoundDir::Up, false) => ReciprocalRounding::Floor,
     };
 
-    // Use magnitude() to convert positive BigInt to BigUint.
-    // The denominator is always positive (product of positive coefficients and powers).
     let unsigned_result =
-        reciprocal_of_biguint(denominator.magnitude(), PRECISION_BITS, recip_rounding);
+        reciprocal_of_biguint(denominator.magnitude(), target_precision, recip_rounding);
 
-    // Apply sign based on whether this is a positive or negative term
     if is_positive_term {
         unsigned_result
     } else {
@@ -285,14 +278,8 @@ fn divide_one_by_bigint(
 /// |error| <= 1 / ((2n+1) * k^(2n+1))
 ///
 /// We round UP (ceiling) to get a conservative (safe) error bound.
-fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
+fn arctan_recip_error_bound(k: u64, num_terms: usize, target_precision: usize) -> Binary {
     use num_bigint::BigUint;
-
-    // TODO(correctness): Fixed 128-bit precision here has the same limitation as in
-    // divide_one_by_bigint: achievable accuracy is capped at ~118 bits, causing refinement
-    // to hang for higher precision requests. Should use adaptive precision matching the
-    // requested output precision.
-    const PRECISION_BITS: usize = 128;
 
     let exponent = 2 * num_terms + 1;
     let coeff = BigUint::from(exponent as u64); // 2n+1
@@ -306,7 +293,7 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize) -> Binary {
     let denominator = &coeff * &k_power; // (2n+1) * k^(2n+1)
 
     // Compute 1/denominator, rounding UP for conservative error bound.
-    reciprocal_of_biguint(&denominator, PRECISION_BITS, ReciprocalRounding::Ceil)
+    reciprocal_of_biguint(&denominator, target_precision, ReciprocalRounding::Ceil)
 }
 
 /// Returns pi as a FiniteBounds interval with specified precision.

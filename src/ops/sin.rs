@@ -271,13 +271,8 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
         .saturating_mul(3)
         .saturating_add(log2_k);
 
-    // Take max, with reasonable bounds
-    let precision = precision_for_branch.max(precision_for_answer);
-
-    // TODO(correctness): Capping at 256 bits may not provide sufficient pi precision for very
-    // large inputs or high-precision requirements. Should either remove the cap or make it
-    // scale with input magnitude.
-    precision.clamp(64, 256)
+    // Take max of the two precision requirements
+    precision_for_branch.max(precision_for_answer)
 }
 
 /// Reduces an input interval to [-pi, pi] using interval arithmetic.
@@ -649,11 +644,15 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> Finit
     //
     // Round lo DOWN and hi UP so the truncated interval contains the original,
     // preserving soundness: sin(truncated_lo) <= sin(lo) and sin(truncated_hi) >= sin(hi).
-    let truncated_lo = truncate_precision_directed(interval.lo(), 64, RoundingDirection::Down);
-    let truncated_hi = truncate_precision_directed(&interval.hi(), 64, RoundingDirection::Up);
+    //
+    // The Taylor series with n terms yields roughly n*10 bits of accuracy
+    // (conservative estimate for |x| ≤ π/2). Intermediate precision must match.
+    let target_precision = n * 10;
+    let truncated_lo = truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
+    let truncated_hi = truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
 
-    let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n);
-    let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n);
+    let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n, target_precision);
+    let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n, target_precision);
 
     FiniteBounds::new(sin_lo_bounds_lo, sin_hi_bounds_hi)
 }
@@ -676,19 +675,19 @@ enum RoundingDirection {
 /// Uses directed rounding to compute provably correct bounds:
 /// - Lower bound: all intermediate operations round DOWN (toward -inf)
 /// - Upper bound: all intermediate operations round UP (toward +inf)
-fn taylor_sin_bounds(x: &Binary, n: usize) -> (Binary, Binary) {
+fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
     if n == 0 {
         // No terms: just use error bound (always round UP for conservative bounds)
-        let error = taylor_error_bound(x, 0);
+        let error = taylor_error_bound(x, 0, target_precision);
         return (error.neg(), error);
     }
 
     // Compute lower and upper partial sums with directed rounding
-    let sum_lower = taylor_sin_partial_sum(x, n, RoundingDirection::Down);
-    let sum_upper = taylor_sin_partial_sum(x, n, RoundingDirection::Up);
+    let sum_lower = taylor_sin_partial_sum(x, n, RoundingDirection::Down, target_precision);
+    let sum_upper = taylor_sin_partial_sum(x, n, RoundingDirection::Up, target_precision);
 
     // Compute error bound (always round UP for conservative bounds)
-    let error = taylor_error_bound(x, n);
+    let error = taylor_error_bound(x, n, target_precision);
 
     // Return bounds: lower_sum - error, upper_sum + error
     (sum_lower.sub(&error), sum_upper.add(&error))
@@ -698,7 +697,12 @@ fn taylor_sin_bounds(x: &Binary, n: usize) -> (Binary, Binary) {
 ///
 /// For RoundingDirection::Down: rounds all division operations toward -infinity
 /// For RoundingDirection::Up: rounds all division operations toward +infinity
-fn taylor_sin_partial_sum(x: &Binary, n: usize, rounding: RoundingDirection) -> Binary {
+fn taylor_sin_partial_sum(
+    x: &Binary,
+    n: usize,
+    rounding: RoundingDirection,
+    target_precision: usize,
+) -> Binary {
     let mut sum = Binary::zero();
     let mut power = x.clone(); // x^1
     let mut factorial = BigInt::one(); // 1!
@@ -712,7 +716,7 @@ fn taylor_sin_partial_sum(x: &Binary, n: usize, rounding: RoundingDirection) -> 
         };
 
         // Divide by factorial with directed rounding
-        let term = divide_by_factorial_directed(&term_num, &factorial, rounding);
+        let term = divide_by_factorial_directed(&term_num, &factorial, rounding, target_precision);
         sum = sum.add(&term);
 
         // Prepare for next term: multiply power by x^2
@@ -729,7 +733,7 @@ fn taylor_sin_partial_sum(x: &Binary, n: usize, rounding: RoundingDirection) -> 
 
 /// Computes |x|^(2n+1) / (2n+1)! as an upper bound on Taylor series truncation error.
 /// Always rounds UP to be conservative.
-fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
+fn taylor_error_bound(x: &Binary, n: usize, target_precision: usize) -> Binary {
     // Compute |x|^(2n+1)
     let abs_x = x.magnitude().to_binary();
 
@@ -746,7 +750,7 @@ fn taylor_error_bound(x: &Binary, n: usize) -> Binary {
     }
 
     // error = power / factorial (round UP for conservative error bound)
-    divide_by_factorial_directed(&power, &factorial, RoundingDirection::Up)
+    divide_by_factorial_directed(&power, &factorial, RoundingDirection::Up, target_precision)
 }
 
 /// Divides a Binary by a BigInt factorial with directed rounding.
@@ -761,13 +765,15 @@ fn divide_by_factorial_directed(
     value: &Binary,
     factorial: &BigInt,
     rounding: RoundingDirection,
+    target_precision: usize,
 ) -> Binary {
     if factorial.is_zero() {
         return value.clone();
     }
 
-    // TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
-    const PRECISION_BITS: usize = 64;
+    // Use the caller-provided target precision, ensuring it is at least as large
+    // as the input value's mantissa to avoid losing information.
+    let precision_bits = target_precision.max(value.mantissa().magnitude().bits() as usize);
 
     // Determine rounding direction for reciprocal based on overall rounding and sign of value.
     // For directed rounding toward +/- infinity:
@@ -782,7 +788,7 @@ fn divide_by_factorial_directed(
     };
 
     // Compute 1/|factorial| with directed rounding
-    let reciprocal = reciprocal_of_biguint(factorial.magnitude(), PRECISION_BITS, recip_rounding);
+    let reciprocal = reciprocal_of_biguint(factorial.magnitude(), precision_bits, recip_rounding);
 
     // Multiply value by reciprocal
     value.mul(&reciprocal)
@@ -791,17 +797,18 @@ fn divide_by_factorial_directed(
 // Test helpers - exposed for integration tests
 #[cfg(test)]
 pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
-    taylor_sin_bounds(x, n)
+    taylor_sin_bounds(x, n, n * 10)
 }
 
 #[cfg(test)]
 pub fn taylor_sin_partial_sum_test(x: &Binary, n: usize, down: bool) -> Binary {
+    let target_precision = n * 10;
     let rounding = if down {
         RoundingDirection::Down
     } else {
         RoundingDirection::Up
     };
-    taylor_sin_partial_sum(x, n, rounding)
+    taylor_sin_partial_sum(x, n, rounding, target_precision)
 }
 
 #[cfg(test)]
@@ -1182,6 +1189,49 @@ mod tests {
             "sin(pi) bounds [{}, {}] should contain zero",
             lower,
             upper
+        );
+    }
+
+    #[test]
+    fn sin_of_one_to_512_bit_precision() {
+        // Verify that the adaptive-precision fix allows sin to converge well
+        // beyond the old 64-bit cap. We request 512-bit precision (epsilon = 2^-512).
+        // sin(1) ≈ 0.8414709848... is in [-pi/2, pi/2], so it exercises both
+        // compute_sin_on_monotonic_interval and divide_by_factorial_directed directly.
+        let one = Computable::constant(bin(1, 0));
+        let sin_one = one.sin();
+        let epsilon = ubin(1, -512);
+        // Need many Taylor terms for 512-bit accuracy; allow up to 1024 refinement steps.
+        let bounds = sin_one
+            .refine_to::<1024>(epsilon.clone())
+            .expect("refine_to 512-bit precision should succeed");
+
+        let width = unwrap_finite_uxbinary(bounds.width());
+
+        // Width must be at most epsilon = 2^-512
+        assert!(
+            width <= epsilon,
+            "width {} should be <= 2^-512",
+            width
+        );
+
+        // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+        let midpoint = FiniteBounds::new(lower, upper).midpoint();
+        let expected_f64 = 1.0_f64.sin();
+        let expected_bin = unwrap_finite(
+            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
+        );
+        let diff = if midpoint > expected_bin {
+            midpoint.sub(&expected_bin)
+        } else {
+            expected_bin.sub(&midpoint)
+        };
+        assert!(
+            diff < bin(1, -52),
+            "midpoint of 512-bit bounds should agree with f64 sin(1) to ~52 bits, diff = {}",
+            diff
         );
     }
 }

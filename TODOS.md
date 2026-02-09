@@ -54,20 +54,6 @@ Use the type system to prevent invalid bounds ordering rather than runtime check
 ```
 Correctness issue in range reduction.
 
-### <a id="sin-256-cap"></a>sin-256-cap: Fix capped 256-bit precision
-**File:** `src/ops/sin.rs:273`
-```rust
-// TODO(correctness): Capping at 256 bits may not provide sufficient pi precision
-```
-May need adaptive precision.
-
-### <a id="sin-arbitrary-precision"></a>sin-arbitrary-precision: Support arbitrary precision in sin Taylor series
-**File:** `src/ops/sin.rs:769` and `src/ops/sin.rs:652-653`
-```rust
-// TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
-```
-Two related hardcoded 64-bit caps limit sin accuracy: (1) `divide_by_factorial_directed` uses fixed 64-bit precision for reciprocal computation, and (2) `compute_sin_on_monotonic_interval` truncates interval endpoints to 64-bit mantissas before evaluating Taylor bounds. Both should be made adaptive based on the requested output precision, similar to the issues in pi.rs.
-
 ### <a id="sin-refine-default"></a>sin-refine-default: Use refine_to_default instead of custom loop
 **File:** `src/ops/sin.rs:301`
 ```rust
@@ -103,19 +89,6 @@ Memory safety for edge cases.
 ```
 Type-level prevention of invalid states.
 
-### <a id="pi-adaptive"></a>pi-adaptive: Make pi precision adaptive (128-bit limitation)
-**File:** `src/ops/pi.rs:243`
-```rust
-// TODO(correctness): Fixed 128-bit precision caps the achievable accuracy to ~118 bits.
-```
-**Blocks:** [pi-128-plus](#pi-128-plus), [pi-dead-code](#pi-dead-code), [pi-benchmark-reenable](#pi-benchmark-reenable)
-
-### <a id="pi-adaptive-2"></a>pi-adaptive-2: Make pi precision adaptive (second instance)
-**File:** `src/ops/pi.rs:286`
-```rust
-// TODO(correctness): Fixed 128-bit precision here has the same limitation as in
-```
-Related to [pi-adaptive](#pi-adaptive).
 
 ### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
 **File:** `src/refinement.rs:15`
@@ -128,26 +101,6 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 
 ## Blocked (Waiting on other items)
 
-### <a id="pi-128-plus"></a>pi-128-plus: Re-enable 128+ bit precision levels
-**File:** `benchmarks/src/pi.rs:15`
-```rust
-// TODO: Re-enable 128+ bit precision levels once the fixed 128-bit intermediate precision
-```
-**Blocked by:** [pi-adaptive](#pi-adaptive)
-
-### <a id="pi-dead-code"></a>pi-dead-code: Remove dead_code annotation
-**File:** `benchmarks/src/pi.rs:234`
-```rust
-#[allow(dead_code)] // TODO: Re-enable once fixed 128-bit precision in src/ops/pi.rs is made adaptive
-```
-**Blocked by:** [pi-adaptive](#pi-adaptive)
-
-### <a id="pi-benchmark-reenable"></a>pi-benchmark-reenable: Re-enable benchmark
-**File:** `benchmarks/src/pi.rs:273`
-```rust
-// TODO: Re-enable once fixed 128-bit intermediate precision in src/ops/pi.rs is made adaptive.
-```
-**Blocked by:** [pi-adaptive](#pi-adaptive)
 
 ### <a id="nth-root-negative"></a>nth-root-negative: Handle negative inputs for even-degree roots
 **File:** `src/ops/nth_root.rs:15`

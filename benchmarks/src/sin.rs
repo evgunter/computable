@@ -9,7 +9,7 @@ use crate::balanced_sum::balanced_sum;
 use crate::common::{binary_from_f64, midpoint, try_finite_bounds};
 
 pub const SIN_SAMPLE_COUNT: usize = 100;
-pub const SIN_PRECISION_BITS: i64 = 32;
+pub const SIN_PRECISION_BITS: i64 = 128;
 
 /// Benchmark: sin operation
 /// Tests Taylor series computation with range reduction and directed rounding
