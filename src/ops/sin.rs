@@ -1225,31 +1225,23 @@ mod tests {
             width
         );
 
-        // Sanity check: the bounds should be close to sin(1) ≈ 0.8414709848...
-        // Use the midpoint of the computed bounds (which has 512+ bits of precision)
-        // and verify it rounds to the same f64 as sin(1).
+        // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-        let midpoint = FiniteBounds::new(lower.clone(), upper.clone()).midpoint();
-        // The midpoint mantissa, scaled by its exponent, should approximate sin(1).
-        // Verify lower > 0 and upper < 1 (sin(1) ≈ 0.84)
-        assert!(lower > bin(0, 0), "sin(1) lower bound should be positive");
-        assert!(upper < bin(1, 0), "sin(1) upper bound should be < 1");
-        // Verify the midpoint is close to the f64 value of sin(1)
-        // by checking that |midpoint - sin(1)_f64| < 2^-50 (well within f64 precision)
+        let midpoint = FiniteBounds::new(lower, upper).midpoint();
         let expected_f64 = 1.0_f64.sin();
-        let expected = XBinary::from_f64(expected_f64)
-            .expect("expected value should convert");
-        let expected_bin = unwrap_finite(&expected);
+        let expected_bin = unwrap_finite(
+            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
+        );
         let diff = if midpoint > expected_bin {
             midpoint.sub(&expected_bin)
         } else {
             expected_bin.sub(&midpoint)
         };
-        let f64_tolerance = bin(1, -50);
         assert!(
-            diff < f64_tolerance,
-            "midpoint of 512-bit bounds should agree with f64 sin(1) to ~50 bits"
+            diff < bin(1, -52),
+            "midpoint of 512-bit bounds should agree with f64 sin(1) to ~52 bits, diff = {}",
+            diff
         );
     }
 }
