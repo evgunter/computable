@@ -582,15 +582,20 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     }
 }
 
-/// Truncates a Binary to at most `precision_bits` of mantissa.
+/// Truncates a Binary to at most `precision_bits` of mantissa, rounding in the
+/// specified direction.
 ///
-/// TODO(correctness): Truncating discards precision without tracking the error. The truncation
-/// error is NOT added to the final bounds, which could make bounds slightly too tight.
-/// For negative values, truncation rounds toward zero (making the value larger), which could
-/// cause the lower bound of sin to be too high. Should either: (1) add truncation error to
-/// the result interval, (2) use directed rounding (floor for lower, ceil for upper), or
-/// (3) use full precision.
-fn truncate_precision(x: &Binary, precision_bits: usize) -> Binary {
+/// This uses directed rounding to ensure soundness in interval arithmetic:
+/// - `RoundingDirection::Down` (floor): rounds toward -infinity
+/// - `RoundingDirection::Up` (ceil): rounds toward +infinity
+///
+/// The implementation works on the mantissa magnitude to avoid any ambiguity
+/// in how BigInt right-shift handles negative values.
+fn truncate_precision_directed(
+    x: &Binary,
+    precision_bits: usize,
+    dir: RoundingDirection,
+) -> Binary {
     let mantissa = x.mantissa();
     let exponent = x.exponent();
     let bit_length = mantissa.magnitude().bits() as usize;
@@ -600,9 +605,34 @@ fn truncate_precision(x: &Binary, precision_bits: usize) -> Binary {
     }
 
     let shift = bit_length - precision_bits;
-    let truncated_mantissa = mantissa >> shift;
-    let new_exponent = exponent + BigInt::from(shift);
-    Binary::new(truncated_mantissa, new_exponent)
+
+    // Shift the magnitude (always truncates toward zero) and detect remainder
+    let abs_shifted = mantissa.magnitude() >> shift;
+    let has_remainder = (&abs_shifted << shift) != *mantissa.magnitude();
+    let is_negative = mantissa.is_negative();
+
+    // Floor (toward -inf): positive toward zero, negative away from zero
+    // Ceil  (toward +inf): positive away from zero, negative toward zero
+    // "Away from zero" means incrementing the magnitude when there's a remainder.
+    let round_away_from_zero = has_remainder
+        && matches!(
+            (dir, is_negative),
+            (RoundingDirection::Down, true) | (RoundingDirection::Up, false)
+        );
+
+    let abs_result = if round_away_from_zero {
+        abs_shifted + 1u32
+    } else {
+        abs_shifted
+    };
+
+    let signed_result = if is_negative {
+        -BigInt::from(abs_result)
+    } else {
+        BigInt::from(abs_result)
+    };
+
+    Binary::new(signed_result, exponent + BigInt::from(shift))
 }
 
 //=============================================================================
@@ -616,11 +646,11 @@ fn truncate_precision(x: &Binary, precision_bits: usize) -> Binary {
 fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> FiniteBounds {
     // sin is monotonic increasing on [-pi/2, pi/2]
     // So: sin([a, b]) = [sin(a)_lo, sin(b)_hi]
-
-    // TODO: this precision truncation is very suspicious!
-
-    let truncated_lo = truncate_precision(interval.lo(), 64);
-    let truncated_hi = truncate_precision(&interval.hi(), 64);
+    //
+    // Round lo DOWN and hi UP so the truncated interval contains the original,
+    // preserving soundness: sin(truncated_lo) <= sin(lo) and sin(truncated_hi) >= sin(hi).
+    let truncated_lo = truncate_precision_directed(interval.lo(), 64, RoundingDirection::Down);
+    let truncated_hi = truncate_precision_directed(&interval.hi(), 64, RoundingDirection::Up);
 
     let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n);
     let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n);

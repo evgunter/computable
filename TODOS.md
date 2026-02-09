@@ -47,20 +47,6 @@ Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters
 ```
 Use the type system to prevent invalid bounds ordering rather than runtime checks.
 
-### <a id="sin-truncation-tracking"></a>sin-truncation-tracking: Fix truncation precision tracking
-**File:** `src/ops/sin.rs:565`
-```rust
-/// TODO(correctness): Truncating discards precision without tracking the error.
-```
-Need to track truncation error properly.
-
-### <a id="sin-truncation-sus"></a>sin-truncation-sus: Suspicious precision truncation in sin
-**File:** `src/ops/sin.rs:598`
-```rust
-// TODO: this precision truncation is very suspicious!
-```
-Related to [sin-truncation-tracking](#sin-truncation-tracking).
-
 ### <a id="sin-midpoint-correctness"></a>sin-midpoint-correctness: Fix midpoint usage for correctness
 **File:** `src/ops/sin.rs:131`
 ```rust
@@ -75,12 +61,12 @@ Correctness issue in range reduction.
 ```
 May need adaptive precision.
 
-### <a id="sin-arbitrary-precision"></a>sin-arbitrary-precision: Support arbitrary precision in divide_by_factorial_directed
-**File:** `src/ops/sin.rs:721`
+### <a id="sin-arbitrary-precision"></a>sin-arbitrary-precision: Support arbitrary precision in sin Taylor series
+**File:** `src/ops/sin.rs:769` and `src/ops/sin.rs:652-653`
 ```rust
 // TODO(sin-arbitrary-precision): Support arbitrary precision instead of fixed 64 bits.
 ```
-The `divide_by_factorial_directed` function uses a fixed 64-bit precision for reciprocal computation. This caps achievable accuracy and should be made adaptive based on the requested output precision, similar to the issues in pi.rs.
+Two related hardcoded 64-bit caps limit sin accuracy: (1) `divide_by_factorial_directed` uses fixed 64-bit precision for reciprocal computation, and (2) `compute_sin_on_monotonic_interval` truncates interval endpoints to 64-bit mantissas before evaluating Taylor bounds. Both should be made adaptive based on the requested output precision, similar to the issues in pi.rs.
 
 ### <a id="sin-refine-default"></a>sin-refine-default: Use refine_to_default instead of custom loop
 **File:** `src/ops/sin.rs:301`
