@@ -127,13 +127,15 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
     // Process each endpoint through range reduction with full interval tracking
     let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
 
-    // Check if the input interval is wide enough to contain a full period
+    // Check if the input interval is wide enough to contain a full period.
+    // Use the lower bound of 2π for the comparison: if the input width exceeds even
+    // the smallest possible 2π, it definitely spans a full period. This is the
+    // conservative direction — we may return [-1, 1] slightly too eagerly (when the
+    // width is between two_pi_lo and true 2π), but we never miss a case where
+    // the width truly exceeds 2π. Over-approximation is always sound; under-approximation
+    // would be a correctness bug.
     let input_width = upper_bin.sub(lower_bin);
-    // TODO(correctness): Using midpoint instead of two_pi_interval.lo could cause incorrect
-    // classification at boundary cases. If input_width is between two_pi_lo and two_pi_hi,
-    // we might miss that it spans a full period. Should use two_pi_interval.lo for conservative check.
-    let two_pi_approx = two_pi_interval.midpoint();
-    if input_width >= two_pi_approx {
+    if input_width >= *two_pi_interval.lo() {
         // Input spans at least one full period, sin ranges over all of [-1, 1]
         return Ok(Bounds::new(
             XBinary::Finite(neg_one),
@@ -275,64 +277,69 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
     precision_for_branch.max(precision_for_answer)
 }
 
-/// Reduces an input interval to [-pi, pi] using interval arithmetic.
+/// Reduces an input interval to approximately [-pi, pi] using interval arithmetic.
 ///
 /// Returns the reduced interval accounting for pi approximation error.
-/// Iterates until the result is within bounds.
+///
+/// The approach computes k = round(midpoint / 2π_mid) analytically in a single step,
+/// then subtracts k * [2π_lo, 2π_hi] using full interval arithmetic. This handles
+/// arbitrarily large inputs correctly because k is computed as a BigInt with no
+/// magnitude limitation. After the initial reduction, at most 2 fixup iterations
+/// handle rounding edge cases (where the midpoint-derived k was off by 1).
+///
+/// Soundness argument: the subtraction `current - k * two_pi` uses full interval
+/// arithmetic, so the result correctly contains all possible true values regardless
+/// of which k we pick. The choice of k only affects how close we land to [-π, π] —
+/// not whether the result is a valid enclosure.
 fn reduce_to_pi_range_interval(
     input: &FiniteBounds,
     two_pi: &FiniteBounds,
     pi: &FiniteBounds,
 ) -> FiniteBounds {
-    // TODO(correctness): Using midpoints for k computation could cause incorrect range reduction.
-    // If the input interval straddles a multiple of 2*pi, different parts of the interval may
-    // need different k values. Using midpoints could cause k to be off by 1, resulting in
-    // reduced values outside [-pi, pi]. Should track how k varies across the interval.
     let two_pi_mid = two_pi.midpoint();
-    let neg_pi_lo = pi.lo().neg(); // most negative possible -pi (inner bound)
+    let neg_pi_hi = pi.hi().neg();
 
     let mut current = input.clone();
 
-    // Iterate reduction until we're in range (at most a few iterations needed)
-    // TODO(correctness): For extremely large inputs where |x| >> 2^10 * 2*pi, ten iterations
-    // may not be enough. The fallback "return what we have" could return an interval outside
-    // [-pi, pi]. Should compute k analytically instead of iterating, or increase limit.
-    // TODO: should use the thing with refine_to_default rather than a custom loop with custom max iterations
-    for _ in 0..10 {
-        // Check if already in range: [-pi_lo, pi_lo] is the "safe" inner range
-        // We use inner bounds to be conservative
-        if *current.lo() >= neg_pi_lo && current.hi() <= *pi.lo() {
-            return current;
-        }
+    // Compute k analytically: k = round(midpoint(input) / midpoint(2π)).
+    // This is a single BigInt computation that works for arbitrarily large inputs.
+    // Using midpoints here is fine because k is just an integer we choose — the
+    // soundness comes from the interval subtraction, not from k being exact.
+    let current_mid = current.midpoint();
+    let k = compute_reduction_factor(&current_mid, &two_pi_mid);
 
+    if !k.is_zero() {
+        let k_times_two_pi = two_pi.scale_bigint(&k);
+        current = current.interval_sub(&k_times_two_pi);
+    }
+
+    // After the analytical reduction, we should be close to [-π, π].
+    // At most 2 fixup iterations handle the case where k was off by 1
+    // (which can happen when the midpoint is near a multiple of 2π).
+    for _ in 0..2 {
         // Check if we're within the outer bounds [-pi_hi, pi_hi].
         // This is acceptable because downstream code (reduce_to_half_pi_range_interval)
         // uses conservative interval comparisons with pi/half_pi that properly account
         // for the uncertainty in the pi approximation. The reduced value doesn't need
         // to be exactly in [-π, π]; it just needs to be close enough that the interval
         // comparisons can correctly determine which trigonometric identity to apply.
-        let neg_pi_hi = pi.hi().neg();
         if *current.lo() >= neg_pi_hi && current.hi() <= pi.hi() {
             return current;
         }
 
-        // Compute k = round(x / 2*pi) using interval midpoint
-        let current_mid = current.midpoint();
-        let k = compute_reduction_factor(&current_mid, &two_pi_mid);
+        // Compute a small fixup k (should be -1, 0, or 1)
+        let fixup_mid = current.midpoint();
+        let fixup_k = compute_reduction_factor(&fixup_mid, &two_pi_mid);
 
-        if k.is_zero() {
-            // Can't reduce further
-            return current;
+        if fixup_k.is_zero() {
+            // Can't reduce further — we're as close as we can get
+            break;
         }
 
-        // Compute k * 2*pi as an interval
-        let k_times_two_pi = two_pi.scale_bigint(&k);
-
-        // Subtract: current - k*2*pi using interval arithmetic
-        current = current.interval_sub(&k_times_two_pi);
+        let fixup_shift = two_pi.scale_bigint(&fixup_k);
+        current = current.interval_sub(&fixup_shift);
     }
 
-    // If we still haven't converged after 10 iterations, return what we have
     current
 }
 
@@ -402,16 +409,21 @@ fn reduce_to_half_pi_range_interval(
         };
     }
 
-    // Case 4: Straddles pi/2 (contains maximum)
-    // reduced.lo < half_pi.hi AND reduced.hi > half_pi.lo
-    if *reduced.lo() < half_pi.hi() && reduced.hi() > *half_pi.lo() {
-        // The interval contains pi/2 where sin = 1
-        // We need to compute the minimum sin value over the interval
-        // The min occurs at one of the endpoints of the sub-interval in [-pi/2, pi]
-        // that doesn't contain pi/2
+    // Determine which critical points the interval might straddle.
+    // The "both" check must come before the individual cases so that an interval
+    // straddling BOTH ±pi/2 returns ContainsBoth rather than just ContainsMax.
+    let spans_max = *reduced.lo() < half_pi.hi() && reduced.hi() > *half_pi.lo();
+    let spans_min = *reduced.lo() < neg_half_pi.hi() && reduced.hi() > *neg_half_pi.lo();
 
-        // Conservative: compute sin at both adjusted endpoints and take min
-        // Use interval-based pi for proper error tracking
+    // Case 4: Straddles both pi/2 and -pi/2
+    if spans_max && spans_min {
+        return ReductionResult::ContainsBoth;
+    }
+
+    // Case 5: Straddles pi/2 only (contains maximum)
+    if spans_max {
+        // The interval contains pi/2 where sin = 1
+        // Compute the minimum sin value at the endpoints
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
         let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
         let sin_min = if sin_bounds_at_lo.lo() < sin_bounds_at_hi.lo() {
@@ -423,9 +435,8 @@ fn reduce_to_half_pi_range_interval(
         return ReductionResult::ContainsMax { sin_min };
     }
 
-    // Case 5: Straddles -pi/2 (contains minimum)
-    // reduced.lo < neg_half_pi.hi AND reduced.hi > neg_half_pi.lo
-    if *reduced.lo() < neg_half_pi.hi() && reduced.hi() > *neg_half_pi.lo() {
+    // Case 6: Straddles -pi/2 only (contains minimum)
+    if spans_min {
         // The interval contains -pi/2 where sin = -1
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
         let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
@@ -438,21 +449,13 @@ fn reduce_to_half_pi_range_interval(
         return ReductionResult::ContainsMin { sin_max };
     }
 
-    // Case 6: Spans multiple branches (complex case)
-    // This happens when the interval spans more than pi/2 in width
-    // Compute conservative bounds by evaluating sin at several points
+    // Case 7: Spans multiple branches but doesn't straddle either critical point.
+    // This happens when the interval crosses a branch boundary (e.g., between
+    // center and upper regions) without containing pi/2 or -pi/2.
+    // Compute conservative bounds at both endpoints and take their union.
     let neg_one = Binary::new(BigInt::from(-1), BigInt::zero());
     let pos_one = Binary::new(BigInt::from(1), BigInt::zero());
 
-    // Check if we span both critical points
-    let spans_max = *reduced.lo() < half_pi.hi() && reduced.hi() > *half_pi.lo();
-    let spans_min = *reduced.lo() < neg_half_pi.hi() && reduced.hi() > *neg_half_pi.lo();
-
-    if spans_max && spans_min {
-        return ReductionResult::ContainsBoth;
-    }
-
-    // Otherwise compute bounds at endpoints using interval-based pi and take their union
     let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
     let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
     let combined = sin_bounds_1.join(&sin_bounds_2);
@@ -1233,5 +1236,160 @@ mod tests {
             "midpoint of 512-bit bounds should agree with f64 sin(1) to ~52 bits, diff = {}",
             diff
         );
+    }
+
+    // =====================================================================
+    // Tests for the fixed correctness issues
+    // =====================================================================
+
+    #[test]
+    fn sin_extremely_large_input() {
+        // Correctness invariant for large inputs: 2^20 ≈ 1_048_576 (k ≈ 166_886).
+        let large = Computable::constant(bin(1, 20)); // 2^20 = 1_048_576
+        let sin_large = large.sin();
+        let epsilon = ubin(1, -4);
+        let bounds = sin_large
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed for very large input");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+        assert!(lower >= neg_one, "lower bound {} should be >= -1", lower);
+        assert!(upper <= one, "upper bound {} should be <= 1", upper);
+
+        // sin(2^20) ≈ -0.24271... — verify bounds contain this
+        let expected_f64 = (1048576.0_f64).sin();
+        let expected = unwrap_finite(
+            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
+        );
+        assert!(
+            lower <= expected && expected <= upper,
+            "sin(2^20) bounds [{}, {}] should contain expected value {}",
+            lower,
+            upper,
+            expected
+        );
+    }
+
+    #[test]
+    fn sin_very_large_input_2_pow_30() {
+        // Correctness invariant: 2^30 ≈ 1 billion, k ≈ 170 million
+        let large = Computable::constant(bin(1, 30));
+        let sin_large = large.sin();
+        let epsilon = ubin(1, -4);
+        let bounds = sin_large
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed for 2^30 input");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+        assert!(lower >= neg_one, "lower bound should be >= -1");
+        assert!(upper <= one, "upper bound should be <= 1");
+    }
+
+    #[test]
+    fn sin_negative_large_input() {
+        // Correctness invariant: large negative input -10000
+        let x = Computable::constant(bin(-10000, 0));
+        let sin_x = x.sin();
+        let epsilon = ubin(1, -4);
+        let bounds = sin_x
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed for large negative input");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+        assert!(lower >= neg_one, "lower bound should be >= -1");
+        assert!(upper <= one, "upper bound should be <= 1");
+
+        // sin(-10000) ≈ 0.30561... — verify bounds contain this
+        let expected_f64 = (-10000.0_f64).sin();
+        let expected = unwrap_finite(
+            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
+        );
+        assert!(
+            lower <= expected && expected <= upper,
+            "sin(-10000) bounds [{}, {}] should contain expected value {}",
+            lower,
+            upper,
+            expected
+        );
+    }
+
+    #[test]
+    fn sin_midpoint_correctness_uses_lo_bound() {
+        // Regression test for sin-midpoint-correctness: verify that the full-period
+        // check uses the lower bound of 2π (conservative direction).
+        //
+        // We directly call sin_bounds with an interval whose width is slightly
+        // above the lower bound of 2π. The result should be [-1, 1] because
+        // the interval might span a full period.
+        use super::two_pi_interval_at_precision;
+
+        let two_pi = two_pi_interval_at_precision(64);
+        // Create an interval [0, two_pi_lo + epsilon]: width > two_pi_lo
+        let lo = bin(0, 0);
+        let hi = two_pi.lo().add(&bin(1, -60));
+        let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
+        let result = sin_bounds(&input_bounds, &BigInt::from(5))
+            .expect("sin_bounds should succeed");
+
+        // Because the width >= two_pi_lo, the conservative check should trigger
+        // and return [-1, 1] (possibly slightly widened by simplification).
+        let lower = unwrap_finite(result.small());
+        let upper = unwrap_finite(&result.large());
+
+        // The key property: the bounds must be at least as wide as [-1, 1]
+        assert!(lower <= bin(-1, 0), "lower bound {} should be <= -1", lower);
+        assert!(upper >= bin(1, 0), "upper bound {} should be >= 1", upper);
+    }
+
+    #[test]
+    fn sin_interval_straddling_both_critical_points() {
+        // Correctness invariant: [-2, 2] straddles both +pi/2 and -pi/2.
+        let computable = interval_midpoint_computable(-2, 2);
+        let sin_x = computable.sin();
+        let bounds = sin_x.bounds().expect("bounds should succeed");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+
+        // The interval contains both pi/2 (sin=1) and -pi/2 (sin=-1),
+        // so the bounds must cover [-1, 1].
+        assert!(
+            lower <= bin(-1, 0),
+            "lower bound {} should be <= -1 (interval straddles both critical points)",
+            lower
+        );
+        assert!(
+            upper >= bin(1, 0),
+            "upper bound {} should be >= 1 (interval straddles both critical points)",
+            upper
+        );
+    }
+
+    #[test]
+    fn sin_wide_interval_near_period_boundary() {
+        // Regression: [-3, 3] straddles both ±pi/2. The old code's Case 4
+        // (ContainsMax) fired first, producing a lower bound above -1.
+        let computable = interval_midpoint_computable(-3, 3);
+        let sin_x = computable.sin();
+        let bounds = sin_x.bounds().expect("bounds should succeed");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+
+        // Width ~6 covers both ±pi/2, so bounds must include [-1, 1]
+        assert!(lower <= bin(-1, 0), "lower bound should be <= -1");
+        assert!(upper >= bin(1, 0), "upper bound should be >= 1");
     }
 }
