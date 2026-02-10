@@ -8,6 +8,13 @@ use std::ops::ShlAssign;
 use num_bigint::BigUint;
 use num_traits::Zero;
 
+/// Maximum shift amount in bits before we consider it memory-exhausting.
+///
+/// A shift of 2^32 bits produces a number requiring ~512 MB just for storage,
+/// and intermediate computations would need far more. We panic explicitly rather
+/// than attempting the allocation and hitting an OOM.
+const MAX_SHIFT_BITS: u64 = 1u64 << 32;
+
 /// Performs a left shift of a mantissa by a potentially large amount.
 ///
 /// BigInt only implements shifts for primitive integers, so this function
@@ -18,17 +25,18 @@ use num_traits::Zero;
 /// * `shift` - The shift amount (can be arbitrarily large)
 /// * `chunk_limit` - Maximum shift per chunk (injected for testability)
 ///
-/// # Note
-/// Extremely large shifts will still attempt to allocate enormous values;
-/// this just keeps each individual shift within primitive bounds.
-///
-/// TODO: Find a solution for extreme exponents causing memory issues. Options include:
-/// detecting and erroring on exponents beyond a threshold, lazy/symbolic representation,
-/// or capping precision in some contexts.
+/// # Panics
+/// Panics via `detected_computable_would_exhaust_memory!` if `shift` exceeds
+/// `MAX_SHIFT_BITS`, since the result would be too large to fit in memory.
 pub(crate) fn shift_mantissa_chunked<M>(mantissa: &M, shift: &BigUint, chunk_limit: &BigUint) -> M
 where
     M: Clone + ShlAssign<usize>,
 {
+    if shift > &BigUint::from(MAX_SHIFT_BITS) {
+        crate::detected_computable_would_exhaust_memory!(
+            "shift by extreme exponent"
+        );
+    }
     let mut shifted = mantissa.clone();
     let mut remaining = shift.clone();
     let chunk_limit_usize = {
