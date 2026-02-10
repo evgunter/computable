@@ -40,20 +40,6 @@ Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters
 ```
 Use the type system to prevent invalid bounds ordering rather than runtime checks.
 
-### <a id="pi-f64"></a>pi-f64: Replace f64 with rigorous computation in pi
-**File:** `src/ops/pi.rs:84`
-```rust
-// TODO(correctness): Using f64 for this calculation is not rigorous for a "provably correct"
-```
-Need arbitrary precision instead of f64.
-
-### <a id="shift-extreme"></a>shift-extreme: Handle extreme exponents in shift
-**File:** `src/binary/shift.rs:25`
-```rust
-/// TODO: Find a solution for extreme exponents causing memory issues.
-```
-Memory safety for edge cases.
-
 ### <a id="pow-type-bounds"></a>pow-type-bounds: Type system for invalid bounds in pow
 **File:** `src/ops/pow.rs:51`
 ```rust

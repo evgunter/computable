@@ -13,6 +13,12 @@
 //!   infinite values that are currently unexpected but might become valid in the future
 //!   (e.g., if we add extended real number support). This macro wraps `debug_assert!(false, ...)`
 //!   to provide a consistent way to flag these cases.
+//!
+//! - **`detected_computable_would_exhaust_memory!(...)`**: Use for cases where the numbers
+//!   involved are so large that instantiating them would cause an out-of-memory condition.
+//!   An explicit panic is preferable to an OOM crash, so we make an exception to our no-panics
+//!   policy. Unlike the infinite-value macro, this always panics (not just in debug builds)
+//!   because there is no safe fallback.
 
 use crate::binary::BinaryError;
 
@@ -43,6 +49,35 @@ macro_rules! detected_computable_with_infinite_value {
         )
     };
 }
+/// Macro to flag operations that would exhaust memory if attempted.
+///
+/// Some computations involve numbers so large that instantiating them would
+/// cause an out-of-memory condition. An explicit panic with a clear message
+/// is preferable to an OOM crash, so we make an exception to our no-panics
+/// policy for these cases.
+///
+/// Unlike `detected_computable_with_infinite_value!` (which uses `debug_assert`
+/// because the code has a reasonable fallback), this macro always panics because
+/// there is no safe way to continue — attempting to proceed would OOM.
+///
+/// # Arguments
+///
+/// * `$msg` - A description of what case was encountered
+///
+/// # Example
+///
+/// ```should_panic
+/// computable::detected_computable_would_exhaust_memory!("shift by 2^64 bits");
+/// ```
+#[macro_export]
+macro_rules! detected_computable_would_exhaust_memory {
+    ($msg:expr) => {
+        panic!(
+            concat!($msg, " - would exhaust memory if attempted")
+        )
+    };
+}
+
 use std::fmt;
 
 /// Errors that can occur during computable operations and refinement.
@@ -134,5 +169,11 @@ mod tests {
     #[cfg(debug_assertions)]
     fn detected_computable_with_infinite_value_macro_panics_in_debug() {
         detected_computable_with_infinite_value!("test message");
+    }
+
+    #[test]
+    #[should_panic(expected = "test message")]
+    fn detected_computable_would_exhaust_memory_macro_panics() {
+        detected_computable_would_exhaust_memory!("test message");
     }
 }

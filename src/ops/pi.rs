@@ -80,9 +80,19 @@ pub fn pi_bounds_at_precision(precision_bits: u64) -> (Binary, Binary) {
     // So: n > (precision_bits + 4) / (2 * log2(5)) - 0.5
     // log2(5) ~= 2.32, so: n > (precision_bits + 4) / 4.64 - 0.5
     //
-    // We use a conservative estimate with some margin:
-    // TODO(correctness): Using f64 for this calculation is not rigorous for a "provably correct"
-    // library. Should use integer arithmetic with conservative bounds instead.
+    // We use a conservative estimate with some margin.
+    //
+    // Using f64 here is not perfectly rigorous, but precision values large enough to
+    // cause f64 imprecision (>2^53) would exhaust memory during pi computation anyway
+    // (each Taylor term involves BigInts with that many bits). We guard against this
+    // explicitly rather than letting it OOM.
+    if precision_bits > 1u64 << 32 {
+        crate::detected_computable_would_exhaust_memory!(
+            "pi computation at this precision"
+        );
+    }
+    // Safe to use f64: the OOM guard above ensures precision_bits <= 2^32, well
+    // within the range where f64 represents integers exactly (up to 2^53).
     let num_terms = (((precision_bits as f64 + 10.0) / 4.0).ceil() as usize).max(5);
     compute_pi_bounds(num_terms)
 }
