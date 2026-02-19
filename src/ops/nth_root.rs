@@ -33,7 +33,7 @@ use parking_lot::RwLock;
 
 use crate::binary::{Binary, Bounds, FiniteBounds, XBinary};
 use crate::binary_utils::bisection::{
-    NormalizedBisectionResult, NormalizedBounds, bisection_step_normalized, midpoint,
+    PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint,
     normalize_bounds,
 };
 use crate::binary_utils::power::binary_pow;
@@ -70,7 +70,7 @@ pub struct NthRootOp {
 #[derive(Clone, Debug)]
 pub struct BisectionState {
     /// Current bounds in normalized form.
-    pub bounds: NormalizedBounds,
+    pub bounds: PrefixBounds,
     /// The target value (x) whose n-th root we're computing.
     pub target: Binary,
     /// Whether the result should be negated (for odd roots of negative numbers).
@@ -91,7 +91,7 @@ impl NodeOp for NthRootOp {
             }
             Some(s) => {
                 // Return current bisection interval.
-                // NormalizedBounds are already prefix form — width is always 1×2^e,
+                // PrefixBounds are already prefix form — width is always 1×2^e,
                 // so no simplification is needed.
                 let finite_bounds = {
                     let bounds = if let Some(exact) = &s.exact_value {
@@ -139,10 +139,10 @@ impl NodeOp for NthRootOp {
                     bisection_step_normalized(&s.bounds, |mid| binary_pow(mid, degree).cmp(target));
 
                 match result {
-                    NormalizedBisectionResult::Narrowed(new_bounds) => {
+                    PrefixBisectionResult::Narrowed(new_bounds) => {
                         s.bounds = new_bounds;
                     }
-                    NormalizedBisectionResult::Exact(mid) => {
+                    PrefixBisectionResult::Exact(mid) => {
                         s.exact_value = Some(mid);
                     }
                 }
@@ -358,7 +358,7 @@ fn initialize_nth_root_bisection_state(
     };
 
     Ok(BisectionState {
-        bounds: NormalizedBounds::new(mantissa, exponent),
+        bounds: PrefixBounds::new(mantissa, exponent),
         target: actual_target,
         negate_result,
         exact_value: None,
