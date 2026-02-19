@@ -675,12 +675,16 @@ mod tests {
 
         // Refine to zero precision - should just compute initial bounds
         let target_zero = PrecisionLevel::zero();
-        let bounds0 = node.refine_to_precision(&target_zero, 100).expect("should refine");
+        let bounds0 = node
+            .refine_to_precision(&target_zero, 100)
+            .expect("should refine");
         assert!(node.current_precision().is_some());
 
         // Now refine to higher precision (8 bits) - should require multiple steps
         let target_8 = PrecisionLevel::from_bits(BigInt::from(8));
-        let bounds1 = node.refine_to_precision(&target_8, 100).expect("should refine");
+        let bounds1 = node
+            .refine_to_precision(&target_8, 100)
+            .expect("should refine");
 
         // The bounds should have narrowed significantly
         assert!(bounds1.width() < bounds0.width());
@@ -709,7 +713,9 @@ mod tests {
 
         // Request precision of 16 bits - requires at least 16 refinement steps
         let target = PrecisionLevel::from_bits(BigInt::from(16));
-        let bounds = node.refine_to_precision(&target, 100).expect("should refine");
+        let bounds = node
+            .refine_to_precision(&target, 100)
+            .expect("should refine");
 
         // Should have done at least 16 refinements
         assert!(refinements.load(AtomicOrdering::SeqCst) >= 16);
@@ -743,7 +749,9 @@ mod tests {
 
         // Any precision target should be immediately met
         let target = PrecisionLevel::from_bits(BigInt::from(100));
-        let bounds = node.refine_to_precision(&target, 100).expect("should succeed");
+        let bounds = node
+            .refine_to_precision(&target, 100)
+            .expect("should succeed");
 
         assert_eq!(*bounds.small(), bounds.large()); // Zero width
     }

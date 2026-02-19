@@ -228,7 +228,12 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
 /// Computes partial sum of arctan(1/k) Taylor series with directed rounding.
 ///
 /// sum = sum_{i=0}^{n-1} (-1)^i / ((2i+1) * k^(2i+1))
-fn arctan_recip_partial_sum(k: u64, num_terms: usize, rounding: RoundDir, precision_bits: usize) -> Binary {
+fn arctan_recip_partial_sum(
+    k: u64,
+    num_terms: usize,
+    rounding: RoundDir,
+    precision_bits: usize,
+) -> Binary {
     let mut sum = Binary::zero();
     let k_big = BigInt::from(k);
     let k_squared = &k_big * &k_big;

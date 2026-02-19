@@ -63,13 +63,22 @@ pub enum PrecisionLevel {
 
 #[allow(dead_code)] // Complete API - some methods reserved for future use
 impl PrecisionLevel {
-    pub fn zero() -> Self { PrecisionLevel::Zero }
-    pub fn infinite() -> Self { PrecisionLevel::Zero }
-    pub fn exact() -> Self { PrecisionLevel::Exact }
+    pub fn zero() -> Self {
+        PrecisionLevel::Zero
+    }
+    pub fn infinite() -> Self {
+        PrecisionLevel::Zero
+    }
+    pub fn exact() -> Self {
+        PrecisionLevel::Exact
+    }
 
     pub fn from_bits(bits: BigInt) -> Self {
-        if bits <= BigInt::zero() { PrecisionLevel::Zero }
-        else { PrecisionLevel::Bits(bits) }
+        if bits <= BigInt::zero() {
+            PrecisionLevel::Zero
+        } else {
+            PrecisionLevel::Bits(bits)
+        }
     }
 
     pub fn from_width(width: &UXBinary) -> Self {
@@ -80,18 +89,30 @@ impl PrecisionLevel {
                 let mantissa_bits = w.mantissa().bits() as i64;
                 let exponent_val = w.exponent().to_i64().unwrap_or(0);
                 let precision = -exponent_val - mantissa_bits + 1;
-                if precision <= 0 { PrecisionLevel::Zero }
-                else { PrecisionLevel::Bits(BigInt::from(precision)) }
+                if precision <= 0 {
+                    PrecisionLevel::Zero
+                } else {
+                    PrecisionLevel::Bits(BigInt::from(precision))
+                }
             }
         }
     }
 
-    pub fn is_exact(&self) -> bool { matches!(self, PrecisionLevel::Exact) }
-    pub fn is_zero(&self) -> bool { matches!(self, PrecisionLevel::Zero) }
-    pub fn is_infinite(&self) -> bool { self.is_zero() }
+    pub fn is_exact(&self) -> bool {
+        matches!(self, PrecisionLevel::Exact)
+    }
+    pub fn is_zero(&self) -> bool {
+        matches!(self, PrecisionLevel::Zero)
+    }
+    pub fn is_infinite(&self) -> bool {
+        self.is_zero()
+    }
 
     pub fn bits(&self) -> Option<&BigInt> {
-        match self { PrecisionLevel::Bits(b) => Some(b), _ => None }
+        match self {
+            PrecisionLevel::Bits(b) => Some(b),
+            _ => None,
+        }
     }
 
     pub fn meets(&self, target: &PrecisionLevel) -> bool {
@@ -105,7 +126,9 @@ impl PrecisionLevel {
         }
     }
 
-    pub fn at_least(&self, target: &PrecisionLevel) -> bool { self.meets(target) }
+    pub fn at_least(&self, target: &PrecisionLevel) -> bool {
+        self.meets(target)
+    }
 
     pub fn increment(&self) -> Self {
         match self {
@@ -126,7 +149,9 @@ impl PrecisionLevel {
 }
 
 impl Default for PrecisionLevel {
-    fn default() -> Self { PrecisionLevel::zero() }
+    fn default() -> Self {
+        PrecisionLevel::zero()
+    }
 }
 
 // ============================================================================
@@ -147,7 +172,10 @@ pub enum BoundsBlackholeState {
     /// A thread is currently computing or refining bounds.
     BeingEvaluated,
     /// Bounds have been computed/refined to some precision.
-    Evaluated { bounds: Bounds, precision: PrecisionLevel },
+    Evaluated {
+        bounds: Bounds,
+        precision: PrecisionLevel,
+    },
     /// Computation failed with an error.
     Failed(ComputableError),
 }
@@ -159,7 +187,10 @@ pub enum ClaimResult {
     AlreadyMeets(Bounds),
     /// Claimed for computation/refinement - caller should compute.
     #[allow(dead_code)] // Fields reserved for future use
-    Claimed { current_bounds: Option<Bounds>, current_precision: PrecisionLevel },
+    Claimed {
+        current_bounds: Option<Bounds>,
+        current_precision: PrecisionLevel,
+    },
 }
 
 /// Unified blackhole for both initial bounds computation AND refinement.
@@ -308,7 +339,9 @@ impl BoundsBlackhole {
 }
 
 impl Default for BoundsBlackhole {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ============================================================================
@@ -337,8 +370,12 @@ impl NormalizedBounds {
         }
     }
 
-    pub fn bounds(&self) -> &Bounds { &self.bounds }
-    pub fn precision(&self) -> &PrecisionLevel { &self.precision }
+    pub fn bounds(&self) -> &Bounds {
+        &self.bounds
+    }
+    pub fn precision(&self) -> &PrecisionLevel {
+        &self.precision
+    }
 
     /// Refines the bounds to a new value.
     ///
@@ -355,7 +392,9 @@ impl NormalizedBounds {
         self.bounds = new_bounds;
     }
 
-    pub fn meets_precision(&self, target: &PrecisionLevel) -> bool { self.precision.meets(target) }
+    pub fn meets_precision(&self, target: &PrecisionLevel) -> bool {
+        self.precision.meets(target)
+    }
 
     pub fn meets_epsilon(&self, epsilon: &UBinary) -> bool {
         match self.bounds.width() {
@@ -443,7 +482,9 @@ mod tests {
         assert_eq!(nb.bounds().small(), &xbin(0, 0));
     }
 
-    fn test_bounds() -> Bounds { Bounds::new(xbin(1, 0), xbin(2, 0)) }
+    fn test_bounds() -> Bounds {
+        Bounds::new(xbin(1, 0), xbin(2, 0))
+    }
 
     #[test]
     fn bounds_blackhole_new_is_not_evaluated() {
@@ -502,29 +543,33 @@ mod tests {
         let complete_count = Arc::new(AtomicUsize::new(0));
         let barrier = Arc::new(Barrier::new(4));
 
-        let handles: Vec<_> = (0..4).map(|_| {
-            let bh = Arc::clone(&bh);
-            let count = Arc::clone(&complete_count);
-            let bar = Arc::clone(&barrier);
-            thread::spawn(move || {
-                bar.wait();
-                // Target precision of 8 bits = width of 2^(-8) = 1/256
-                let target = PrecisionLevel::from_bits(BigInt::from(8));
-                match bh.try_claim(&target) {
-                    Ok(ClaimResult::Claimed { .. }) => {
-                        count.fetch_add(1, AtomicOrdering::SeqCst);
-                        thread::sleep(Duration::from_millis(10));
-                        // Create bounds with width = 1 * 2^(-10) to meet precision 8
-                        let bounds = Bounds::new(xbin(1, -10), xbin(2, -10));
-                        bh.complete(bounds);
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let bh = Arc::clone(&bh);
+                let count = Arc::clone(&complete_count);
+                let bar = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    bar.wait();
+                    // Target precision of 8 bits = width of 2^(-8) = 1/256
+                    let target = PrecisionLevel::from_bits(BigInt::from(8));
+                    match bh.try_claim(&target) {
+                        Ok(ClaimResult::Claimed { .. }) => {
+                            count.fetch_add(1, AtomicOrdering::SeqCst);
+                            thread::sleep(Duration::from_millis(10));
+                            // Create bounds with width = 1 * 2^(-10) to meet precision 8
+                            let bounds = Bounds::new(xbin(1, -10), xbin(2, -10));
+                            bh.complete(bounds);
+                        }
+                        Ok(ClaimResult::AlreadyMeets(_)) => {}
+                        Err(_) => panic!("unexpected error"),
                     }
-                    Ok(ClaimResult::AlreadyMeets(_)) => {}
-                    Err(_) => panic!("unexpected error"),
-                }
+                })
             })
-        }).collect();
+            .collect();
 
-        for h in handles { h.join().expect("join"); }
+        for h in handles {
+            h.join().expect("join");
+        }
         // Exactly one thread should have completed the refinement
         assert_eq!(complete_count.load(AtomicOrdering::SeqCst), 1);
     }
