@@ -83,4 +83,59 @@ where
     pub fn large(&self) -> T {
         self.lower.clone().add_width(self.width.clone())
     }
+
+    /// Creates a point interval [x, x] with zero width.
+    pub fn point(x: T) -> Self
+    where
+        W: num_traits::Zero,
+    {
+        Self::from_lower_and_width(x, W::zero())
+    }
+
+    /// Checks if this interval contains a point.
+    pub fn contains(&self, point: &T) -> bool {
+        self.small() <= point && *point <= self.large()
+    }
+
+    /// Checks if this interval is entirely less than another.
+    pub fn entirely_less_than(&self, other: &Self) -> bool {
+        self.large() < *other.small()
+    }
+
+    /// Checks if this interval is entirely greater than another.
+    pub fn entirely_greater_than(&self, other: &Self) -> bool {
+        *self.small() > other.large()
+    }
+
+    /// Checks if this interval overlaps with another.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        !(self.entirely_less_than(other) || self.entirely_greater_than(other))
+    }
+
+    /// Returns the join (smallest enclosing interval) of two intervals.
+    ///
+    /// `[a, b].join([c, d]) = [min(a, c), max(b, d)]`
+    ///
+    /// This is the lattice join operation: the smallest interval that contains
+    /// both inputs. Note that if the intervals are disjoint, the result includes
+    /// points in neither original interval (i.e., this is the convex hull).
+    pub fn join(&self, other: &Self) -> Self {
+        let min_lo = std::cmp::min(self.small(), other.small()).clone();
+        let max_hi = std::cmp::max(self.large(), other.large());
+        Self::new(min_lo, max_hi)
+    }
+
+    /// Returns the intersection of two intervals, if non-empty.
+    ///
+    /// `[a, b].intersection([c, d]) = [max(a, c), min(b, d)]` if non-empty
+    ///
+    /// Returns `None` if the intervals don't overlap.
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
+        if !self.overlaps(other) {
+            return None;
+        }
+        let max_lo = std::cmp::max(self.small(), other.small()).clone();
+        let min_hi = std::cmp::min(self.large(), other.large());
+        Some(Self::new(max_lo, min_hi))
+    }
 }
