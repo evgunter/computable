@@ -62,7 +62,7 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use std::cmp::Ordering;
 
-use crate::binary::{Binary, FiniteBounds};
+use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
 
 /// Normalized bounds for bisection where lower = mantissa * 2^exponent and width = 2^exponent.
 ///
@@ -93,6 +93,77 @@ impl NormalizedBounds {
     /// Returns the midpoint: (2 * mantissa + 1) * 2^(exponent - 1).
     pub fn midpoint(&self) -> Binary {
         Binary::new(&self.mantissa * 2 + 1, self.exponent.clone() - 1)
+    }
+
+    /// Interval addition: self + other. Result is normalized.
+    ///
+    /// Converts both operands to `FiniteBounds`, uses existing interval arithmetic,
+    /// then normalizes the result.
+    pub fn interval_add(
+        &self,
+        other: &Self,
+    ) -> Result<Self, crate::error::ComputableError> {
+        let result = self.to_finite_bounds().interval_add(&other.to_finite_bounds());
+        Self::from_finite_bounds(&result)
+    }
+
+    /// Interval subtraction: self - other. Result is normalized.
+    pub fn interval_sub(
+        &self,
+        other: &Self,
+    ) -> Result<Self, crate::error::ComputableError> {
+        let result = self.to_finite_bounds().interval_sub(&other.to_finite_bounds());
+        Self::from_finite_bounds(&result)
+    }
+
+    /// Interval negation: -self. Result is normalized.
+    pub fn interval_neg(&self) -> Result<Self, crate::error::ComputableError> {
+        let result = self.to_finite_bounds().interval_neg();
+        Self::from_finite_bounds(&result)
+    }
+
+    /// Scale by a positive UBinary. Result is normalized.
+    pub fn scale_positive(
+        &self,
+        k: &crate::binary::UBinary,
+    ) -> Result<Self, crate::error::ComputableError> {
+        let result = self.to_finite_bounds().scale_positive(k);
+        Self::from_finite_bounds(&result)
+    }
+
+    /// Scale by a BigInt (may negate). Result is normalized.
+    pub fn scale_bigint(
+        &self,
+        k: &BigInt,
+    ) -> Result<Self, crate::error::ComputableError> {
+        let result = self.to_finite_bounds().scale_bigint(k);
+        Self::from_finite_bounds(&result)
+    }
+
+    /// Convert arbitrary `FiniteBounds` to prefix form.
+    ///
+    /// This normalizes the bounds so that width = 1×2^e, which may slightly
+    /// expand the interval.
+    pub fn from_finite_bounds(
+        bounds: &FiniteBounds,
+    ) -> Result<Self, crate::error::ComputableError> {
+        let normalized = normalize_bounds(bounds)?;
+        let exponent = normalized.width().exponent().clone();
+        let mantissa = if normalized.small().mantissa().is_zero() {
+            BigInt::zero()
+        } else {
+            normalized.small().mantissa().clone()
+        };
+        Ok(Self { mantissa, exponent })
+    }
+
+    /// Convert to `Bounds` (for DAG boundary).
+    pub fn to_bounds(&self) -> Bounds {
+        let fb = self.to_finite_bounds();
+        Bounds::from_lower_and_width(
+            XBinary::Finite(fb.small().clone()),
+            UXBinary::Finite(fb.width().clone()),
+        )
     }
 }
 
@@ -273,6 +344,38 @@ pub fn normalize_bounds(
     };
 
     Ok(bounds_from_normalized(lower_mantissa, target_exp))
+}
+
+/// Normalizes finite bounds to `Bounds`, handling edge cases where prefix form isn't possible.
+///
+/// Prefix-form intervals `[m×2^e, (m+1)×2^e]` cannot represent:
+/// - **Zero-width intervals**: normalization would expand them to width 2^e
+/// - **Zero-crossing intervals**: no prefix interval can span zero
+///   (for m=-1 the upper is 0; for m=0 the lower is 0)
+///
+/// In these cases, the bounds are returned unchanged. This is fine because:
+/// - Zero-width bounds are already minimal (no precision to accumulate)
+/// - Zero-crossing bounds from sin/etc. have few mantissa bits (e.g., [-1, 1])
+pub fn normalize_finite_to_bounds(
+    bounds: &FiniteBounds,
+) -> Result<Bounds, crate::error::ComputableError> {
+    use num_traits::Signed;
+
+    let can_normalize = !bounds.width().mantissa().is_zero()
+        && !(bounds.small().mantissa().is_negative() && bounds.large().mantissa().is_positive());
+
+    if can_normalize {
+        let normalized = normalize_bounds(bounds)?;
+        Ok(Bounds::from_lower_and_width(
+            XBinary::Finite(normalized.small().clone()),
+            UXBinary::Finite(normalized.width().clone()),
+        ))
+    } else {
+        Ok(Bounds::from_lower_and_width(
+            XBinary::Finite(bounds.small().clone()),
+            UXBinary::Finite(bounds.width().clone()),
+        ))
+    }
 }
 
 #[cfg(test)]

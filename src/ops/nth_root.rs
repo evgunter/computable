@@ -31,9 +31,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{
-    Binary, Bounds, FiniteBounds, UXBinary, XBinary, margin_from_width, simplify_bounds_if_needed,
-};
+use crate::binary::{Binary, Bounds, FiniteBounds, XBinary};
 use crate::binary_utils::bisection::{
     NormalizedBisectionResult, NormalizedBounds, bisection_step_normalized, midpoint,
     normalize_bounds,
@@ -41,14 +39,6 @@ use crate::binary_utils::bisection::{
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-
-/// Precision threshold for triggering bounds simplification.
-/// 64 chosen: bisection benefits most from simplification (13% speedup vs disabled).
-const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 64;
-
-/// Loosening fraction for bounds simplification.
-/// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const MARGIN_SHIFT: u32 = 3;
 
 /// N-th root operation with binary search refinement.
 ///
@@ -100,13 +90,13 @@ impl NodeOp for NthRootOp {
                 compute_initial_bounds(&input_bounds, self.degree.get())
             }
             Some(s) => {
-                // Return current bisection interval, simplified if needed
+                // Return current bisection interval.
+                // NormalizedBounds are already prefix form — width is always 1×2^e,
+                // so no simplification is needed.
                 let finite_bounds = {
                     let bounds = if let Some(exact) = &s.exact_value {
-                        // Exact match found - point interval with zero width
                         FiniteBounds::point(exact.clone())
                     } else {
-                        // Reconstruct bounds from normalized form
                         s.bounds.to_finite_bounds()
                     };
                     if s.negate_result {
@@ -115,16 +105,9 @@ impl NodeOp for NthRootOp {
                         bounds
                     }
                 };
-                let raw_bounds = Bounds::from_lower_and_width(
+                Ok(Bounds::from_lower_and_width(
                     XBinary::Finite(finite_bounds.small().clone()),
-                    UXBinary::Finite(finite_bounds.width().clone()),
-                );
-                // Simplify bounds to reduce precision bloat from bisection
-                let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
-                Ok(simplify_bounds_if_needed(
-                    &raw_bounds,
-                    PRECISION_SIMPLIFICATION_THRESHOLD,
-                    &margin,
+                    crate::binary::UXBinary::Finite(finite_bounds.width().clone()),
                 ))
             }
         }

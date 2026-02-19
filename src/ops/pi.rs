@@ -19,23 +19,15 @@ use num_traits::One;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, XBinary, margin_from_width,
-    reciprocal_of_biguint, simplify_bounds_if_needed,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, reciprocal_of_biguint,
 };
+use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
 /// Initial number of Taylor series terms for pi computation.
 const INITIAL_PI_TERMS: usize = 10;
-
-/// Precision threshold for triggering bounds simplification.
-/// 128 chosen: similar to sin, Taylor series benefits from less frequent simplification.
-const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
-
-/// margin parameter for bounds simplification.
-/// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const MARGIN_SHIFT: u32 = 3;
 
 /// Returns the number of bits in the binary representation of `x`.
 ///
@@ -123,15 +115,9 @@ impl NodeOp for PiOp {
         let num_terms = *self.num_terms.read();
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
-        let raw_bounds = Bounds::new_checked(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi))
-            .map_err(|_| ComputableError::InvalidBoundsOrder)?;
-        // Simplify bounds to reduce precision bloat from high-precision pi computation
-        let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
-        Ok(simplify_bounds_if_needed(
-            &raw_bounds,
-            PRECISION_SIMPLIFICATION_THRESHOLD,
-            &margin,
-        ))
+        // Normalize to prefix form to prevent precision accumulation
+        let finite = FiniteBounds::new(pi_lo, pi_hi);
+        normalize_finite_to_bounds(&finite)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -349,7 +335,7 @@ pub fn half_pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::UBinary;
+    use crate::binary::{UBinary, XBinary};
     use num_bigint::BigUint;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {

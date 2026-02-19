@@ -1,26 +1,5 @@
 # TODOs - Ranked by Ease of Completion
 
-## Tier 2: Medium Effort (Unblocked, requires some work)
-
-### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
-**File:** `src/binary/shortest.rs:30`
-```rust
-// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
-// to reduce code duplication.
-```
-Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
-
-### <a id="prefix-bounds-migration"></a>prefix-bounds-migration: Eliminate shortest module via prefix-based bounds
-**File:** `src/binary/shortest.rs`
-Migrate all operations (pi, sin, nth_root) to use `NormalizedBounds` (prefix-based bounds) for interval arithmetic, so that precision never accumulates. Once all operations normalize their output, `simplify_bounds` and the rest of the shortest module can be removed. inv.rs has already been migrated as the proof of concept.
-
-### <a id="shortest-refinement"></a>shortest-refinement: Fix refinement progress tracking
-**File:** `src/binary/shortest.rs:282`
-```rust
-// TODO: all the cases that use this seem to not be tracking refinement progress properly.
-```
-Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
-
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="bounds-dedup"></a>bounds-dedup: Deduplicate FiniteBounds and Bounds

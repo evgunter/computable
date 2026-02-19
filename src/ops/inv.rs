@@ -10,7 +10,7 @@ use crate::binary::{
     Bounds, FiniteBounds, ReciprocalRounding, UXBinary, XBinary,
     reciprocal_rounded_abs_extended,
 };
-use crate::binary_utils::bisection::normalize_bounds;
+use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -38,11 +38,7 @@ impl NodeOp for InvOp {
         match (raw_bounds.small(), &raw_bounds.large()) {
             (XBinary::Finite(lo), XBinary::Finite(hi)) => {
                 let finite = FiniteBounds::new(lo.clone(), hi.clone());
-                let normalized = normalize_bounds(&finite)?;
-                Ok(Bounds::from_lower_and_width(
-                    XBinary::Finite(normalized.small().clone()),
-                    UXBinary::Finite(normalized.width().clone()),
-                ))
+                normalize_finite_to_bounds(&finite)
             }
             _ => Ok(raw_bounds),
         }
