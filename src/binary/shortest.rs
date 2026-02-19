@@ -276,11 +276,14 @@ pub fn bounds_precision(bounds: &Bounds) -> u64 {
     lower_bits + upper_bits
 }
 
-// TODO: all the cases that use this seem to not be tracking refinement progress properly.
-// i don't expect to see this in cases where we don't use the previous bounds to calculate the new bounds;
-// i think it's likely that what's happening in the cases where this is used now is that we're requesting
-// too much precision for bounds on a wide interval.
-// also in the longer term i think this function may not be necessary
+// TODO: Operations that use this function (inv, sin, pi, nth_root) can compute
+// bounds with unnecessarily high mantissa precision when the interval is wide.
+// For example, InvOp doubles its precision_bits each step regardless of input width,
+// producing bounds like (1.132979827398479..., 1.829038428903...) where each endpoint
+// has many mantissa bits but the interval is ~0.7 wide. This function is essential to
+// prevent that precision bloat: it shortens mantissa representations by slightly
+// widening the bounds, which is a net win because shorter mantissas make all
+// subsequent arithmetic faster.
 
 /// Simplifies bounds if they exceed a precision threshold.
 ///

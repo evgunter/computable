@@ -17,12 +17,13 @@ Both functions follow a similar pattern (check sign, handle zero-crossing, handl
 ```
 With the introduction of `bounds_from_normalized` in the bisection module, it may be possible to avoid needing explicit shortest-representation searches. Evaluate if this module is only needed for cases where bounds cannot be normalized initially.
 
-### <a id="shortest-refinement"></a>shortest-refinement: Fix refinement progress tracking
-**File:** `src/binary/shortest.rs:282`
+### <a id="shortest-refinement"></a>shortest-refinement: Scale operation precision relative to input width
+**File:** `src/binary/shortest.rs:279`
 ```rust
-// TODO: all the cases that use this seem to not be tracking refinement progress properly.
+// TODO: Operations that use this function (inv, sin, pi, nth_root) can compute
+// bounds with unnecessarily high mantissa precision when the interval is wide.
 ```
-Cases using `simplify_bounds` don't appear to track refinement progress properly. This likely happens when requesting too much precision for bounds on a wide interval.
+Operations like InvOp grow internal precision independently of input width (e.g., doubling `precision_bits` each step). This produces bounds with many mantissa bits even when the interval is wide (e.g., `(1.132979827398479..., 1.829038428903...)`). `simplify_bounds_if_needed` is essential to keep mantissa representations short—without it, subsequent arithmetic slows down dramatically.
 
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
