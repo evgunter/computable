@@ -10,12 +10,9 @@
 ```
 Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
 
-### <a id="shortest-module-eval"></a>shortest-module-eval: Evaluate if shortest module is still needed
-**File:** `src/binary/shortest.rs:15`
-```rust
-//! # TODO: Evaluate if this module is still needed
-```
-With the introduction of `bounds_from_normalized` in the bisection module, it may be possible to avoid needing explicit shortest-representation searches. Evaluate if this module is only needed for cases where bounds cannot be normalized initially.
+### <a id="prefix-bounds-migration"></a>prefix-bounds-migration: Eliminate shortest module via prefix-based bounds
+**File:** `src/binary/shortest.rs`
+Migrate all operations (pi, sin, nth_root) to use `NormalizedBounds` (prefix-based bounds) for interval arithmetic, so that precision never accumulates. Once all operations normalize their output, `simplify_bounds` and the rest of the shortest module can be removed. inv.rs has already been migrated as the proof of concept.
 
 ### <a id="shortest-refinement"></a>shortest-refinement: Fix refinement progress tracking
 **File:** `src/binary/shortest.rs:282`

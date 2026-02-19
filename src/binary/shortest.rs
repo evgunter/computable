@@ -12,13 +12,19 @@
 //! - [`simplify_bounds`]: Simplify bounds by finding shorter representations for both
 //!   the lower bound and width (matching how `Bounds` stores data internally)
 //!
-//! # TODO: Evaluate if this module is still needed
+//! # Why this module exists (and how to remove it)
 //!
-//! With the introduction of `bounds_from_normalized` in the bisection module, it may be possible
-//! to avoid needing explicit shortest-representation searches. When bounds are initialized in
-//! normalized form (lower and width share same exponent, width mantissa = 1), midpoint bisection
-//! automatically selects the shortest representation at each step. This module may only be needed
-//! for cases where bounds cannot be normalized initially, or for the `simplify_bounds` operation.
+//! Interval arithmetic (addition, subtraction, scaling) accumulates mantissa bits in both
+//! the lower bound and the width. This module exists to periodically "simplify" bounds by
+//! searching for shorter representations within a margin.
+//!
+//! The deeper fix is **prefix-based bounds** (`NormalizedBounds` in the bisection module),
+//! where the interval is represented as `[m×2^e, (m+1)×2^e]` — the width is always exactly
+//! one bit (`1×2^e`). If every operation normalizes its output to prefix form, precision
+//! never accumulates and `simplify_bounds` becomes unnecessary.
+//!
+//! Once all operations (pi, inv, sin, nth_root) normalize their output, this module can be
+//! removed entirely. See the `prefix-bounds-migration` entry in TODOS.md for tracking.
 
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
@@ -48,7 +54,7 @@ use crate::ordered_pair::AbsDistance;
 ///
 /// A `Binary` value that lies strictly inside the bounds and has the shortest possible
 /// mantissa. If the bounds have zero width, returns the single value in the bounds.
-pub fn shortest_binary_in_finite_bounds(bounds: &FiniteBounds) -> Binary {
+pub(crate) fn shortest_binary_in_finite_bounds(bounds: &FiniteBounds) -> Binary {
     let lower = bounds.small();
     let upper = bounds.large();
 
@@ -85,7 +91,7 @@ pub fn shortest_binary_in_finite_bounds(bounds: &FiniteBounds) -> Binary {
 
 /// Returns an XBinary value inside the bounds with the shortest normalized mantissa.
 /// infinities are only returned if the bounds do not contain any finite numbers; this shouldn't happen currently but it might be valid in the future.
-pub fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
+pub(crate) fn shortest_xbinary_in_bounds(bounds: &Bounds) -> XBinary {
     // NOTE: Bounds stores lower + width with UXBinary, so intervals like (-inf, -1]
     // cannot be represented because the width is +inf and large() becomes +inf.
     let (lower_sign, lower_mag) = split_xbinary(bounds.small());
@@ -200,7 +206,7 @@ pub fn margin_from_width(width: &UXBinary, shift: u32) -> UXBinary {
 /// bounds which contain the original bounds, widen the bounds by at most the specified margin, and which have
 /// a shorter binary representation for the lower bound and width (or, if this is not possible, just return the original bounds)
 ///
-pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
+pub(crate) fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
     let finite_margin = match margin {
         UXBinary::Inf => return bounds.clone(),
         UXBinary::Finite(m) => m,
@@ -257,14 +263,14 @@ pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
 ///
 /// Returns the number of bits in the mantissa, which is a measure of precision.
 /// Useful for tracking precision growth during refinement.
-pub fn mantissa_bits(value: &Binary) -> u64 {
+pub(crate) fn mantissa_bits(value: &Binary) -> u64 {
     value.mantissa().magnitude().bits()
 }
 
 /// Computes the total mantissa bits used by bounds (lower + upper).
 ///
 /// This is useful for monitoring precision accumulation during refinement.
-pub fn bounds_precision(bounds: &Bounds) -> u64 {
+pub(crate) fn bounds_precision(bounds: &Bounds) -> u64 {
     let lower_bits = match bounds.small() {
         XBinary::Finite(b) => mantissa_bits(b),
         _ => 0,
