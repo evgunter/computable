@@ -12,7 +12,7 @@ use num_traits::{One, Signed, Zero};
 use crate::common::{binary_from_f64, finite_binary, midpoint, try_finite_bounds};
 
 /// Precision levels to test (in bits)
-const PRECISION_BITS: &[u64] = &[32, 64];
+const PRECISION_BITS: &[u64] = &[32, 64, 128, 256, 512, 1024];
 
 /// Number of iterations for timing stability
 const TIMING_ITERATIONS: u32 = 5;
