@@ -37,6 +37,40 @@ const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
 /// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
 const MARGIN_SHIFT: u32 = 3;
 
+/// Returns the number of bits in the binary representation of `x`.
+///
+/// Equivalent to floor(log2(x)) + 1 for x > 0, and 0 for x == 0.
+fn bit_length(x: usize) -> usize {
+    (usize::BITS - x.leading_zeros()) as usize
+}
+
+/// Computes the intermediate reciprocal precision needed for `num_terms` Taylor series terms.
+///
+/// Returns `(2n+1)*3 + bit_length(n+2) + bit_length(2n+1)` where `n = num_terms`.
+///
+/// ## Correctness proof
+///
+/// The Taylor series for arctan(1/5) has truncation error bounded by
+/// `(1/5)^(2n+1) / (2n+1)`, which provides `(2n+1)*log2(5)` bits of accuracy.
+/// Since `log2(5) < 3`, using `(2n+1)*3` conservatively exceeds the Taylor accuracy.
+///
+/// In the Machin formula `16*arctan(1/5) - 4*arctan(1/239)`, each of the `n` reciprocal
+/// terms introduces at most 1 ULP of directed rounding error. The total rounding error
+/// width is at most `20*(n+2) * 2^(-precision_bits)`. For this to not dominate the
+/// Taylor truncation error, we need:
+///
+/// ```text
+/// precision_bits >= (2n+1)*log2(5) + log2((n+2)*(2n+1)) - 0.68
+/// ```
+///
+/// The margin `bit_length(n+2) + bit_length(2n+1)` covers `log2((n+2)*(2n+1))` because
+/// `bit_length(x) = floor(log2(x)) + 1 >= log2(x)`.
+fn precision_bits_for_num_terms(num_terms: usize) -> usize {
+    let n = num_terms;
+    let two_n_plus_1 = 2 * n + 1;
+    two_n_plus_1 * 3 + bit_length(n + 2) + bit_length(two_n_plus_1)
+}
+
 /// Returns pi as a Computable that can be refined to arbitrary precision.
 ///
 /// Uses Machin's formula: pi/4 = 4*arctan(1/5) - arctan(1/239)
@@ -70,31 +104,13 @@ pub fn pi() -> Computable {
 /// - (pi_hi - pi_lo) <= 2^(-precision_bits) approximately
 pub fn pi_bounds_at_precision(precision_bits: u64) -> (Binary, Binary) {
     // Compute enough terms to achieve the desired precision.
-    // For arctan(1/5), error after n terms is bounded by (1/5)^(2n+1)/(2n+1)
-    // For arctan(1/239), error after n terms is bounded by (1/239)^(2n+1)/(2n+1)
-    //
-    // The dominant error comes from arctan(1/5) since 1/5 > 1/239.
-    // We need: 4 * (1/5)^(2n+1)/(2n+1) < 2^(-precision_bits) / 4
-    // Approximately: (1/5)^(2n+1) < 2^(-precision_bits) / 16
-    // Taking logs: (2n+1) * log2(5) > precision_bits + 4
-    // So: n > (precision_bits + 4) / (2 * log2(5)) - 0.5
-    // log2(5) ~= 2.32, so: n > (precision_bits + 4) / 4.64 - 0.5
-    //
-    // We use a conservative estimate with some margin.
-    //
-    // Using f64 here is not perfectly rigorous, but precision values large enough to
-    // cause f64 imprecision (>2^53) would exhaust memory during pi computation anyway
-    // (each Taylor term involves BigInts with that many bits). We guard against this
-    // explicitly rather than letting it OOM.
-    if precision_bits > 1u64 << 32 {
-        crate::detected_computable_would_exhaust_memory!(
-            "pi computation at this precision"
-        );
-    }
-    // Safe to use f64: the OOM guard above ensures precision_bits <= 2^32, well
-    // within the range where f64 represents integers exactly (up to 2^53).
-    let num_terms = (((precision_bits as f64 + 10.0) / 4.0).ceil() as usize).max(5);
-    compute_pi_bounds(num_terms)
+    // For arctan(1/5), error after n terms is bounded by (1/5)^(2n+1)/(2n+1).
+    // We need (2n+1)*log2(5) > precision_bits + 4, i.e. n > (precision_bits + 4) / (2*log2(5)) - 0.5.
+    // Since log2(5) > 2, using (precision_bits + 10) / 4 is conservative (integer-only).
+    let num_terms = ((precision_bits as usize + 10) / 4).max(5);
+    let reciprocal_precision = precision_bits_for_num_terms(num_terms)
+        .max(precision_bits as usize + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1));
+    compute_pi_bounds(num_terms, reciprocal_precision)
 }
 
 /// Pi computation operation using Machin's formula.
@@ -105,7 +121,8 @@ pub struct PiOp {
 impl NodeOp for PiOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let num_terms = *self.num_terms.read();
-        let (pi_lo, pi_hi) = compute_pi_bounds(num_terms);
+        let precision_bits = precision_bits_for_num_terms(num_terms);
+        let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
         let raw_bounds = Bounds::new_checked(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi))
             .map_err(|_| ComputableError::InvalidBoundsOrder)?;
         // Simplify bounds to reduce precision bloat from high-precision pi computation
@@ -148,12 +165,12 @@ enum RoundDir {
 /// Therefore: pi = 16*arctan(1/5) - 4*arctan(1/239)
 ///
 /// Returns (lower_bound, upper_bound) where lower_bound <= pi <= upper_bound.
-fn compute_pi_bounds(num_terms: usize) -> (Binary, Binary) {
+fn compute_pi_bounds(num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
     // Compute arctan(1/5) bounds
-    let (atan_5_lo, atan_5_hi) = arctan_recip_bounds(5, num_terms);
+    let (atan_5_lo, atan_5_hi) = arctan_recip_bounds(5, num_terms, precision_bits);
 
     // Compute arctan(1/239) bounds
-    let (atan_239_lo, atan_239_hi) = arctan_recip_bounds(239, num_terms);
+    let (atan_239_lo, atan_239_hi) = arctan_recip_bounds(239, num_terms, precision_bits);
 
     // pi = 16*arctan(1/5) - 4*arctan(1/239)
     //
@@ -190,21 +207,19 @@ fn compute_pi_bounds(num_terms: usize) -> (Binary, Binary) {
 /// |error| <= |x|^(2n+1) / (2n+1) = 1 / ((2n+1) * k^(2n+1))
 ///
 /// Returns (lower_bound, upper_bound) for arctan(1/k).
-fn arctan_recip_bounds(k: u64, num_terms: usize) -> (Binary, Binary) {
-    let target_precision = num_terms * 10;
-
+fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
     if num_terms == 0 {
         // No terms computed, just return error bound interval centered at 0
-        let error = arctan_recip_error_bound(k, 0, target_precision);
+        let error = arctan_recip_error_bound(k, 0, precision_bits);
         return (error.neg(), error);
     }
 
     // Compute partial sum with directed rounding
-    let sum_lo = arctan_recip_partial_sum(k, num_terms, RoundDir::Down, target_precision);
-    let sum_hi = arctan_recip_partial_sum(k, num_terms, RoundDir::Up, target_precision);
+    let sum_lo = arctan_recip_partial_sum(k, num_terms, RoundDir::Down, precision_bits);
+    let sum_hi = arctan_recip_partial_sum(k, num_terms, RoundDir::Up, precision_bits);
 
     // Compute error bound for truncation (always round up for conservative bound)
-    let error = arctan_recip_error_bound(k, num_terms, target_precision);
+    let error = arctan_recip_error_bound(k, num_terms, precision_bits);
 
     // Final bounds: [sum_lo - error, sum_hi + error]
     (sum_lo.sub(&error), sum_hi.add(&error))
@@ -217,7 +232,7 @@ fn arctan_recip_partial_sum(
     k: u64,
     num_terms: usize,
     rounding: RoundDir,
-    target_precision: usize,
+    precision_bits: usize,
 ) -> Binary {
     let mut sum = Binary::zero();
     let k_big = BigInt::from(k);
@@ -236,7 +251,7 @@ fn arctan_recip_partial_sum(
         // For negative terms (odd i): round up for lower, round down for upper
         let is_positive_term = i % 2 == 0;
 
-        let term = divide_one_by_bigint(&denominator, rounding, is_positive_term, target_precision);
+        let term = divide_one_by_bigint(&denominator, rounding, is_positive_term, precision_bits);
         sum = sum.add(&term);
 
         // Prepare for next iteration: k^(2i+1) -> k^(2(i+1)+1) = k^(2i+3)
@@ -260,7 +275,7 @@ fn divide_one_by_bigint(
     denominator: &BigInt,
     rounding: RoundDir,
     is_positive_term: bool,
-    target_precision: usize,
+    precision_bits: usize,
 ) -> Binary {
     let recip_rounding = match (rounding, is_positive_term) {
         (RoundDir::Down, true) => ReciprocalRounding::Floor,
@@ -270,7 +285,7 @@ fn divide_one_by_bigint(
     };
 
     let unsigned_result =
-        reciprocal_of_biguint(denominator.magnitude(), target_precision, recip_rounding);
+        reciprocal_of_biguint(denominator.magnitude(), precision_bits, recip_rounding);
 
     if is_positive_term {
         unsigned_result
@@ -288,7 +303,7 @@ fn divide_one_by_bigint(
 /// |error| <= 1 / ((2n+1) * k^(2n+1))
 ///
 /// We round UP (ceiling) to get a conservative (safe) error bound.
-fn arctan_recip_error_bound(k: u64, num_terms: usize, target_precision: usize) -> Binary {
+fn arctan_recip_error_bound(k: u64, num_terms: usize, precision_bits: usize) -> Binary {
     use num_bigint::BigUint;
 
     let exponent = 2 * num_terms + 1;
@@ -303,7 +318,7 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize, target_precision: usize) -
     let denominator = &coeff * &k_power; // (2n+1) * k^(2n+1)
 
     // Compute 1/denominator, rounding UP for conservative error bound.
-    reciprocal_of_biguint(&denominator, target_precision, ReciprocalRounding::Ceil)
+    reciprocal_of_biguint(&denominator, precision_bits, ReciprocalRounding::Ceil)
 }
 
 /// Returns pi as a FiniteBounds interval with specified precision.
@@ -362,7 +377,7 @@ mod tests {
 
     #[test]
     fn pi_bounds_contain_true_pi() {
-        let (pi_lo, pi_hi) = compute_pi_bounds(20);
+        let (pi_lo, pi_hi) = compute_pi_bounds(20, precision_bits_for_num_terms(20));
         let pi_f64 = pi_f64_binary();
 
         // Check that bounds are ordered correctly
@@ -398,8 +413,8 @@ mod tests {
 
     #[test]
     fn pi_bounds_refine_to_high_precision() {
-        let (pi_lo_5, pi_hi_5) = compute_pi_bounds(5);
-        let (pi_lo_20, pi_hi_20) = compute_pi_bounds(20);
+        let (pi_lo_5, pi_hi_5) = compute_pi_bounds(5, precision_bits_for_num_terms(5));
+        let (pi_lo_20, pi_hi_20) = compute_pi_bounds(20, precision_bits_for_num_terms(20));
 
         let width_5 = pi_hi_5.sub(&pi_lo_5);
         let width_20 = pi_hi_20.sub(&pi_lo_20);
@@ -451,6 +466,43 @@ mod tests {
             "{} bits of precision should give width < 2^-{}",
             PRECISION_BITS,
             PRECISION_BITS - 1
+        );
+    }
+
+    #[test]
+    fn pi_bounds_at_precision_256_bits() {
+        let (lo, hi) = pi_bounds_at_precision(256);
+        let width = hi.sub(&lo);
+
+        let threshold = bin(1, -255);
+        assert!(
+            width < threshold,
+            "256 bits of precision should give width < 2^-255, got width = {}",
+            width
+        );
+
+        // Verify bounds still contain pi
+        let pi_f64 = pi_f64_binary();
+        assert!(hi >= pi_f64, "upper bound should be >= f64 pi");
+    }
+
+    #[test]
+    fn pi_computable_refines_beyond_128_bits() {
+        let pi_comp = pi();
+        let epsilon = ubin(1, -128); // 2^-128 precision
+        let bounds = pi_comp
+            .refine_to_default(epsilon.clone())
+            .expect("refine to 2^-128 should succeed");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+
+        let width = upper.sub(&lower);
+        let eps_binary = epsilon.to_binary();
+        assert!(
+            width <= eps_binary,
+            "width should be <= 2^-128, got width = {}",
+            width
         );
     }
 }
