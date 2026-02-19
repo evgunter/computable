@@ -12,11 +12,7 @@ use num_traits::{One, Signed, Zero};
 use crate::common::{binary_from_f64, finite_binary, midpoint, try_finite_bounds};
 
 /// Precision levels to test (in bits)
-// TODO: Re-enable 128+ bit precision levels once the fixed 128-bit intermediate precision
-// in src/ops/pi.rs is made adaptive. Currently, the achievable pi precision is capped at
-// ~118 bits, causing refinement to hang for higher precision requests.
-const PRECISION_BITS: &[u64] = &[32, 64];
-// const PRECISION_BITS: &[u64] = &[32, 64, 128, 256, 512, 1024];
+const PRECISION_BITS: &[u64] = &[32, 64, 128, 256, 512, 1024];
 
 /// Number of iterations for timing stability
 const TIMING_ITERATIONS: u32 = 5;
@@ -239,7 +235,6 @@ fn benchmark_sin_pi() {
 }
 
 /// Benchmark high-precision pi computation
-#[allow(dead_code)] // TODO: Re-enable once fixed 128-bit precision in src/ops/pi.rs is made adaptive
 fn benchmark_high_precision() {
     println!("== High Precision Pi Benchmark ==");
     println!();
@@ -278,7 +273,5 @@ pub fn run_pi_benchmark() {
     benchmark_pi_bounds_at_precision_fn();
     benchmark_pi_arithmetic();
     benchmark_sin_pi();
-    // TODO: Re-enable once fixed 128-bit intermediate precision in src/ops/pi.rs is made adaptive.
-    // Currently hangs because achievable precision is capped at ~118 bits.
-    // benchmark_high_precision();
+    benchmark_high_precision();
 }
