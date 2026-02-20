@@ -5,28 +5,34 @@
 //! - `RefinerHandle`: Handle for controlling a background refiner thread
 //! - `NodeUpdate`: Update message from a refiner to the coordinator
 //!
-//! The refinement model is round-based with early exit and per-refiner exhaustion:
+//! The refinement model is round-based with early exit, per-refiner exhaustion,
+//! and demand-based skipping:
 //! 1. Check if root precision meets target — if so, return immediately
 //! 2. Count active refiners — if none remain, return exhaustion error
 //! 3. Check iteration cap
-//! 4. Send Step command to ACTIVE refiners only (exhausted refiners are skipped)
-//! 5. After EACH response, apply the update and check precision (early exit)
-//! 6. If a refiner reports Exhausted, mark it inactive and track the reason
-//! 7. If a refiner reports Error, return the error immediately
-//! 8. Repeat
+//! 4. Compute demand budget (ε / 2^⌈log₂(N)⌉) and skip refiners already below it
+//! 5. Send Step command to remaining active refiners (safety valve: if all were
+//!    skipped but root precision isn't met, step them all anyway)
+//! 6. After EACH response, apply the update and check precision (early exit)
+//! 7. If a refiner reports Exhausted, mark it inactive and track the reason
+//! 8. If a refiner reports Error, return the error immediately
+//! 9. Repeat
 //!
 //! This preserves demand pacing (refiners only advance when the coordinator
-//! permits) while adding two improvements over plain lock-step:
+//! permits) while adding three improvements over plain lock-step:
 //! - Early exit: precision is checked after each individual update, not after
 //!   waiting for all refiners in a round
 //! - Per-refiner exhaustion: converged or state-unchanged refiners are removed
 //!   from future rounds instead of causing the entire refinement to fail
+//! - Demand-based skipping: refiners whose bounds are already narrow enough
+//!   (width ≤ ε/N) are skipped, avoiding wasted work on fast-converging operands
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use num_bigint::BigInt;
 
 use crate::binary::Bounds;
 use crate::binary::{UBinary, UXBinary, XBinary};
@@ -180,15 +186,40 @@ impl RefinementGraph {
                     }
                     iterations += 1;
 
-                    // Send Step to active refiners only.
+                    // Compute demand budget for this round.
+                    let demand_budget = compute_demand_budget(epsilon, active_count);
+
+                    // Send Step to active refiners ABOVE demand budget only.
                     let mut expected = 0;
                     for (i, refiner) in refiners.iter().enumerate() {
-                        if active[i] {
+                        if !active[i] {
+                            continue;
+                        }
+                        let skip = demand_budget.as_ref().is_some_and(|budget| {
+                            self.refiners[i]
+                                .cached_bounds()
+                                .is_some_and(|b| bounds_width_leq(&b, budget))
+                        });
+                        if !skip {
                             refiner
                                 .sender
                                 .send(RefineCommand::Step)
                                 .map_err(|_| ComputableError::RefinementChannelClosed)?;
                             expected += 1;
+                        }
+                    }
+
+                    // Safety valve: if all active refiners were below demand
+                    // but root precision isn't met, step them all anyway.
+                    if expected == 0 {
+                        for (i, refiner) in refiners.iter().enumerate() {
+                            if active[i] {
+                                refiner
+                                    .sender
+                                    .send(RefineCommand::Step)
+                                    .map_err(|_| ComputableError::RefinementChannelClosed)?;
+                                expected += 1;
+                            }
                         }
                     }
 
@@ -353,6 +384,22 @@ fn refiner_loop(
             Ok(RefineCommand::Stop) | Err(_) => break,
         }
     }
+}
+
+/// Demand budget = epsilon / 2^ceil(log2(N)).
+/// A refiner with width <= budget is "precise enough" to skip this round.
+fn compute_demand_budget(epsilon: &UBinary, num_active: usize) -> Option<UBinary> {
+    if num_active == 0 {
+        return None;
+    }
+    // ceil(log2(N)) = BITS - leading_zeros(N), which for N>=1 gives the
+    // number of bits needed to represent N, i.e. the shift amount that
+    // makes 2^shift >= N.
+    let shift = (usize::BITS - num_active.leading_zeros()) as i64;
+    Some(UBinary::new(
+        epsilon.mantissa().clone(),
+        epsilon.exponent() - BigInt::from(shift),
+    ))
 }
 
 /// Compares bounds width (UXBinary) against epsilon (UBinary).
