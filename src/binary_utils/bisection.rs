@@ -660,4 +660,122 @@ mod tests {
             );
         }
     }
+
+    // =========================================================================
+    // Tests for normalize_finite_to_bounds
+    // =========================================================================
+
+    #[test]
+    fn normalize_finite_to_bounds_skips_low_precision() {
+        // Bounds with small mantissas (total bits well below the 64-bit threshold)
+        // should be returned unchanged.
+        let original = FiniteBounds::new(bin(3, 0), bin(5, 0)); // 2 + 3 = 5 bits total
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        // Result should exactly match the original bounds
+        assert_eq!(
+            result.small(),
+            &XBinary::Finite(original.small().clone())
+        );
+        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+    }
+
+    #[test]
+    fn normalize_finite_to_bounds_skips_zero_width() {
+        // Zero-width (point) intervals should be returned unchanged regardless of
+        // precision, because normalization would expand them.
+        let point = bin(1, -100); // very high precision but zero width
+        let original = FiniteBounds::point(point.clone());
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        assert_eq!(
+            result.small(),
+            &XBinary::Finite(original.small().clone())
+        );
+        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+    }
+
+    #[test]
+    fn normalize_finite_to_bounds_skips_zero_crossing() {
+        // Intervals that cross zero cannot be represented in prefix form.
+        // Use large mantissas to exceed the precision threshold.
+        let lo = bin(-((1i64 << 40) + 1), -40); // negative, ~41 bits
+        let hi = bin((1i64 << 40) + 1, -40); // positive, ~41 bits
+        let original = FiniteBounds::new(lo, hi);
+
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        // Should return unchanged because the interval crosses zero
+        assert_eq!(
+            result.small(),
+            &XBinary::Finite(original.small().clone())
+        );
+        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+    }
+
+    #[test]
+    fn normalize_finite_to_bounds_normalizes_high_precision() {
+        // High-precision positive bounds should be normalized.
+        // Create bounds with ~40 bits per endpoint (80 total, > 64 threshold).
+        let lo = bin((1i64 << 39) + 1, -50); // ~40 bits mantissa
+        let hi = bin((1i64 << 39) + 3, -50); // ~40 bits mantissa
+        let original = FiniteBounds::new(lo, hi);
+
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        // The normalized result should contain the original bounds
+        let result_lo = match result.small() {
+            XBinary::Finite(b) => b,
+            _ => panic!("expected finite lower"),
+        };
+        let result_hi = match &result.large() {
+            XBinary::Finite(b) => b.clone(),
+            _ => panic!("expected finite upper"),
+        };
+
+        assert!(
+            result_lo <= original.small(),
+            "normalized lower {} should be <= original lower {}",
+            result_lo,
+            original.small()
+        );
+        assert!(
+            result_hi >= original.hi(),
+            "normalized upper {} should be >= original upper {}",
+            result_hi,
+            original.hi()
+        );
+    }
+
+    #[test]
+    fn normalize_finite_to_bounds_normalizes_high_precision_negative() {
+        // High-precision negative bounds should also be normalized.
+        let lo = bin(-((1i64 << 39) + 3), -50);
+        let hi = bin(-((1i64 << 39) + 1), -50);
+        let original = FiniteBounds::new(lo, hi);
+
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        let result_lo = match result.small() {
+            XBinary::Finite(b) => b,
+            _ => panic!("expected finite lower"),
+        };
+        let result_hi = match &result.large() {
+            XBinary::Finite(b) => b.clone(),
+            _ => panic!("expected finite upper"),
+        };
+
+        assert!(
+            result_lo <= original.small(),
+            "normalized lower {} should be <= original lower {}",
+            result_lo,
+            original.small()
+        );
+        assert!(
+            result_hi >= original.hi(),
+            "normalized upper {} should be >= original upper {}",
+            result_hi,
+            original.hi()
+        );
+    }
 }
