@@ -79,7 +79,7 @@ pub struct PrefixBounds {
 }
 
 impl PrefixBounds {
-    /// Creates new normalized bounds.
+    /// Creates new prefix bounds.
     ///
     /// The bounds represent the interval [mantissa * 2^exponent, (mantissa + 1) * 2^exponent].
     pub fn new(mantissa: BigInt, exponent: BigInt) -> Self {
@@ -97,7 +97,7 @@ impl PrefixBounds {
     }
 }
 
-/// Result of a normalized bisection step.
+/// Result of a prefix bisection step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrefixBisectionResult {
     /// The interval was narrowed (target not exactly at midpoint).
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn bisection_step_less() {
-        // Normalized bounds [0, 4]: mantissa=0, exponent=2
+        // Prefix bounds [0, 4]: mantissa=0, exponent=2
         let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
         let result = bisection_step_normalized(&bounds, |_mid| {
             // Pretend mid < target, so search upper half
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn bisection_step_greater() {
-        // Normalized bounds [0, 4]: mantissa=0, exponent=2
+        // Prefix bounds [0, 4]: mantissa=0, exponent=2
         let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
         let result = bisection_step_normalized(&bounds, |_mid| {
             // Pretend mid > target, so search lower half
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn bisection_step_equal() {
-        // Normalized bounds [0, 4]: mantissa=0, exponent=2
+        // Prefix bounds [0, 4]: mantissa=0, exponent=2
         let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
         let result = bisection_step_normalized(&bounds, |_mid| Ordering::Equal);
         // midpoint = (2*0 + 1) * 2^1 = 2
@@ -429,7 +429,7 @@ mod tests {
     fn bisection_narrows_sqrt_2() {
         // Find sqrt(2) ~ 1.414... by bisection
         // This won't find an exact match (irrational), but should narrow the interval
-        // Normalized bounds [1, 2]: mantissa=1, exponent=0
+        // Prefix bounds [1, 2]: mantissa=1, exponent=0
         let target = bin(2, 0);
         let mut bounds = PrefixBounds::new(BigInt::from(1), BigInt::from(0));
         let initial_lower = bin(1, 0);
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn bisection_respects_iterations() {
-        // Normalized bounds [0, 1024]: mantissa=0, exponent=10
+        // Prefix bounds [0, 1024]: mantissa=0, exponent=10
         let mut bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(10));
 
         // With 5 iterations, should halve the interval 5 times
@@ -515,8 +515,8 @@ mod tests {
     }
 
     #[test]
-    fn normalized_bounds_can_be_used_for_bisection() {
-        // Create normalized bounds: lower = 1, width = 2^-10
+    fn prefix_bounds_can_be_used_for_bisection() {
+        // Create prefix bounds: lower = 1, width = 2^-10
         // Express 1 with exponent -10: 1 = (1 << 10) * 2^-10
         let bounds = PrefixBounds::new(BigInt::from(1 << 10), BigInt::from(-10));
 

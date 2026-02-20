@@ -65,10 +65,10 @@ pub struct NthRootOp {
 }
 
 /// State for the bisection algorithm.
-/// Tracks the current interval bounds for the n-th root in normalized form.
+/// Tracks the current interval bounds for the n-th root in prefix form.
 #[derive(Clone, Debug)]
 pub struct BisectionState {
-    /// Current bounds in normalized form.
+    /// Current bounds in prefix form.
     pub bounds: PrefixBounds,
     /// The target value (x) whose n-th root we're computing.
     pub target: Binary,
