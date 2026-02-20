@@ -7,20 +7,21 @@
 //!
 //! # Types and Functions
 //!
-//! - [`NormalizedBounds`]: Bounds in normalized form (mantissa, exponent)
-//! - [`NormalizedBisectionResult`]: Result of a normalized bisection step
-//! - [`bisection_step_normalized`]: Performs bisection on normalized bounds
-//! - [`bounds_from_normalized`]: Converts normalized form to `FiniteBounds`
-//! - [`normalize_bounds`]: Converts arbitrary bounds to normalized form
+//! - [`PrefixBounds`]: Bounds in prefix form (mantissa, exponent)
+//! - [`PrefixBisectionResult`]: Result of a prefix bisection step
+//! - [`bisection_step_normalized`]: Performs bisection on prefix bounds
+//! - [`bounds_from_normalized`]: Converts prefix form to `FiniteBounds`
+//! - [`normalize_bounds`]: Converts arbitrary bounds to prefix form
+//! - [`normalize_finite_to_bounds`]: Converts finite bounds to `Bounds` via prefix normalization
 //!
-//! # Normalized Bounds Strategy
+//! # Prefix Bounds Strategy
 //!
-//! When bounds are in normalized form (lower and width share the same exponent with integer
+//! When bounds are in prefix form (lower and width share the same exponent with integer
 //! mantissas, and width's mantissa is 1), midpoint bisection automatically selects the
 //! shortest representation at each step. This eliminates the need for explicit shortest-
 //! representation searches.
 //!
-//! Use [`NormalizedBounds`] and [`bisection_step_normalized`] for the most efficient
+//! Use [`PrefixBounds`] and [`bisection_step_normalized`] for the most efficient
 //! bisection on normalized bounds, or [`normalize_bounds`] to convert existing bounds.
 //!
 //! # Usage
@@ -32,13 +33,13 @@
 //! ```
 //! use computable::Binary;
 //! use computable::binary_utils::bisection::{
-//!     NormalizedBounds, NormalizedBisectionResult, bisection_step_normalized,
+//!     PrefixBounds, PrefixBisectionResult, bisection_step_normalized,
 //! };
 //! use num_bigint::BigInt;
 //!
 //! // Find sqrt(4) in the interval [0, 4]
 //! // Using normalized bounds: mantissa=0, exponent=2 represents [0, 4]
-//! let mut bounds = NormalizedBounds::new(BigInt::from(0), BigInt::from(2));
+//! let mut bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
 //! let target = Binary::new(BigInt::from(4), BigInt::from(0));
 //!
 //! // Perform bisection steps until we find exact match or reach desired precision
@@ -47,8 +48,8 @@
 //!         // Compare mid^2 to target
 //!         mid.mul(mid).cmp(&target)
 //!     }) {
-//!         NormalizedBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
-//!         NormalizedBisectionResult::Exact(mid) => {
+//!         PrefixBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
+//!         PrefixBisectionResult::Exact(mid) => {
 //!             // Found exact match: sqrt(4) = 2
 //!             assert_eq!(mid, Binary::new(BigInt::from(2), BigInt::from(0)));
 //!             break;
@@ -62,23 +63,23 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use std::cmp::Ordering;
 
-use crate::binary::{Binary, FiniteBounds};
+use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
 
-/// Normalized bounds for bisection where lower = mantissa * 2^exponent and width = 2^exponent.
+/// Prefix bounds for bisection where lower = mantissa * 2^exponent and width = 2^exponent.
 ///
 /// This representation ensures that midpoint bisection automatically selects the shortest
 /// representation at each step, eliminating the need for explicit shortest-representation
 /// searches.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NormalizedBounds {
+pub struct PrefixBounds {
     /// Mantissa of the lower bound.
     pub mantissa: BigInt,
     /// Shared exponent for lower bound and width.
     pub exponent: BigInt,
 }
 
-impl NormalizedBounds {
-    /// Creates new normalized bounds.
+impl PrefixBounds {
+    /// Creates new prefix bounds.
     ///
     /// The bounds represent the interval [mantissa * 2^exponent, (mantissa + 1) * 2^exponent].
     pub fn new(mantissa: BigInt, exponent: BigInt) -> Self {
@@ -96,11 +97,11 @@ impl NormalizedBounds {
     }
 }
 
-/// Result of a normalized bisection step.
+/// Result of a prefix bisection step.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NormalizedBisectionResult {
+pub enum PrefixBisectionResult {
     /// The interval was narrowed (target not exactly at midpoint).
-    Narrowed(NormalizedBounds),
+    Narrowed(PrefixBounds),
     /// The midpoint was exactly the target.
     Exact(Binary),
 }
@@ -122,10 +123,7 @@ pub enum NormalizedBisectionResult {
 ///
 /// - `Narrowed(new_bounds)` if the comparison was Less or Greater
 /// - `Exact(midpoint)` if the comparison was Equal
-pub fn bisection_step_normalized<C>(
-    bounds: &NormalizedBounds,
-    compare: C,
-) -> NormalizedBisectionResult
+pub fn bisection_step_normalized<C>(bounds: &PrefixBounds, compare: C) -> PrefixBisectionResult
 where
     C: FnOnce(&Binary) -> Ordering,
 {
@@ -135,7 +133,7 @@ where
         Ordering::Less => {
             // mid < target, so new interval is [mid, upper]
             // mid = (2m + 1) * 2^(e-1), so new mantissa = 2m + 1
-            NormalizedBisectionResult::Narrowed(NormalizedBounds {
+            PrefixBisectionResult::Narrowed(PrefixBounds {
                 mantissa: &bounds.mantissa * 2 + 1,
                 exponent: bounds.exponent.clone() - 1,
             })
@@ -143,12 +141,12 @@ where
         Ordering::Greater => {
             // mid > target, so new interval is [lower, mid]
             // lower at new exponent: m * 2^e = 2m * 2^(e-1), so new mantissa = 2m
-            NormalizedBisectionResult::Narrowed(NormalizedBounds {
+            PrefixBisectionResult::Narrowed(PrefixBounds {
                 mantissa: &bounds.mantissa * 2,
                 exponent: bounds.exponent.clone() - 1,
             })
         }
-        Ordering::Equal => NormalizedBisectionResult::Exact(mid),
+        Ordering::Equal => PrefixBisectionResult::Exact(mid),
     }
 }
 
@@ -275,6 +273,57 @@ pub fn normalize_bounds(
     Ok(bounds_from_normalized(lower_mantissa, target_exp))
 }
 
+/// Precision threshold (total mantissa bits of both endpoints) above which
+/// normalization to prefix form is applied. Below this threshold, bounds are
+/// returned as-is to avoid the ~4x width expansion that normalization entails.
+///
+/// 64 bits is chosen because:
+/// - It's large enough to avoid normalizing coarse early-refinement bounds
+/// - It's small enough to prevent significant precision bloat in long refinements
+const NORMALIZATION_PRECISION_THRESHOLD: u64 = 64;
+
+/// Normalizes finite bounds to `Bounds`, handling edge cases where prefix form isn't possible.
+///
+/// Prefix-form intervals `[m×2^e, (m+1)×2^e]` cannot represent:
+/// - **Zero-width intervals**: normalization would expand them to width 2^e
+/// - **Zero-crossing intervals**: no prefix interval can span zero
+///   (for m=-1 the upper is 0; for m=0 the lower is 0)
+///
+/// Additionally, normalization is skipped when the total mantissa precision is
+/// below [`NORMALIZATION_PRECISION_THRESHOLD`] to avoid unnecessary interval
+/// expansion during early refinement steps.
+///
+/// In these cases, the bounds are returned unchanged. This is fine because:
+/// - Zero-width bounds are already minimal (no precision to accumulate)
+/// - Zero-crossing bounds from sin/etc. have few mantissa bits (e.g., [-1, 1])
+/// - Low-precision bounds don't suffer from precision bloat
+pub fn normalize_finite_to_bounds(
+    bounds: &FiniteBounds,
+) -> Result<Bounds, crate::error::ComputableError> {
+    use num_traits::Signed;
+
+    let lower_bits = bounds.small().mantissa().magnitude().bits();
+    let upper_bits = bounds.large().mantissa().magnitude().bits();
+    let total_precision = lower_bits + upper_bits;
+
+    let can_normalize = total_precision > NORMALIZATION_PRECISION_THRESHOLD
+        && !bounds.width().mantissa().is_zero()
+        && !(bounds.small().mantissa().is_negative() && bounds.large().mantissa().is_positive());
+
+    if can_normalize {
+        let normalized = normalize_bounds(bounds)?;
+        Ok(Bounds::from_lower_and_width(
+            XBinary::Finite(normalized.small().clone()),
+            UXBinary::Finite(normalized.width().clone()),
+        ))
+    } else {
+        Ok(Bounds::from_lower_and_width(
+            XBinary::Finite(bounds.small().clone()),
+            UXBinary::Finite(bounds.width().clone()),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,8 +347,8 @@ mod tests {
 
     #[test]
     fn bisection_step_less() {
-        // Normalized bounds [0, 4]: mantissa=0, exponent=2
-        let bounds = NormalizedBounds::new(BigInt::from(0), BigInt::from(2));
+        // Prefix bounds [0, 4]: mantissa=0, exponent=2
+        let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
         let result = bisection_step_normalized(&bounds, |_mid| {
             // Pretend mid < target, so search upper half
             Ordering::Less
@@ -307,21 +356,21 @@ mod tests {
         // After Less: mantissa = 2*0 + 1 = 1, exponent = 1
         // Bounds become [2, 4]
         match result {
-            NormalizedBisectionResult::Narrowed(new_bounds) => {
+            PrefixBisectionResult::Narrowed(new_bounds) => {
                 assert_eq!(new_bounds.mantissa, BigInt::from(1));
                 assert_eq!(new_bounds.exponent, BigInt::from(1));
                 let finite = new_bounds.to_finite_bounds();
                 assert_eq!(finite.small(), &bin(2, 0));
                 assert_eq!(finite.large(), bin(4, 0));
             }
-            NormalizedBisectionResult::Exact(_) => panic!("expected Narrowed"),
+            PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
     }
 
     #[test]
     fn bisection_step_greater() {
-        // Normalized bounds [0, 4]: mantissa=0, exponent=2
-        let bounds = NormalizedBounds::new(BigInt::from(0), BigInt::from(2));
+        // Prefix bounds [0, 4]: mantissa=0, exponent=2
+        let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
         let result = bisection_step_normalized(&bounds, |_mid| {
             // Pretend mid > target, so search lower half
             Ordering::Greater
@@ -329,28 +378,28 @@ mod tests {
         // After Greater: mantissa = 2*0 = 0, exponent = 1
         // Bounds become [0, 2]
         match result {
-            NormalizedBisectionResult::Narrowed(new_bounds) => {
+            PrefixBisectionResult::Narrowed(new_bounds) => {
                 assert_eq!(new_bounds.mantissa, BigInt::from(0));
                 assert_eq!(new_bounds.exponent, BigInt::from(1));
                 let finite = new_bounds.to_finite_bounds();
                 assert_eq!(finite.small(), &bin(0, 0));
                 assert_eq!(finite.large(), bin(2, 0));
             }
-            NormalizedBisectionResult::Exact(_) => panic!("expected Narrowed"),
+            PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
     }
 
     #[test]
     fn bisection_step_equal() {
-        // Normalized bounds [0, 4]: mantissa=0, exponent=2
-        let bounds = NormalizedBounds::new(BigInt::from(0), BigInt::from(2));
+        // Prefix bounds [0, 4]: mantissa=0, exponent=2
+        let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
         let result = bisection_step_normalized(&bounds, |_mid| Ordering::Equal);
         // midpoint = (2*0 + 1) * 2^1 = 2
         match result {
-            NormalizedBisectionResult::Exact(mid) => {
+            PrefixBisectionResult::Exact(mid) => {
                 assert_eq!(mid, bin(2, 0));
             }
-            NormalizedBisectionResult::Narrowed(_) => panic!("expected Exact"),
+            PrefixBisectionResult::Narrowed(_) => panic!("expected Exact"),
         }
     }
 
@@ -360,12 +409,12 @@ mod tests {
         // We're looking for x where x^2 = 4
         // Normalized bounds [0, 4]: mantissa=0, exponent=2
         let target = bin(4, 0);
-        let mut bounds = NormalizedBounds::new(BigInt::from(0), BigInt::from(2));
+        let mut bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
 
         for _ in 0..50 {
             match bisection_step_normalized(&bounds, |mid| mid.mul(mid).cmp(&target)) {
-                NormalizedBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
-                NormalizedBisectionResult::Exact(mid) => {
+                PrefixBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
+                PrefixBisectionResult::Exact(mid) => {
                     // Should find exact match for sqrt(4) = 2
                     assert_eq!(mid, bin(2, 0));
                     return;
@@ -380,16 +429,16 @@ mod tests {
     fn bisection_narrows_sqrt_2() {
         // Find sqrt(2) ~ 1.414... by bisection
         // This won't find an exact match (irrational), but should narrow the interval
-        // Normalized bounds [1, 2]: mantissa=1, exponent=0
+        // Prefix bounds [1, 2]: mantissa=1, exponent=0
         let target = bin(2, 0);
-        let mut bounds = NormalizedBounds::new(BigInt::from(1), BigInt::from(0));
+        let mut bounds = PrefixBounds::new(BigInt::from(1), BigInt::from(0));
         let initial_lower = bin(1, 0);
         let initial_upper = bin(2, 0);
 
         for _ in 0..10 {
             match bisection_step_normalized(&bounds, |mid| mid.mul(mid).cmp(&target)) {
-                NormalizedBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
-                NormalizedBisectionResult::Exact(_) => {
+                PrefixBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
+                PrefixBisectionResult::Exact(_) => {
                     panic!("sqrt(2) is irrational, should not find exact match");
                 }
             }
@@ -407,15 +456,15 @@ mod tests {
 
     #[test]
     fn bisection_respects_iterations() {
-        // Normalized bounds [0, 1024]: mantissa=0, exponent=10
-        let mut bounds = NormalizedBounds::new(BigInt::from(0), BigInt::from(10));
+        // Prefix bounds [0, 1024]: mantissa=0, exponent=10
+        let mut bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(10));
 
         // With 5 iterations, should halve the interval 5 times
         // Starting width: 1024, final width: 1024 / 2^5 = 32
         for _ in 0..5 {
             match bisection_step_normalized(&bounds, |_mid| Ordering::Less) {
-                NormalizedBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
-                NormalizedBisectionResult::Exact(_) => panic!("unexpected exact"),
+                PrefixBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
+                PrefixBisectionResult::Exact(_) => panic!("unexpected exact"),
             }
         }
 
@@ -466,10 +515,10 @@ mod tests {
     }
 
     #[test]
-    fn normalized_bounds_can_be_used_for_bisection() {
-        // Create normalized bounds: lower = 1, width = 2^-10
+    fn prefix_bounds_can_be_used_for_bisection() {
+        // Create prefix bounds: lower = 1, width = 2^-10
         // Express 1 with exponent -10: 1 = (1 << 10) * 2^-10
-        let bounds = NormalizedBounds::new(BigInt::from(1 << 10), BigInt::from(-10));
+        let bounds = PrefixBounds::new(BigInt::from(1 << 10), BigInt::from(-10));
 
         // Perform one bisection step
         let target = bin(5, -2); // 1.25, which is above the midpoint
@@ -477,10 +526,10 @@ mod tests {
 
         // Should have narrowed the interval (exponent decreased by 1)
         match result {
-            NormalizedBisectionResult::Narrowed(new_bounds) => {
+            PrefixBisectionResult::Narrowed(new_bounds) => {
                 assert_eq!(new_bounds.exponent, BigInt::from(-11));
             }
-            NormalizedBisectionResult::Exact(_) => panic!("expected Narrowed"),
+            PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
     }
 
@@ -610,5 +659,114 @@ mod tests {
                 original
             );
         }
+    }
+
+    // =========================================================================
+    // Tests for normalize_finite_to_bounds
+    // =========================================================================
+
+    #[test]
+    fn normalize_finite_to_bounds_skips_low_precision() {
+        // Bounds with small mantissas (total bits well below the 64-bit threshold)
+        // should be returned unchanged.
+        let original = FiniteBounds::new(bin(3, 0), bin(5, 0)); // 2 + 3 = 5 bits total
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        // Result should exactly match the original bounds
+        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
+        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+    }
+
+    #[test]
+    fn normalize_finite_to_bounds_skips_zero_width() {
+        // Zero-width (point) intervals should be returned unchanged regardless of
+        // precision, because normalization would expand them.
+        let point = bin(1, -100); // very high precision but zero width
+        let original = FiniteBounds::point(point.clone());
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
+        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+    }
+
+    #[test]
+    fn normalize_finite_to_bounds_skips_zero_crossing() {
+        // Intervals that cross zero cannot be represented in prefix form.
+        // Use large mantissas to exceed the precision threshold.
+        let lo = bin(-((1i64 << 40) + 1), -40); // negative, ~41 bits
+        let hi = bin((1i64 << 40) + 1, -40); // positive, ~41 bits
+        let original = FiniteBounds::new(lo, hi);
+
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        // Should return unchanged because the interval crosses zero
+        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
+        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+    }
+
+    #[test]
+    fn normalize_finite_to_bounds_normalizes_high_precision() {
+        // High-precision positive bounds should be normalized.
+        // Create bounds with ~40 bits per endpoint (80 total, > 64 threshold).
+        let lo = bin((1i64 << 39) + 1, -50); // ~40 bits mantissa
+        let hi = bin((1i64 << 39) + 3, -50); // ~40 bits mantissa
+        let original = FiniteBounds::new(lo, hi);
+
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        // The normalized result should contain the original bounds
+        let result_lo = match result.small() {
+            XBinary::Finite(b) => b,
+            _ => panic!("expected finite lower"),
+        };
+        let result_hi = match &result.large() {
+            XBinary::Finite(b) => b.clone(),
+            _ => panic!("expected finite upper"),
+        };
+
+        assert!(
+            result_lo <= original.small(),
+            "normalized lower {} should be <= original lower {}",
+            result_lo,
+            original.small()
+        );
+        assert!(
+            result_hi >= original.hi(),
+            "normalized upper {} should be >= original upper {}",
+            result_hi,
+            original.hi()
+        );
+    }
+
+    #[test]
+    fn normalize_finite_to_bounds_normalizes_high_precision_negative() {
+        // High-precision negative bounds should also be normalized.
+        let lo = bin(-((1i64 << 39) + 3), -50);
+        let hi = bin(-((1i64 << 39) + 1), -50);
+        let original = FiniteBounds::new(lo, hi);
+
+        let result = normalize_finite_to_bounds(&original).expect("should succeed");
+
+        let result_lo = match result.small() {
+            XBinary::Finite(b) => b,
+            _ => panic!("expected finite lower"),
+        };
+        let result_hi = match &result.large() {
+            XBinary::Finite(b) => b.clone(),
+            _ => panic!("expected finite upper"),
+        };
+
+        assert!(
+            result_lo <= original.small(),
+            "normalized lower {} should be <= original lower {}",
+            result_lo,
+            original.small()
+        );
+        assert!(
+            result_hi >= original.hi(),
+            "normalized upper {} should be >= original upper {}",
+            result_hi,
+            original.hi()
+        );
     }
 }

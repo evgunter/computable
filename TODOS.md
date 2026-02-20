@@ -1,41 +1,16 @@
 # TODOs - Ranked by Ease of Completion
 
-## Tier 2: Medium Effort (Unblocked, requires some work)
-
-### <a id="shortest-repr-generics"></a>shortest-repr-generics: Reduce duplication in shortest representation functions
-**File:** `src/binary/shortest.rs:30`
-```rust
-// TODO: Consider refactoring shortest_binary_in_finite_bounds and shortest_xbinary_in_bounds
-// to reduce code duplication.
-```
-Both functions follow a similar pattern (check sign, handle zero-crossing, handle positive/negative intervals). Could potentially be unified using generics over the bound types, though different handling of infinities may make this non-trivial.
-
-### <a id="shortest-module-eval"></a>shortest-module-eval: Evaluate if shortest module is still needed
-**File:** `src/binary/shortest.rs:15`
-```rust
-//! # TODO: Evaluate if this module is still needed
-```
-With the introduction of `bounds_from_normalized` in the bisection module, it may be possible to avoid needing explicit shortest-representation searches. Evaluate if this module is only needed for cases where bounds cannot be normalized initially.
-
-### <a id="shortest-refinement"></a>shortest-refinement: Scale operation precision relative to input width
-**File:** `src/binary/shortest.rs:279`
-```rust
-// TODO: Operations that use this function (inv, sin, pi, nth_root) can compute
-// bounds with unnecessarily high mantissa precision when the interval is wide.
-```
-Operations like InvOp grow internal precision independently of input width (e.g., doubling `precision_bits` each step). This produces bounds with many mantissa bits even when the interval is wide (e.g., `(1.132979827398479..., 1.829038428903...)`). `simplify_bounds_if_needed` is essential to keep mantissa representations short—without it, subsequent arithmetic slows down dramatically.
-
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="inv-bounds-order"></a>inv-bounds-order: Type system for bounds ordering
-**File:** `src/ops/inv.rs:148`
+**File:** `src/ops/inv.rs:140`
 ```rust
 // TODO: can the type system ensure that the bounds remain ordered?
 ```
 Use the type system to prevent invalid bounds ordering rather than runtime checks.
 
 ### <a id="pow-type-bounds"></a>pow-type-bounds: Type system for invalid bounds in pow
-**File:** `src/ops/pow.rs:51`
+**File:** `src/ops/pow.rs:53`
 ```rust
 // TODO: Investigate if the type system can constrain this so that invalid bounds
 ```

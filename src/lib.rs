@@ -67,10 +67,7 @@ pub mod test_utils;
 
 // Re-export public API
 pub use binary::Bounds;
-pub use binary::{
-    Binary, BinaryError, FiniteBounds, UBinary, UXBinary, XBinary, XBinaryError,
-    shortest_binary_in_finite_bounds, shortest_xbinary_in_bounds,
-};
+pub use binary::{Binary, BinaryError, FiniteBounds, UBinary, UXBinary, XBinary, XBinaryError};
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
 pub use error::ComputableError;
 pub use ops::{pi, pi_bounds_at_precision};

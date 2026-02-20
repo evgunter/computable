@@ -26,19 +26,11 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, XBinary, margin_from_width,
-    reciprocal_of_biguint, simplify_bounds_if_needed,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, XBinary, reciprocal_of_biguint,
 };
+use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-
-/// Precision threshold for triggering bounds simplification.
-/// 128 chosen: 8% faster than 64; Taylor series doesn't accumulate precision as rapidly as bisection.
-const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
-
-/// margin parameter for bounds simplification.
-/// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const MARGIN_SHIFT: u32 = 3;
 
 use super::pi::{
     half_pi_interval_at_precision, pi_interval_at_precision, two_pi_interval_at_precision,
@@ -54,14 +46,7 @@ impl NodeOp for SinOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let num_terms = self.num_terms.read().clone();
-        let raw_bounds = sin_bounds(&input_bounds, &num_terms)?;
-        // Simplify bounds to reduce precision bloat from Taylor series computation
-        let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
-        Ok(simplify_bounds_if_needed(
-            &raw_bounds,
-            PRECISION_SIMPLIFICATION_THRESHOLD,
-            &margin,
-        ))
+        sin_bounds(&input_bounds, &num_terms)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -198,16 +183,9 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
         result_hi
     };
 
-    let raw_bounds = Bounds::new_checked(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi))
-        .map_err(|_| ComputableError::InvalidBoundsOrder)?;
-
-    // Simplify bounds to reduce precision bloat from Taylor series computation
-    let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
-    Ok(simplify_bounds_if_needed(
-        &raw_bounds,
-        PRECISION_SIMPLIFICATION_THRESHOLD,
-        &margin,
-    ))
+    // Normalize to prefix form to prevent precision accumulation
+    let finite = FiniteBounds::new(clamped_lo, clamped_hi);
+    normalize_finite_to_bounds(&finite)
 }
 
 //=============================================================================
