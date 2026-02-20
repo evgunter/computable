@@ -81,6 +81,19 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 ```
 **Blocked by:** [async-refinement](#async-refinement)
 
+### <a id="arithmetic-lint-audit"></a>arithmetic-lint-audit: Audit and fix remaining arithmetic_side_effects warnings
+26 clippy::arithmetic_side_effects warnings remain on `usize`/`i64`/`u64` arithmetic (precision calculations, iteration counters, bit lengths). Each site should be individually reviewed: add `assert_sane_computation_size!` guards where the value represents a computation size, or convert to `checked_*` arithmetic where overflow is a genuine concern. Don't mechanically `#[allow]` — think about whether each case could actually be a bug.
+
+---
+
+## Very Low Priority
+
+### <a id="serde-public-types"></a>serde-public-types: Add serialization for all public types
+Add serde `Serialize` and `Deserialize` for all public types. For types without invariants, `#[derive(Serialize, Deserialize)]` suffices. For types with invariants (e.g., types that validate inputs in constructors), use custom `Deserialize` implementations that enforce those invariants on deserialization.
+
+### <a id="common-traits-audit"></a>common-traits-audit: Audit and implement common traits
+Review all public types and implement standard traits (`Clone`, `Debug`, `PartialEq`, `Eq`, `Hash`, `Display`, `Default`) where semantically meaningful. Don't implement `Ord`/`PartialOrd` unless the type has a natural ordering, and don't implement `Default` if there's no natural default value. Be cautious with `Copy` — adding it is non-breaking, but removing it later is breaking.
+
 ---
 
 ## Design/Extensibility (Large scope)
