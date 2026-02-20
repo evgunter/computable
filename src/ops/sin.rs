@@ -629,8 +629,10 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> Finit
     // The Taylor series with n terms yields roughly n*10 bits of accuracy
     // (conservative estimate for |x| ≤ π/2). Intermediate precision must match.
     let target_precision = n * 10;
-    let truncated_lo = truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
-    let truncated_hi = truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
+    let truncated_lo =
+        truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
+    let truncated_hi =
+        truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
 
     let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n, target_precision);
     let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n, target_precision);
@@ -1190,20 +1192,15 @@ mod tests {
         let width = unwrap_finite_uxbinary(bounds.width());
 
         // Width must be at most epsilon = 2^-512
-        assert!(
-            width <= epsilon,
-            "width {} should be <= 2^-512",
-            width
-        );
+        assert!(width <= epsilon, "width {} should be <= 2^-512", width);
 
         // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
         let midpoint = FiniteBounds::new(lower, upper).midpoint();
         let expected_f64 = 1.0_f64.sin();
-        let expected_bin = unwrap_finite(
-            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
-        );
+        let expected_bin =
+            unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
         let diff = if midpoint > expected_bin {
             midpoint.sub(&expected_bin)
         } else {
@@ -1240,9 +1237,8 @@ mod tests {
 
         // sin(2^20) ≈ -0.24271... — verify bounds contain this
         let expected_f64 = (1048576.0_f64).sin();
-        let expected = unwrap_finite(
-            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
-        );
+        let expected =
+            unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
         assert!(
             lower <= expected && expected <= upper,
             "sin(2^20) bounds [{}, {}] should contain expected value {}",
@@ -1291,9 +1287,8 @@ mod tests {
 
         // sin(-10000) ≈ 0.30561... — verify bounds contain this
         let expected_f64 = (-10000.0_f64).sin();
-        let expected = unwrap_finite(
-            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
-        );
+        let expected =
+            unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
         assert!(
             lower <= expected && expected <= upper,
             "sin(-10000) bounds [{}, {}] should contain expected value {}",
@@ -1318,8 +1313,8 @@ mod tests {
         let lo = bin(0, 0);
         let hi = two_pi.lo().add(&bin(1, -60));
         let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
-        let result = sin_bounds(&input_bounds, &BigInt::from(5))
-            .expect("sin_bounds should succeed");
+        let result =
+            sin_bounds(&input_bounds, &BigInt::from(5)).expect("sin_bounds should succeed");
 
         // Because the width >= two_pi_lo, the conservative check should trigger
         // and return [-1, 1] (possibly slightly widened by simplification).

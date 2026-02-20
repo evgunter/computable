@@ -673,10 +673,7 @@ mod tests {
         let result = normalize_finite_to_bounds(&original).expect("should succeed");
 
         // Result should exactly match the original bounds
-        assert_eq!(
-            result.small(),
-            &XBinary::Finite(original.small().clone())
-        );
+        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
         assert_eq!(result.large(), XBinary::Finite(original.hi()));
     }
 
@@ -688,10 +685,7 @@ mod tests {
         let original = FiniteBounds::point(point.clone());
         let result = normalize_finite_to_bounds(&original).expect("should succeed");
 
-        assert_eq!(
-            result.small(),
-            &XBinary::Finite(original.small().clone())
-        );
+        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
         assert_eq!(result.large(), XBinary::Finite(original.hi()));
     }
 
@@ -706,10 +700,7 @@ mod tests {
         let result = normalize_finite_to_bounds(&original).expect("should succeed");
 
         // Should return unchanged because the interval crosses zero
-        assert_eq!(
-            result.small(),
-            &XBinary::Finite(original.small().clone())
-        );
+        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
         assert_eq!(result.large(), XBinary::Finite(original.hi()));
     }
 

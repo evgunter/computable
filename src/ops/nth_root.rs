@@ -33,8 +33,7 @@ use parking_lot::RwLock;
 
 use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
 use crate::binary_utils::bisection::{
-    PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint,
-    normalize_bounds,
+    PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint, normalize_bounds,
 };
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;

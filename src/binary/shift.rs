@@ -33,9 +33,7 @@ where
     M: Clone + ShlAssign<usize>,
 {
     if shift > &BigUint::from(MAX_SHIFT_BITS) {
-        crate::detected_computable_would_exhaust_memory!(
-            "shift by extreme exponent"
-        );
+        crate::detected_computable_would_exhaust_memory!("shift by extreme exponent");
     }
     let mut shifted = mantissa.clone();
     let mut remaining = shift.clone();

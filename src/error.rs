@@ -72,9 +72,7 @@ macro_rules! detected_computable_with_infinite_value {
 #[macro_export]
 macro_rules! detected_computable_would_exhaust_memory {
     ($msg:expr) => {
-        panic!(
-            concat!($msg, " - would exhaust memory if attempted")
-        )
+        panic!(concat!($msg, " - would exhaust memory if attempted"))
     };
 }
 
