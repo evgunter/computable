@@ -31,7 +31,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, Bounds, FiniteBounds, XBinary};
+use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
 use crate::binary_utils::bisection::{
     PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint,
     normalize_bounds,
@@ -107,7 +107,7 @@ impl NodeOp for NthRootOp {
                 };
                 Ok(Bounds::from_lower_and_width(
                     XBinary::Finite(finite_bounds.small().clone()),
-                    crate::binary::UXBinary::Finite(finite_bounds.width().clone()),
+                    UXBinary::Finite(finite_bounds.width().clone()),
                 ))
             }
         }
