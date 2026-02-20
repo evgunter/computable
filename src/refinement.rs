@@ -5,19 +5,22 @@
 //! - `RefinerHandle`: Handle for controlling a background refiner thread
 //! - `NodeUpdate`: Update message from a refiner to the coordinator
 //!
-//! The refinement model is synchronous lock-step:
-//! 1. Send Step command to ALL refiners
-//! 2. Wait for ALL refiners to complete one step
-//! 3. Collect and propagate ALL updates
-//! 4. Check if precision met
-//! 5. Repeat
+//! The refinement model is round-based with early exit and per-refiner exhaustion:
+//! 1. Check if root precision meets target — if so, return immediately
+//! 2. Count active refiners — if none remain, return exhaustion error
+//! 3. Check iteration cap
+//! 4. Send Step command to ACTIVE refiners only (exhausted refiners are skipped)
+//! 5. After EACH response, apply the update and check precision (early exit)
+//! 6. If a refiner reports Exhausted, mark it inactive and track the reason
+//! 7. If a refiner reports Error, return the error immediately
+//! 8. Repeat
 //!
-//! TODO: The README describes an async/event-driven refinement model where:
-//!   - Branches refine continuously and publish updates
-//!   - Other nodes "subscribe" to updates and recompute live
-//!
-//! Either the README should be updated to reflect the actual synchronous
-//! model, or the implementation should be changed to the async model described.
+//! This preserves demand pacing (refiners only advance when the coordinator
+//! permits) while adding two improvements over plain lock-step:
+//! - Early exit: precision is checked after each individual update, not after
+//!   waiting for all refiners in a round
+//! - Per-refiner exhaustion: converged or state-unchanged refiners are removed
+//!   from future rounds instead of causing the entire refinement to fail
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -26,7 +29,7 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use crate::binary::Bounds;
-use crate::binary::{UBinary, UXBinary};
+use crate::binary::{UBinary, UXBinary, XBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
@@ -48,6 +51,27 @@ pub struct RefinerHandle {
 pub struct NodeUpdate {
     pub node_id: usize,
     pub bounds: Bounds,
+}
+
+/// Reason a refiner has stopped producing further updates.
+enum ExhaustionReason {
+    /// refine_step() returned Ok(false) — bounds have converged to a point.
+    Converged,
+    /// refine_step() returned Err(StateUnchanged) — state did not change.
+    StateUnchanged,
+}
+
+/// Message sent from a refiner thread to the coordinator.
+enum RefinerMessage {
+    /// Normal update: refine_step succeeded and bounds may have narrowed.
+    Update(NodeUpdate),
+    /// Refiner has exhausted itself and will not produce further updates.
+    Exhausted {
+        update: NodeUpdate,
+        reason: ExhaustionReason,
+    },
+    /// Refiner encountered a fatal error.
+    Error(ComputableError),
 }
 
 /// Snapshot of the node graph used to coordinate parallel refinement.
@@ -120,48 +144,92 @@ impl RefinementGraph {
             };
 
             let result = (|| {
-                let mut root_bounds;
+                let num_refiners = refiners.len();
+                let mut active = vec![true; num_refiners];
+                let mut all_state_unchanged = true;
+
+                let precision_met =
+                    |root: &Arc<Node>, eps: &UBinary| -> Result<bool, ComputableError> {
+                        let bounds = root.get_bounds()?;
+                        Ok(bounds_width_leq(&bounds, eps))
+                    };
+
                 loop {
-                    root_bounds = self.root.get_bounds()?;
-                    if bounds_width_leq(&root_bounds, epsilon) {
-                        break;
+                    // Check if precision is already met.
+                    if precision_met(&self.root, epsilon)? {
+                        return self.root.get_bounds();
                     }
+
+                    // Count active refiners; if none remain, select exhaustion error.
+                    let active_count = active.iter().filter(|&&a| a).count();
+                    if active_count == 0 {
+                        return if all_state_unchanged {
+                            Err(ComputableError::StateUnchanged)
+                        } else {
+                            Err(ComputableError::MaxRefinementIterations {
+                                max: MAX_REFINEMENT_ITERATIONS,
+                            })
+                        };
+                    }
+
+                    // Check iteration cap.
                     if iterations >= MAX_REFINEMENT_ITERATIONS {
-                        // TODO: allow individual refiners to stop at the max without
-                        // failing the whole refinement, only erroring if all refiners
-                        // are exhausted before meeting the target precision.
                         return Err(ComputableError::MaxRefinementIterations {
                             max: MAX_REFINEMENT_ITERATIONS,
                         });
                     }
                     iterations += 1;
 
-                    for refiner in &refiners {
-                        refiner
-                            .sender
-                            .send(RefineCommand::Step)
-                            .map_err(|_| ComputableError::RefinementChannelClosed)?;
+                    // Send Step to active refiners only.
+                    let mut expected = 0;
+                    for (i, refiner) in refiners.iter().enumerate() {
+                        if active[i] {
+                            refiner
+                                .sender
+                                .send(RefineCommand::Step)
+                                .map_err(|_| ComputableError::RefinementChannelClosed)?;
+                            expected += 1;
+                        }
                     }
 
-                    let mut expected_updates = refiners.len();
-                    while expected_updates > 0 {
-                        let update_result = match update_rx.recv() {
-                            Ok(update_result) => update_result,
-                            Err(_) => {
-                                return Err(ComputableError::RefinementChannelClosed);
-                            }
+                    // Collect responses, checking precision after each update.
+                    while expected > 0 {
+                        let message = match update_rx.recv() {
+                            Ok(msg) => msg,
+                            Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
-                        expected_updates -= 1;
-                        match update_result {
-                            Ok(update) => self.apply_update(update)?,
-                            Err(error) => {
+                        expected -= 1;
+
+                        match message {
+                            RefinerMessage::Update(update) => {
+                                self.apply_update(update)?;
+                                if precision_met(&self.root, epsilon)? {
+                                    return self.root.get_bounds();
+                                }
+                            }
+                            RefinerMessage::Exhausted { update, reason } => {
+                                let exhausted_node_id = update.node_id;
+                                self.apply_update(update)?;
+                                // Find and mark this refiner inactive.
+                                for (i, refiner_node) in self.refiners.iter().enumerate() {
+                                    if refiner_node.id == exhausted_node_id {
+                                        active[i] = false;
+                                        break;
+                                    }
+                                }
+                                if !matches!(reason, ExhaustionReason::StateUnchanged) {
+                                    all_state_unchanged = false;
+                                }
+                                if precision_met(&self.root, epsilon)? {
+                                    return self.root.get_bounds();
+                                }
+                            }
+                            RefinerMessage::Error(error) => {
                                 return Err(error);
                             }
                         }
                     }
                 }
-
-                self.root.get_bounds()
             })();
 
             shutdown_refiners(refiners, &stop_flag);
@@ -206,7 +274,7 @@ fn spawn_refiner<'scope, 'env>(
     scope: &'scope thread::Scope<'scope, 'env>,
     node: Arc<Node>,
     stop: Arc<StopFlag>,
-    updates: Sender<Result<NodeUpdate, ComputableError>>,
+    updates: Sender<RefinerMessage>,
 ) -> RefinerHandle {
     let (command_tx, command_rx) = unbounded();
     scope.spawn(move || {
@@ -222,16 +290,22 @@ fn refiner_loop(
     node: Arc<Node>,
     stop: Arc<StopFlag>,
     commands: Receiver<RefineCommand>,
-    updates: Sender<Result<NodeUpdate, ComputableError>>,
-) -> Result<(), ComputableError> {
+    updates: Sender<RefinerMessage>,
+) {
     while !stop.is_stopped() {
         match commands.recv() {
             Ok(RefineCommand::Step) => match node.refine_step() {
                 Ok(true) => {
-                    let bounds = node.compute_bounds()?;
+                    let bounds = match node.compute_bounds() {
+                        Ok(b) => b,
+                        Err(e) => {
+                            let _ = updates.send(RefinerMessage::Error(e));
+                            break;
+                        }
+                    };
                     node.set_bounds(bounds.clone());
                     if updates
-                        .send(Ok(NodeUpdate {
+                        .send(RefinerMessage::Update(NodeUpdate {
                             node_id: node.id,
                             bounds,
                         }))
@@ -241,28 +315,44 @@ fn refiner_loop(
                     }
                 }
                 Ok(false) => {
-                    let bounds = node
-                        .cached_bounds()
-                        .ok_or(ComputableError::RefinementChannelClosed)?;
-                    if updates
-                        .send(Ok(NodeUpdate {
+                    let bounds = match node.compute_bounds() {
+                        Ok(b) => b,
+                        Err(e) => {
+                            let _ = updates.send(RefinerMessage::Error(e));
+                            break;
+                        }
+                    };
+                    node.set_bounds(bounds.clone());
+                    let _ = updates.send(RefinerMessage::Exhausted {
+                        update: NodeUpdate {
                             node_id: node.id,
                             bounds,
-                        }))
-                        .is_err()
-                    {
-                        break;
-                    }
+                        },
+                        reason: ExhaustionReason::Converged,
+                    });
+                    break;
+                }
+                Err(ComputableError::StateUnchanged) => {
+                    let bounds = node
+                        .cached_bounds()
+                        .unwrap_or_else(|| Bounds::new(XBinary::NegInf, XBinary::PosInf));
+                    let _ = updates.send(RefinerMessage::Exhausted {
+                        update: NodeUpdate {
+                            node_id: node.id,
+                            bounds,
+                        },
+                        reason: ExhaustionReason::StateUnchanged,
+                    });
+                    break;
                 }
                 Err(error) => {
-                    let _ = updates.send(Err(error));
+                    let _ = updates.send(RefinerMessage::Error(error));
                     break;
                 }
             },
             Ok(RefineCommand::Stop) | Err(_) => break,
         }
     }
-    Ok(())
 }
 
 /// Compares bounds width (UXBinary) against epsilon (UBinary).
