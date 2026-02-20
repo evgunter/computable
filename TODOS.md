@@ -3,21 +3,21 @@
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="bounds-dedup"></a>bounds-dedup: Deduplicate FiniteBounds and Bounds
-**File:** `src/binary.rs:77`
+**File:** `src/binary.rs:73`
 ```rust
 // TODO: Investigate code deduplication between FiniteBounds and Bounds. Both types
 ```
 Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters and have similar interval arithmetic needs. Consider whether the interval_add, interval_sub, interval_neg, scale_positive, scale_bigint, midpoint, and comparison methods could be generalized to work on any `Interval<T, W>` where T and W satisfy appropriate trait bounds.
 
 ### <a id="inv-bounds-order"></a>inv-bounds-order: Type system for bounds ordering
-**File:** `src/ops/inv.rs:148`
+**File:** `src/ops/inv.rs:141`
 ```rust
 // TODO: can the type system ensure that the bounds remain ordered?
 ```
 Use the type system to prevent invalid bounds ordering rather than runtime checks.
 
 ### <a id="pow-type-bounds"></a>pow-type-bounds: Type system for invalid bounds in pow
-**File:** `src/ops/pow.rs:51`
+**File:** `src/ops/pow.rs:53`
 ```rust
 // TODO: Investigate if the type system can constrain this so that invalid bounds
 ```

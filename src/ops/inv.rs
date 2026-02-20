@@ -7,10 +7,8 @@ use num_traits::ToPrimitive;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Bounds, FiniteBounds, ReciprocalRounding, UXBinary, XBinary,
-    reciprocal_rounded_abs_extended,
+    Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
 };
-use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -30,18 +28,13 @@ impl NodeOp for InvOp {
         let existing = self.inner.get_bounds()?;
         let precision = self.precision_bits.read();
         let raw_bounds = reciprocal_bounds(&existing, precision.as_ref())?;
-        // Normalize to prefix form to prevent precision accumulation.
-        // Infinite width or infinite endpoints can't be normalized — return as-is.
-        if matches!(raw_bounds.width(), UXBinary::Inf) {
-            return Ok(raw_bounds);
-        }
-        match (raw_bounds.small(), &raw_bounds.large()) {
-            (XBinary::Finite(lo), XBinary::Finite(hi)) => {
-                let finite = FiniteBounds::new(lo.clone(), hi.clone());
-                normalize_finite_to_bounds(&finite)
-            }
-            _ => Ok(raw_bounds),
-        }
+        // For inv, we don't normalize to prefix form because prefix normalization
+        // can expand the interval by up to ~4x, which interferes with the
+        // precision-doubling refinement strategy. The reciprocal computation
+        // already produces bounds with controlled mantissa size (proportional to
+        // the precision parameter), so precision bloat is bounded by the
+        // precision-doubling schedule.
+        Ok(raw_bounds)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
