@@ -4,8 +4,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, binary_from_f64};
-use computable::Computable;
+use common::{balanced_sum, verbose};
+use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 200_000;
 
@@ -16,35 +16,37 @@ fn bench_summation(c: &mut Criterion) {
         .collect();
     let computable_inputs: Vec<Computable> = float_inputs
         .iter()
-        .map(|&v| Computable::constant(binary_from_f64(v)))
+        .map(|&v| Computable::constant(Binary::from_f64(v).unwrap()))
         .collect();
     let base = 2_i64.pow(30) as f64;
 
-    let mut group = c.benchmark_group("summation");
-    group.sample_size(10);
+    if verbose() {
+        let mut terms = Vec::with_capacity(computable_inputs.len() + 1);
+        terms.push(Computable::constant(Binary::from_f64(base).unwrap()));
+        terms.extend(computable_inputs.iter().cloned());
+        let bounds = balanced_sum(terms)
+            .bounds()
+            .expect("bounds should succeed");
+        eprintln!("[summation] width: {}", bounds.width());
+    }
 
-    group.bench_function("float", |b| {
-        b.iter(|| {
-            let mut total = base;
-            for &value in &float_inputs {
-                total += value;
-            }
-            black_box(total)
-        })
-    });
-
-    group.bench_function("computable", |b| {
+    c.bench_function("summation", |b| {
         b.iter(|| {
             let mut terms = Vec::with_capacity(computable_inputs.len() + 1);
-            terms.push(Computable::constant(binary_from_f64(base)));
+            terms.push(Computable::constant(Binary::from_f64(base).unwrap()));
             terms.extend(computable_inputs.iter().cloned());
-            let total = balanced_sum(terms);
-            black_box(total.bounds().expect("bounds should succeed"))
+            black_box(
+                balanced_sum(terms)
+                    .bounds()
+                    .expect("bounds should succeed"),
+            )
         })
     });
-
-    group.finish();
 }
 
-criterion_group!(benches, bench_summation);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(10);
+    targets = bench_summation
+}
 criterion_main!(benches);

@@ -1,12 +1,25 @@
+mod common;
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use num_bigint::{BigInt, BigUint};
 
+use common::verbose;
 use computable::{Binary, Computable, UBinary, pi, pi_bounds_at_precision};
 
 const PRECISION_BITS: &[u64] = &[32, 64, 128, 256, 512, 1024];
 const HIGH_PRECISION_BITS: &[u64] = &[2048, 4096, 8192];
 
 fn bench_pi_refinement(c: &mut Criterion) {
+    if verbose() {
+        for &bits in PRECISION_BITS {
+            let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(bits as i64)));
+            let bounds = pi()
+                .refine_to_default(epsilon)
+                .expect("pi refinement should succeed");
+            eprintln!("[pi/refinement/{bits}] width: {}", bounds.width());
+        }
+    }
+
     let mut group = c.benchmark_group("pi/refinement");
     group.sample_size(10);
 
@@ -14,10 +27,8 @@ fn bench_pi_refinement(c: &mut Criterion) {
         let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(bits as i64)));
         group.bench_with_input(BenchmarkId::from_parameter(bits), &epsilon, |b, epsilon| {
             b.iter(|| {
-                let pi_comp = pi();
                 black_box(
-                    pi_comp
-                        .refine_to_default(epsilon.clone())
+                    pi().refine_to_default(epsilon.clone())
                         .expect("pi refinement should succeed"),
                 )
             })
@@ -28,6 +39,16 @@ fn bench_pi_refinement(c: &mut Criterion) {
 }
 
 fn bench_pi_bounds_at_precision(c: &mut Criterion) {
+    if verbose() {
+        for &bits in PRECISION_BITS {
+            let (lower, upper) = pi_bounds_at_precision(bits);
+            eprintln!(
+                "[pi/bounds_at_precision/{bits}] width: {}",
+                upper.sub(&lower)
+            );
+        }
+    }
+
     let mut group = c.benchmark_group("pi/bounds_at_precision");
     group.sample_size(10);
 
@@ -50,12 +71,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
         let epsilon = epsilon.clone();
         b.iter(|| {
             let two = Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)));
-            let two_pi = two * pi();
-            black_box(
-                two_pi
-                    .refine_to_default(epsilon.clone())
-                    .expect("2pi should succeed"),
-            )
+            black_box((two * pi()).refine_to_default(epsilon.clone()).expect("2pi should succeed"))
         })
     });
 
@@ -63,9 +79,8 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
         let epsilon = epsilon.clone();
         b.iter(|| {
             let half = Computable::constant(Binary::new(BigInt::from(1), BigInt::from(-1)));
-            let half_pi = half * pi();
             black_box(
-                half_pi
+                (half * pi())
                     .refine_to_default(epsilon.clone())
                     .expect("pi/2 should succeed"),
             )
@@ -75,9 +90,8 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
     group.bench_function("pi^2", |b| {
         let epsilon = epsilon.clone();
         b.iter(|| {
-            let pi_squared = pi() * pi();
             black_box(
-                pi_squared
+                (pi() * pi())
                     .refine_to_default(epsilon.clone())
                     .expect("pi^2 should succeed"),
             )
@@ -87,9 +101,8 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
     group.bench_function("1/pi", |b| {
         let epsilon = epsilon.clone();
         b.iter(|| {
-            let inv_pi = pi().inv();
             black_box(
-                inv_pi
+                pi().inv()
                     .refine_to_default(epsilon.clone())
                     .expect("1/pi should succeed"),
             )
@@ -115,15 +128,13 @@ fn bench_sin_pi(c: &mut Criterion) {
                     let n_pi = if multiplier == 1 {
                         pi()
                     } else {
-                        let n = Computable::constant(Binary::new(
+                        Computable::constant(Binary::new(
                             BigInt::from(multiplier),
                             BigInt::from(0),
-                        ));
-                        n * pi()
+                        )) * pi()
                     };
-                    let sin_n_pi = n_pi.sin();
                     black_box(
-                        sin_n_pi
+                        n_pi.sin()
                             .refine_to_default(epsilon.clone())
                             .expect("sin(n*pi) should succeed"),
                     )
@@ -136,6 +147,16 @@ fn bench_sin_pi(c: &mut Criterion) {
 }
 
 fn bench_pi_high_precision(c: &mut Criterion) {
+    if verbose() {
+        for &bits in HIGH_PRECISION_BITS {
+            let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(bits as i64)));
+            let bounds = pi()
+                .refine_to_default(epsilon)
+                .expect("high precision pi should succeed");
+            eprintln!("[pi/high_precision/{bits}] width: {}", bounds.width());
+        }
+    }
+
     let mut group = c.benchmark_group("pi/high_precision");
     group.sample_size(10);
 
@@ -143,10 +164,8 @@ fn bench_pi_high_precision(c: &mut Criterion) {
         let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(bits as i64)));
         group.bench_with_input(BenchmarkId::from_parameter(bits), &epsilon, |b, epsilon| {
             b.iter(|| {
-                let pi_comp = pi();
                 black_box(
-                    pi_comp
-                        .refine_to_default(epsilon.clone())
+                    pi().refine_to_default(epsilon.clone())
                         .expect("high precision pi should succeed"),
                 )
             })

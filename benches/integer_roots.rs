@@ -7,10 +7,20 @@ use num_bigint::{BigInt, BigUint};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::balanced_sum;
+use common::{balanced_sum, verbose};
 use computable::{Binary, Computable, UBinary};
 
 const SAMPLE_COUNT: usize = 1_000;
+
+fn build_terms(inputs: &[(u64, NonZeroU32)]) -> Vec<Computable> {
+    inputs
+        .iter()
+        .map(|&(value, n)| {
+            let value_binary = Binary::new(BigInt::from(value), BigInt::from(0));
+            Computable::constant(value_binary).nth_root(n)
+        })
+        .collect()
+}
 
 fn bench_integer_roots(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(7);
@@ -24,40 +34,28 @@ fn bench_integer_roots(c: &mut Criterion) {
 
     let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(0));
 
-    let mut group = c.benchmark_group("integer_roots");
-    group.sample_size(10);
+    if verbose() {
+        let bounds = balanced_sum(build_terms(&inputs))
+            .refine_to_default(epsilon.clone())
+            .expect("refine_to should succeed");
+        eprintln!("[integer_roots] width: {}", bounds.width());
+    }
 
-    group.bench_function("float", |b| {
-        b.iter(|| {
-            let mut total = 0.0f64;
-            for &(value, n) in &inputs {
-                total += (value as f64).powf(1.0 / n.get() as f64);
-            }
-            black_box(total)
-        })
-    });
-
-    group.bench_function("computable", |b| {
+    c.bench_function("integer_roots", |b| {
         let epsilon = epsilon.clone();
         b.iter(|| {
-            let terms: Vec<Computable> = inputs
-                .iter()
-                .map(|&(value, n)| {
-                    let value_binary = Binary::new(BigInt::from(value), BigInt::from(0));
-                    Computable::constant(value_binary).nth_root(n)
-                })
-                .collect();
-            let total = balanced_sum(terms);
             black_box(
-                total
+                balanced_sum(build_terms(&inputs))
                     .refine_to_default(epsilon.clone())
                     .expect("refine_to should succeed"),
             )
         })
     });
-
-    group.finish();
 }
 
-criterion_group!(benches, bench_integer_roots);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(10);
+    targets = bench_integer_roots
+}
 criterion_main!(benches);
