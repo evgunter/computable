@@ -19,6 +19,12 @@
 //!   An explicit panic is preferable to an OOM crash, so we make an exception to our no-panics
 //!   policy. Unlike the infinite-value macro, this always panics (not just in debug builds)
 //!   because there is no safe fallback.
+//!
+//! - **`assert_sane_computation_size!(...)`**: Use before integer arithmetic on values
+//!   representing computation sizes (precision bits, term counts, bit lengths). If the
+//!   value exceeds `MAX_COMPUTATION_BITS`, the computation would exhaust memory, so we
+//!   panic early. After this check, the subsequent arithmetic can be
+//!   `#[allow(clippy::arithmetic_side_effects)]` since overflow is excluded.
 
 /// Maximum reasonable computation size in bits. A computation requiring more than
 /// 2^32 bits of precision would need ~512 MB just to store one number, and intermediate
