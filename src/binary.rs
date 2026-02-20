@@ -75,11 +75,13 @@ pub type Bounds = Interval<XBinary, UXBinary>;
 /// require finite intervals, and for interval arithmetic in computations
 /// like pi and sin.
 ///
-// TODO: Investigate code deduplication between FiniteBounds and Bounds. Both types
-// are Interval<T, W> with different type parameters and have similar interval arithmetic
-// needs. Consider whether the interval_add, interval_sub, interval_neg, scale_positive,
-// scale_bigint, midpoint, and comparison methods could be generalized to work on any
-// Interval<T, W> where T and W satisfy appropriate trait bounds.
+// Arithmetic methods (interval_add, interval_sub, interval_neg, scale_positive,
+// scale_bigint, midpoint) are defined on FiniteBounds rather than generically because
+// they rely on finite-only semantics:
+// - XBinary::add has add_lower/add_upper variants for correct bound arithmetic;
+//   the std Add trait can't distinguish these.
+// - XBinary::sub returns Result (indeterminate for ∞ - ∞).
+// - scale_positive and midpoint need UBinary::to_binary(), which UXBinary can't provide.
 pub type FiniteBounds = Interval<Binary, UBinary>;
 
 //=============================================================================
@@ -87,11 +89,6 @@ pub type FiniteBounds = Interval<Binary, UBinary>;
 //=============================================================================
 
 impl FiniteBounds {
-    /// Creates a point interval [x, x] with zero width.
-    pub fn point(x: Binary) -> Self {
-        Self::from_lower_and_width(x, UBinary::zero())
-    }
-
     /// Returns the lower bound of the interval.
     ///
     /// This is a convenience alias for `small()`.
@@ -177,53 +174,6 @@ impl FiniteBounds {
         let width = self.width().to_binary();
         let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
         self.lo().add(&half_width)
-    }
-
-    /// Checks if this interval contains a point.
-    pub fn contains(&self, point: &Binary) -> bool {
-        self.lo() <= point && *point <= self.hi()
-    }
-
-    /// Checks if this interval is entirely less than another.
-    pub fn entirely_less_than(&self, other: &Self) -> bool {
-        self.hi() < *other.lo()
-    }
-
-    /// Checks if this interval is entirely greater than another.
-    pub fn entirely_greater_than(&self, other: &Self) -> bool {
-        *self.lo() > other.hi()
-    }
-
-    /// Checks if this interval overlaps with another.
-    pub fn overlaps(&self, other: &Self) -> bool {
-        !(self.entirely_less_than(other) || self.entirely_greater_than(other))
-    }
-
-    /// Returns the join (smallest enclosing interval) of two intervals.
-    ///
-    /// `[a, b].join([c, d]) = [min(a, c), max(b, d)]`
-    ///
-    /// This is the lattice join operation: the smallest interval that contains
-    /// both inputs. Note that if the intervals are disjoint, the result includes
-    /// points in neither original interval (i.e., this is the convex hull).
-    pub fn join(&self, other: &Self) -> Self {
-        let min_lo = std::cmp::min(self.lo(), other.lo()).clone();
-        let max_hi = std::cmp::max(self.hi(), other.hi());
-        Self::new(min_lo, max_hi)
-    }
-
-    /// Returns the intersection of two intervals, if non-empty.
-    ///
-    /// `[a, b].intersection([c, d]) = [max(a, c), min(b, d)]` if non-empty
-    ///
-    /// Returns `None` if the intervals don't overlap.
-    pub fn intersection(&self, other: &Self) -> Option<Self> {
-        if !self.overlaps(other) {
-            return None;
-        }
-        let max_lo = std::cmp::max(self.lo(), other.lo()).clone();
-        let min_hi = std::cmp::min(self.hi(), other.hi());
-        Some(Self::new(max_lo, min_hi))
     }
 }
 
