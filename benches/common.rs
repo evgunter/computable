@@ -1,4 +1,11 @@
+#![allow(dead_code)]
+
 use computable::{Binary, Computable};
+
+/// Whether to print diagnostic info (enabled by BENCH_VERBOSE=1).
+pub fn verbose() -> bool {
+    std::env::var("BENCH_VERBOSE").is_ok()
+}
 
 /// Sums terms using a balanced reduction instead of left-associative chaining.
 ///

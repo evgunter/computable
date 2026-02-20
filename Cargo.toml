@@ -2,6 +2,7 @@
 name = "computable"
 version = "0.1.0"
 edition = "2024"
+autobenches = false
 
 [dependencies]
 crossbeam-channel = "0.5"
@@ -11,5 +12,33 @@ num-traits = "0.2"
 parking_lot = "0.12"
 rand = "0.8"
 
-[workspace]
-members = [".", "benchmarks"]
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "complex"
+harness = false
+
+[[bench]]
+name = "summation"
+harness = false
+
+[[bench]]
+name = "integer_roots"
+harness = false
+
+[[bench]]
+name = "inv"
+harness = false
+
+[[bench]]
+name = "sin"
+harness = false
+
+[[bench]]
+name = "pi"
+harness = false
+
+[[bench]]
+name = "asymmetric_convergence"
+harness = false
