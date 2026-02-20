@@ -38,3 +38,7 @@ harness = false
 [[bench]]
 name = "pi"
 harness = false
+
+[[bench]]
+name = "asymmetric_convergence"
+harness = false
