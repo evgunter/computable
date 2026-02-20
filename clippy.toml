@@ -1,0 +1,38 @@
+# Allow arbitrary-precision and custom-type arithmetic.
+# These types either can't overflow (BigInt/BigUint) or have safe operator
+# overloads (Binary/XBinary/Computable build computation graphs).
+# We spam path variants because clippy matches against internal module paths.
+arithmetic-side-effects-allowed = [
+    # num_bigint types (arbitrary precision, can't overflow)
+    "BigInt",
+    "BigUint",
+    "num_bigint::BigInt",
+    "num_bigint::BigUint",
+    "num_bigint::bigint::BigInt",
+    "num_bigint::biguint::BigUint",
+    # Project binary number types (arbitrary precision via BigInt)
+    "Binary",
+    "UBinary",
+    "XBinary",
+    "UXBinary",
+    "computable::binary::Binary",
+    "computable::binary::UBinary",
+    "computable::binary::XBinary",
+    "computable::binary::UXBinary",
+    "computable::binary::binary_impl::Binary",
+    "computable::binary::ubinary::UBinary",
+    "computable::binary::xbinary::XBinary",
+    "computable::binary::uxbinary::UXBinary",
+    "binary::Binary",
+    "binary::UBinary",
+    "binary::XBinary",
+    "binary::UXBinary",
+    "binary::binary_impl::Binary",
+    "binary::ubinary::UBinary",
+    "binary::xbinary::XBinary",
+    "binary::uxbinary::UXBinary",
+    # Computable type (operators build computation graphs, no actual arithmetic)
+    "Computable",
+    "computable::Computable",
+    "computable::computable::Computable",
+]

@@ -20,6 +20,11 @@
 //!   policy. Unlike the infinite-value macro, this always panics (not just in debug builds)
 //!   because there is no safe fallback.
 
+/// Maximum reasonable computation size in bits. A computation requiring more than
+/// 2^32 bits of precision would need ~512 MB just to store one number, and intermediate
+/// results would require far more.
+pub const MAX_COMPUTATION_BITS: u64 = 1u64 << 32;
+
 use crate::binary::BinaryError;
 
 /// Macro to flag unexpected but potentially valid extended reals cases.
@@ -75,6 +80,43 @@ macro_rules! detected_computable_would_exhaust_memory {
         panic!(
             concat!($msg, " - would exhaust memory if attempted")
         )
+    };
+}
+
+/// Asserts that a computation size parameter (precision bits, term count, bit length,
+/// etc.) is within reasonable bounds for memory.
+///
+/// Integer arithmetic on these values (e.g., `precision + 10` or `n * 3`) could
+/// theoretically overflow, but if the value is large enough to overflow a `usize`
+/// or `u64`, the computation would exhaust memory long before reaching that point.
+/// This macro makes that reasoning explicit: call it on operands before doing
+/// arithmetic, then `#[allow(clippy::arithmetic_side_effects)]` the arithmetic itself.
+///
+/// # Arguments
+///
+/// * `$val` - An integer value representing a computation size
+///
+/// # Panics
+///
+/// Panics via `detected_computable_would_exhaust_memory!` if the value exceeds
+/// `MAX_COMPUTATION_BITS` (2^32).
+///
+/// # Example
+///
+/// ```should_panic
+/// computable::assert_sane_computation_size!(u64::MAX);
+/// ```
+#[macro_export]
+macro_rules! assert_sane_computation_size {
+    ($val:expr) => {
+        // Cast through i128 to handle both signed and unsigned integer types.
+        // Negative values (from signed types) are always fine — they represent
+        // small or zero-precision requests, not memory-exhausting ones.
+        if ($val as i128) > ($crate::MAX_COMPUTATION_BITS as i128) {
+            $crate::detected_computable_would_exhaust_memory!(
+                concat!(stringify!($val), " exceeds MAX_COMPUTATION_BITS")
+            );
+        }
     };
 }
 

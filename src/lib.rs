@@ -45,7 +45,13 @@
     clippy::print_stderr,
     clippy::print_stdout,
     clippy::todo,
-    clippy::unimplemented
+    clippy::unimplemented,
+    // Style guide lints (see STYLE.md)
+    clippy::wildcard_enum_match_arm,
+    clippy::let_underscore_must_use,
+    clippy::arithmetic_side_effects,
+    clippy::impl_trait_in_params,
+    clippy::field_scoped_visibility_modifiers
 )]
 
 // External modules (already exist)
@@ -72,6 +78,6 @@ pub use binary::{
     shortest_binary_in_finite_bounds, shortest_xbinary_in_bounds,
 };
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
-pub use error::ComputableError;
+pub use error::{ComputableError, MAX_COMPUTATION_BITS};
 pub use ops::{pi, pi_bounds_at_precision};
 pub use ordered_pair::{Interval, IntervalError};
