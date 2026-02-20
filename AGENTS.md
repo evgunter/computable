@@ -1,5 +1,5 @@
 - Code quality is very important. Do not compromise on quality to deliver a result--if you don't know a good way to do something, ask. Also, whenever you need to make an architectural decision, come up with a few ideas and ask for feedback before implementing anything.
-- This project is in Rust. Always write Rust code unless explicitly asked.
+- This project is in Rust. Always write Rust code unless explicitly asked. Follow the conventions in [STYLE.md](STYLE.md).
 - It is fine to finish only part of a task. It is far more important to accurately represent your progress than to succeed.
 - Commit frequently and in general use git operations to your advantage (e.g. by reverting commits rather than manually undoing changes).
 - When you create or resolve a TODO, adjust TODOS.md to reflect your changes. You should also update TODOS.md if you try to implement a TODO but hit a blocker or unexpected difficulty.
