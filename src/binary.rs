@@ -75,11 +75,9 @@ pub type Bounds = Interval<XBinary, UXBinary>;
 /// require finite intervals, and for interval arithmetic in computations
 /// like pi and sin.
 ///
-// Comparison and set operations (contains, entirely_less_than, entirely_greater_than,
-// overlaps, join, intersection, point) are generic on Interval<T, W> in ordered_pair.rs.
-//
 // Arithmetic methods (interval_add, interval_sub, interval_neg, scale_positive,
-// scale_bigint, midpoint) remain here because they rely on finite-only semantics:
+// scale_bigint, midpoint) are defined on FiniteBounds rather than generically because
+// they rely on finite-only semantics:
 // - XBinary::add has add_lower/add_upper variants for correct bound arithmetic;
 //   the std Add trait can't distinguish these.
 // - XBinary::sub returns Result (indeterminate for ∞ - ∞).
