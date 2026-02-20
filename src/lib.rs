@@ -51,7 +51,15 @@
     clippy::let_underscore_must_use,
     clippy::arithmetic_side_effects,
     clippy::impl_trait_in_params,
-    clippy::field_scoped_visibility_modifiers
+    clippy::field_scoped_visibility_modifiers,
+    // Cast and type safety
+    clippy::as_conversions,
+    clippy::lossy_float_literal,
+    clippy::default_numeric_fallback,
+    // Logic and safety
+    clippy::map_err_ignore,
+    clippy::missing_asserts_for_indexing,
+    clippy::undocumented_unsafe_blocks
 )]
 
 // External modules (already exist)
