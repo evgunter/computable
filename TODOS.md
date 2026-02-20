@@ -10,7 +10,7 @@
 Both FiniteBounds and Bounds are `Interval<T, W>` with different type parameters and have similar interval arithmetic needs. Consider whether the interval_add, interval_sub, interval_neg, scale_positive, scale_bigint, midpoint, and comparison methods could be generalized to work on any `Interval<T, W>` where T and W satisfy appropriate trait bounds.
 
 ### <a id="inv-bounds-order"></a>inv-bounds-order: Type system for bounds ordering
-**File:** `src/ops/inv.rs:141`
+**File:** `src/ops/inv.rs:140`
 ```rust
 // TODO: can the type system ensure that the bounds remain ordered?
 ```
