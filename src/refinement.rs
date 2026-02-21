@@ -144,8 +144,8 @@ impl RefinementGraph {
             let shutdown_refiners = |handles: Vec<RefinerHandle>, stop_signal: &Arc<StopFlag>| {
                 stop_signal.stop();
                 for refiner in &handles {
-                    // Send may fail if the refiner already exited (e.g. due to an error),
-                    // which is fine — we're shutting down and the refiner is already stopped.
+                    // Safe to discard: the refiner may have already exited
+                    // (e.g. due to an error), and we're shutting down regardless.
                     let _shutdown = refiner.sender.send(RefineCommand::Stop);
                 }
             };
@@ -154,7 +154,6 @@ impl RefinementGraph {
                 let num_refiners = refiners.len();
                 let mut active = vec![true; num_refiners];
                 let mut all_state_unchanged = true;
-                let mut iterations = 0_usize;
 
                 let precision_met =
                     |root: &Arc<Node>, eps: &UBinary| -> Result<bool, ComputableError> {
@@ -162,7 +161,7 @@ impl RefinementGraph {
                         Ok(bounds_width_leq(&bounds, eps))
                     };
 
-                loop {
+                for _iteration in 0..MAX_REFINEMENT_ITERATIONS {
                     // Check if precision is already met.
                     if precision_met(&self.root, epsilon)? {
                         return self.root.get_bounds();
@@ -179,14 +178,6 @@ impl RefinementGraph {
                             })
                         };
                     }
-
-                    // Check iteration cap.
-                    if iterations >= MAX_REFINEMENT_ITERATIONS {
-                        return Err(ComputableError::MaxRefinementIterations {
-                            max: MAX_REFINEMENT_ITERATIONS,
-                        });
-                    }
-                    iterations = iterations.saturating_add(1);
 
                     // Compute demand budget for this round.
                     let demand_budget = compute_demand_budget(epsilon, active_count);
@@ -207,7 +198,8 @@ impl RefinementGraph {
                                 .sender
                                 .send(RefineCommand::Step)
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
-                            expected = expected.saturating_add(1);
+                            expected = expected.checked_add(1).unwrap_or_else(||
+                                unreachable!("expected <= refiners.len(), cannot overflow usize"));
                         }
                     }
 
@@ -220,18 +212,18 @@ impl RefinementGraph {
                                     .sender
                                     .send(RefineCommand::Step)
                                     .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
-                                expected = expected.saturating_add(1);
+                                expected = expected.checked_add(1).unwrap_or_else(||
+                                    unreachable!("expected <= refiners.len(), cannot overflow usize"));
                             }
                         }
                     }
 
                     // Collect responses, checking precision after each update.
-                    while expected > 0 {
+                    for _ in 0..expected {
                         let message = match update_rx.recv() {
                             Ok(msg) => msg,
                             Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
-                        expected = expected.saturating_sub(1);
 
                         match message {
                             RefinerMessage::Update(update) => {
@@ -263,6 +255,10 @@ impl RefinementGraph {
                         }
                     }
                 }
+
+                Err(ComputableError::MaxRefinementIterations {
+                    max: MAX_REFINEMENT_ITERATIONS,
+                })
             })();
 
             shutdown_refiners(refiners, &stop_flag);
@@ -330,7 +326,8 @@ fn refiner_loop(
                     let bounds = match node.compute_bounds() {
                         Ok(b) => b,
                         Err(e) => {
-                            // Best-effort: coordinator may have already exited.
+                            // Safe to discard: send fails only when the coordinator
+                            // has already dropped update_rx (i.e. it already has a result).
                             let _send = updates.send(RefinerMessage::Error(e));
                             break;
                         }
@@ -350,12 +347,15 @@ fn refiner_loop(
                     let bounds = match node.compute_bounds() {
                         Ok(b) => b,
                         Err(e) => {
+                            // Safe to discard: send fails only when the coordinator
+                            // has already dropped update_rx (i.e. it already has a result).
                             let _send = updates.send(RefinerMessage::Error(e));
                             break;
                         }
                     };
                     node.set_bounds(bounds.clone());
-                    // Best-effort: coordinator may have already exited.
+                    // Safe to discard: send fails only when the coordinator
+                    // has already dropped update_rx (i.e. it already has a result).
                     let _send = updates.send(RefinerMessage::Exhausted {
                         update: NodeUpdate {
                             node_id: node.id,
@@ -369,6 +369,8 @@ fn refiner_loop(
                     let bounds = node
                         .cached_bounds()
                         .unwrap_or_else(|| Bounds::new(XBinary::NegInf, XBinary::PosInf));
+                    // Safe to discard: send fails only when the coordinator
+                    // has already dropped update_rx (i.e. it already has a result).
                     let _send = updates.send(RefinerMessage::Exhausted {
                         update: NodeUpdate {
                             node_id: node.id,
@@ -379,6 +381,8 @@ fn refiner_loop(
                     break;
                 }
                 Err(error) => {
+                    // Safe to discard: send fails only when the coordinator
+                    // has already dropped update_rx (i.e. it already has a result).
                     let _send = updates.send(RefinerMessage::Error(error));
                     break;
                 }
@@ -397,7 +401,10 @@ fn compute_demand_budget(epsilon: &UBinary, num_active: usize) -> Option<UBinary
     // ceil(log2(N)) = BITS - leading_zeros(N), which for N>=1 gives the
     // number of bits needed to represent N, i.e. the shift amount that
     // makes 2^shift >= N.
-    let shift = (usize::BITS - num_active.leading_zeros()) as i64;
+    let shift_u32 = usize::BITS
+        .checked_sub(num_active.leading_zeros())
+        .unwrap_or_else(|| unreachable!("leading_zeros() is always <= usize::BITS"));
+    let shift = i64::from(shift_u32);
     Some(UBinary::new(
         epsilon.mantissa().clone(),
         epsilon.exponent() - BigInt::from(shift),
