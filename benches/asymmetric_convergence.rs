@@ -14,7 +14,7 @@
 
 use std::num::NonZeroU32;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use num_bigint::{BigInt, BigUint};
 
 use computable::{Binary, Computable, UBinary, pi};

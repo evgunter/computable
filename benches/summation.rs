@@ -1,6 +1,6 @@
 mod common;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -24,9 +24,7 @@ fn bench_summation(c: &mut Criterion) {
         let mut terms = Vec::with_capacity(computable_inputs.len() + 1);
         terms.push(Computable::constant(Binary::from_f64(base).unwrap()));
         terms.extend(computable_inputs.iter().cloned());
-        let bounds = balanced_sum(terms)
-            .bounds()
-            .expect("bounds should succeed");
+        let bounds = balanced_sum(terms).bounds().expect("bounds should succeed");
         eprintln!("[summation] width: {}", bounds.width());
     }
 
@@ -35,11 +33,7 @@ fn bench_summation(c: &mut Criterion) {
             let mut terms = Vec::with_capacity(computable_inputs.len() + 1);
             terms.push(Computable::constant(Binary::from_f64(base).unwrap()));
             terms.extend(computable_inputs.iter().cloned());
-            black_box(
-                balanced_sum(terms)
-                    .bounds()
-                    .expect("bounds should succeed"),
-            )
+            black_box(balanced_sum(terms).bounds().expect("bounds should succeed"))
         })
     });
 }

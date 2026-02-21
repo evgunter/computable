@@ -1,6 +1,6 @@
 mod common;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use num_bigint::{BigInt, BigUint};
 
 use common::verbose;
@@ -71,7 +71,11 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
         let epsilon = epsilon.clone();
         b.iter(|| {
             let two = Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)));
-            black_box((two * pi()).refine_to_default(epsilon.clone()).expect("2pi should succeed"))
+            black_box(
+                (two * pi())
+                    .refine_to_default(epsilon.clone())
+                    .expect("2pi should succeed"),
+            )
         })
     });
 
@@ -128,10 +132,8 @@ fn bench_sin_pi(c: &mut Criterion) {
                     let n_pi = if multiplier == 1 {
                         pi()
                     } else {
-                        Computable::constant(Binary::new(
-                            BigInt::from(multiplier),
-                            BigInt::from(0),
-                        )) * pi()
+                        Computable::constant(Binary::new(BigInt::from(multiplier), BigInt::from(0)))
+                            * pi()
                     };
                     black_box(
                         n_pi.sin()

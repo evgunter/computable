@@ -428,9 +428,8 @@ fn pi_analysis() {
         (
             "2pi",
             2.0 * std::f64::consts::PI,
-            Box::new(|| {
-                Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0))) * pi()
-            }) as Box<dyn Fn() -> Computable>,
+            Box::new(|| Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0))) * pi())
+                as Box<dyn Fn() -> Computable>,
         ),
         (
             "pi/2",
@@ -444,11 +443,7 @@ fn pi_analysis() {
             std::f64::consts::PI * std::f64::consts::PI,
             Box::new(|| pi() * pi()),
         ),
-        (
-            "1/pi",
-            1.0 / std::f64::consts::PI,
-            Box::new(|| pi().inv()),
-        ),
+        ("1/pi", 1.0 / std::f64::consts::PI, Box::new(|| pi().inv())),
     ] {
         let start = Instant::now();
         let expr = build_expr();
