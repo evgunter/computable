@@ -99,7 +99,6 @@ impl RefinementGraph {
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
             let mut refiners = Vec::new();
-            let mut iterations = 0usize;
             let (update_tx, update_rx) = unbounded();
 
             for node in &self.refiners {
@@ -122,21 +121,11 @@ impl RefinementGraph {
             };
 
             let result = (|| {
-                let mut root_bounds;
-                loop {
-                    root_bounds = self.root.get_bounds()?;
+                for _ in 0..MAX_REFINEMENT_ITERATIONS {
+                    let root_bounds = self.root.get_bounds()?;
                     if bounds_width_leq(&root_bounds, epsilon) {
-                        break;
+                        return self.root.get_bounds();
                     }
-                    if iterations >= MAX_REFINEMENT_ITERATIONS {
-                        // TODO: allow individual refiners to stop at the max without
-                        // failing the whole refinement, only erroring if all refiners
-                        // are exhausted before meeting the target precision.
-                        return Err(ComputableError::MaxRefinementIterations {
-                            max: MAX_REFINEMENT_ITERATIONS,
-                        });
-                    }
-                    iterations += 1;
 
                     for refiner in &refiners {
                         refiner
@@ -145,15 +134,13 @@ impl RefinementGraph {
                             .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                     }
 
-                    let mut expected_updates = refiners.len();
-                    while expected_updates > 0 {
+                    for _ in 0..refiners.len() {
                         let update_result = match update_rx.recv() {
                             Ok(update_result) => update_result,
                             Err(_) => {
                                 return Err(ComputableError::RefinementChannelClosed);
                             }
                         };
-                        expected_updates -= 1;
                         match update_result {
                             Ok(update) => self.apply_update(update)?,
                             Err(error) => {
@@ -163,7 +150,18 @@ impl RefinementGraph {
                     }
                 }
 
-                self.root.get_bounds()
+                // Check once more after the last iteration
+                let root_bounds = self.root.get_bounds()?;
+                if bounds_width_leq(&root_bounds, epsilon) {
+                    return self.root.get_bounds();
+                }
+
+                // TODO: allow individual refiners to stop at the max without
+                // failing the whole refinement, only erroring if all refiners
+                // are exhausted before meeting the target precision.
+                Err(ComputableError::MaxRefinementIterations {
+                    max: MAX_REFINEMENT_ITERATIONS,
+                })
             })();
 
             shutdown_refiners(refiners, &stop_flag);

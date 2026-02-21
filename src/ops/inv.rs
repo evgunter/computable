@@ -97,8 +97,11 @@ fn estimate_initial_precision(input_bounds: &Bounds) -> i64 {
         // Effective precision is roughly -exponent (ignoring mantissa for simplicity)
         // We use this as a starting point, with a minimum floor
         if let Some(exp) = width.exponent().to_i64() {
-            // Precision ≈ -exponent, clamped to reasonable range
-            let estimated = (-exp).max(INV_INITIAL_PRECISION_BITS);
+            // Precision ≈ -exponent, clamped to reasonable range.
+            // saturating_neg: if exp == i64::MIN, saturates to i64::MAX. This is
+            // fine because it's just an estimate — an astronomically negative exponent
+            // means the width is vanishingly small, so max precision is appropriate.
+            let estimated = exp.saturating_neg().max(INV_INITIAL_PRECISION_BITS);
             return estimated;
         }
     }

@@ -65,7 +65,7 @@ fn format_mantissa_with_point(mantissa: &BigUint, exponent: &BigInt) -> (String,
     };
 
     // Adjust exponent: new_exp = old_exp + (num_bits - 1)
-    let adjusted_exponent = exponent + (num_bits - 1);
+    let adjusted_exponent = exponent + BigInt::from(num_bits) - 1_i32;
 
     (formatted_mantissa, adjusted_exponent)
 }

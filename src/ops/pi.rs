@@ -41,8 +41,12 @@ const MARGIN_SHIFT: u32 = 3;
 ///
 /// Equivalent to floor(log2(x)) + 1 for x > 0, and 0 for x == 0.
 fn bit_length(x: usize) -> usize {
-    // usize::BITS and leading_zeros() both return u32; result is at most BITS, always fits
-    usize::try_from(usize::BITS - x.leading_zeros()).unwrap_or(0)
+    // leading_zeros() is always <= BITS, so this subtraction cannot underflow.
+    // TODO: investigate whether the type system could prevent this case.
+    let bits = usize::BITS
+        .checked_sub(x.leading_zeros())
+        .unwrap_or_else(|| unreachable!("leading_zeros() is always <= usize::BITS"));
+    usize::try_from(bits).unwrap_or(0)
 }
 
 /// Computes the intermediate reciprocal precision needed for `num_terms` Taylor series terms.
@@ -67,9 +71,16 @@ fn bit_length(x: usize) -> usize {
 /// The margin `bit_length(n+2) + bit_length(2n+1)` covers `log2((n+2)*(2n+1))` because
 /// `bit_length(x) = floor(log2(x)) + 1 >= log2(x)`.
 fn precision_bits_for_num_terms(num_terms: usize) -> usize {
-    let n = num_terms;
-    let two_n_plus_1 = 2 * n + 1;
-    two_n_plus_1 * 3 + bit_length(n + 2) + bit_length(two_n_plus_1)
+    crate::assert_sane_computation_size!(num_terms);
+    // After the above guard, num_terms < 2^32, so all arithmetic below is well within usize.
+    #[allow(clippy::arithmetic_side_effects)]
+    {
+        let n = num_terms;
+        let two_n_plus_1 = 2 * n + 1;
+        let taylor_bits = two_n_plus_1 * 3;
+        let rounding_margin = bit_length(n + 2) + bit_length(two_n_plus_1);
+        taylor_bits + rounding_margin
+    }
 }
 
 /// Returns pi as a Computable that can be refined to arbitrary precision.
@@ -109,9 +120,15 @@ pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
     // For arctan(1/5), error after n terms is bounded by (1/5)^(2n+1)/(2n+1).
     // We need (2n+1)*log2(5) > precision_bits + 4, i.e. n > (precision_bits + 4) / (2*log2(5)) - 0.5.
     // Since log2(5) > 2, using (precision_bits + 10) / 4 is conservative (integer-only).
+    // After the above guard, precision_bits < 2^32, so this arithmetic is safe.
+    #[allow(clippy::arithmetic_side_effects)]
     let num_terms = ((precision_bits + 10) / 4).max(5);
-    let reciprocal_precision = precision_bits_for_num_terms(num_terms)
-        .max(precision_bits + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1));
+    // Minimum precision to keep rounding error below Taylor truncation error
+    #[allow(clippy::arithmetic_side_effects)]
+    let rounding_error_precision =
+        precision_bits + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1);
+    let reciprocal_precision =
+        precision_bits_for_num_terms(num_terms).max(rounding_error_precision);
     compute_pi_bounds(num_terms, reciprocal_precision)
 }
 
@@ -138,8 +155,8 @@ impl NodeOp for PiOp {
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
-        // Double the number of terms for faster convergence
-        *num_terms = (*num_terms).saturating_mul(2).max(*num_terms + 1);
+        // Double the number of terms for faster convergence (at least 1)
+        *num_terms = (*num_terms).saturating_mul(2).max(1_usize);
         Ok(true)
     }
 

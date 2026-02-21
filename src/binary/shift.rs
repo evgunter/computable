@@ -5,10 +5,17 @@
 
 use std::ops::ShlAssign;
 
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 
 use crate::error::MAX_COMPUTATION_BITS;
+
+/// Marker trait for arbitrary-precision integer types whose arithmetic
+/// (including `<<=`) cannot overflow. Implemented only for `BigInt` and
+/// `BigUint`, so `shift_mantissa_chunked` is restricted to those types.
+pub(crate) trait ArbitraryPrecision: Clone + ShlAssign<usize> {}
+impl ArbitraryPrecision for BigInt {}
+impl ArbitraryPrecision for BigUint {}
 
 /// Performs a left shift of a mantissa by a potentially large amount.
 ///
@@ -25,7 +32,7 @@ use crate::error::MAX_COMPUTATION_BITS;
 /// `MAX_COMPUTATION_BITS`, since the result would be too large to fit in memory.
 pub(crate) fn shift_mantissa_chunked<M>(mantissa: &M, shift: &BigUint, chunk_limit: &BigUint) -> M
 where
-    M: Clone + ShlAssign<usize>,
+    M: ArbitraryPrecision,
 {
     if shift > &BigUint::from(MAX_COMPUTATION_BITS) {
         crate::detected_computable_would_exhaust_memory!(
@@ -41,7 +48,8 @@ where
         } else {
             (&remaining).try_into().unwrap_or(usize::MAX)
         };
-        shifted <<= chunk_usize;
+        #[allow(clippy::arithmetic_side_effects)] // M: ArbitraryPrecision — only BigInt/BigUint
+        { shifted <<= chunk_usize; }
         remaining -= BigUint::from(chunk_usize);
     }
     shifted
