@@ -115,7 +115,9 @@ impl RefinementGraph {
             let shutdown_refiners = |handles: Vec<RefinerHandle>, stop_signal: &Arc<StopFlag>| {
                 stop_signal.stop();
                 for refiner in &handles {
-                    let _ = refiner.sender.send(RefineCommand::Stop);
+                    // Send may fail if the refiner already exited (e.g. due to an error),
+                    // which is fine — we're shutting down and the refiner is already stopped.
+                    let _shutdown = refiner.sender.send(RefineCommand::Stop);
                 }
             };
 
@@ -210,10 +212,7 @@ fn spawn_refiner<'scope, 'env>(
 ) -> RefinerHandle {
     let (command_tx, command_rx) = unbounded();
     scope.spawn(move || {
-        // TODO: investigate whether catch_unwind is the right pattern here
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            refiner_loop(node, stop, command_rx, updates)
-        }));
+        refiner_loop(node, stop, command_rx, updates);
     });
 
     RefinerHandle { sender: command_tx }
@@ -224,46 +223,48 @@ fn refiner_loop(
     stop: Arc<StopFlag>,
     commands: Receiver<RefineCommand>,
     updates: Sender<Result<NodeUpdate, ComputableError>>,
-) -> Result<(), ComputableError> {
+) {
     while !stop.is_stopped() {
         match commands.recv() {
-            Ok(RefineCommand::Step) => match node.refine_step() {
-                Ok(true) => {
-                    let bounds = node.compute_bounds()?;
-                    node.set_bounds(bounds.clone());
-                    if updates
-                        .send(Ok(NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        }))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Ok(false) => {
-                    let bounds = node
-                        .cached_bounds()
-                        .ok_or(ComputableError::RefinementChannelClosed)?;
-                    if updates
-                        .send(Ok(NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        }))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = updates.send(Err(error));
+            Ok(RefineCommand::Step) => {
+                // Compute the update (or error) for this step. All errors are sent
+                // through the channel so the coordinator always receives exactly one
+                // message per Step command.
+                let result = compute_step_update(&node);
+                let is_err = result.is_err();
+                if updates.send(result).is_err() {
                     break;
                 }
-            },
+                if is_err {
+                    break;
+                }
+            }
             Ok(RefineCommand::Stop) | Err(_) => break,
         }
     }
-    Ok(())
+}
+
+/// Performs one refinement step and returns the update (or error) for the coordinator.
+fn compute_step_update(node: &Arc<Node>) -> Result<NodeUpdate, ComputableError> {
+    match node.refine_step()? {
+        true => {
+            let bounds = node.compute_bounds()?;
+            node.set_bounds(bounds.clone());
+            Ok(NodeUpdate {
+                node_id: node.id,
+                bounds,
+            })
+        }
+        false => {
+            let bounds = node
+                .cached_bounds()
+                .ok_or(ComputableError::RefinementChannelClosed)?;
+            Ok(NodeUpdate {
+                node_id: node.id,
+                bounds,
+            })
+        }
+    }
 }
 
 /// Compares bounds width (UXBinary) against epsilon (UBinary).
@@ -296,9 +297,9 @@ mod tests {
         state.clone()
     }
 
-    fn interval_refine_strict(state: IntervalState) -> IntervalState {
+    fn interval_refine_strict(state: IntervalState) -> Result<IntervalState, ComputableError> {
         let midpoint = midpoint_between(state.small(), &state.large());
-        Bounds::new(state.small().clone(), XBinary::Finite(midpoint))
+        Ok(Bounds::new(state.small().clone(), XBinary::Finite(midpoint)))
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
@@ -399,7 +400,7 @@ mod tests {
         let computable = Computable::new(
             0usize,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
-            |state| state + 1,
+            |state| Ok(state + 1),
         );
         let epsilon = ubin(1, -1);
         let result = computable.refine_to::<5>(epsilon);
@@ -437,7 +438,7 @@ mod tests {
             |inner_state: IntervalState| {
                 let upper = inner_state.large();
                 let worse_upper = unwrap_finite(&upper).add(&bin(1, 0));
-                Bounds::new(inner_state.small().clone(), XBinary::Finite(worse_upper))
+                Ok(Bounds::new(inner_state.small().clone(), XBinary::Finite(worse_upper)))
             },
         );
         let epsilon = ubin(1, -2);
@@ -462,19 +463,16 @@ mod tests {
     }
 
     #[test]
-    fn refine_to_channel_closure() {
+    fn refine_to_propagates_refiner_error() {
         let computable = Computable::new(
             0usize,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
-            |_| panic!("refiner panic"),
+            |_| Err(ComputableError::DomainError),
         );
 
         let epsilon = ubin(1, -4);
         let result = computable.refine_to::<2>(epsilon);
-        assert!(matches!(
-            result,
-            Err(ComputableError::RefinementChannelClosed)
-        ));
+        assert!(matches!(result, Err(ComputableError::DomainError)));
     }
 
     #[test]
@@ -482,12 +480,12 @@ mod tests {
         let left = Computable::new(
             0usize,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
-            |state| state + 1,
+            |state| Ok(state + 1),
         );
         let right = Computable::new(
             0usize,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
-            |state| state + 1,
+            |state| Ok(state + 1),
         );
         let expr = left + right;
         let epsilon = ubin(1, -4);
@@ -504,7 +502,7 @@ mod tests {
         let faulty = Computable::new(
             Bounds::new(xbin(0, 0), xbin(1, 0)),
             |state| Ok(state.clone()),
-            |state| Bounds::new(state.small().clone(), xbin(2, 0)),
+            |state| Ok(Bounds::new(state.small().clone(), xbin(2, 0))),
         );
         let expr = stable + faulty;
         let epsilon = ubin(1, -4);
@@ -517,7 +515,7 @@ mod tests {
         let computable = Arc::new(Computable::new(
             0usize,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
-            |state| state + 1,
+            |state| Ok(state + 1),
         ));
         let epsilon = ubin(1, -6);
         let reader = Arc::clone(&computable);
@@ -550,7 +548,7 @@ mod tests {
                 |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
                 |state| {
                     thread::sleep(Duration::from_millis(SLEEP_MS));
-                    state + 1
+                    Ok(state + 1)
                 },
             )
         };

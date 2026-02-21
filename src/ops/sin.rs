@@ -981,7 +981,7 @@ mod tests {
         let unbounded = Computable::new(
             0usize,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
-            |state| state + 1,
+            |state| Ok(state + 1),
         );
         let sin_unbounded = unbounded.sin();
         let bounds = sin_unbounded.bounds().expect("bounds should succeed");

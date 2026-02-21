@@ -46,7 +46,7 @@ impl Computable {
     where
         X: Eq + Clone + Send + Sync + 'static,
         B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
-        F: Fn(X) -> X + Send + Sync + 'static,
+        F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
     {
         let base_node_struct = TypedBaseNode::new(state, bounds, refine);
         let base_node: Arc<dyn BaseNode> = Arc::new(base_node_struct);
@@ -226,8 +226,8 @@ impl Computable {
             ))
         }
 
-        fn refine(value: Binary) -> Binary {
-            value
+        fn refine(value: Binary) -> Result<Binary, ComputableError> {
+            Ok(value)
         }
 
         Computable::new(value, bounds, refine)

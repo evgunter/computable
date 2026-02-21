@@ -38,7 +38,7 @@ pub struct TypedBaseNode<X, B, F>
 where
     X: Eq + Clone + Send + Sync + 'static,
     B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
-    F: Fn(X) -> X + Send + Sync + 'static,
+    F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
 {
     /// Snapshot ties a particular state with its computed bounds to avoid recomputation.
     snapshot: RwLock<BaseSnapshot<X>>,
@@ -50,7 +50,7 @@ impl<X, B, F> TypedBaseNode<X, B, F>
 where
     X: Eq + Clone + Send + Sync + 'static,
     B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
-    F: Fn(X) -> X + Send + Sync + 'static,
+    F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
 {
     pub fn new(state: X, bounds: B, refine: F) -> Self {
         Self {
@@ -77,7 +77,7 @@ impl<X, B, F> BaseNode for TypedBaseNode<X, B, F>
 where
     X: Eq + Clone + Send + Sync + 'static,
     B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
-    F: Fn(X) -> X + Send + Sync + 'static,
+    F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
 {
     /// Returns cached bounds for the current base state, computing and caching if needed.
     fn get_bounds(&self) -> Result<Bounds, ComputableError> {
@@ -91,7 +91,7 @@ where
         let mut snapshot = self.snapshot.write();
         let previous_bounds = self.snapshot_bounds(&mut snapshot)?;
         let previous_state = snapshot.state.clone();
-        let next_state = (self.refine)(previous_state.clone());
+        let next_state = (self.refine)(previous_state.clone())?;
         if next_state == previous_state {
             if previous_bounds.small() == &previous_bounds.large() {
                 return Ok(());
