@@ -100,7 +100,7 @@ impl UBinary {
 
         while (&mantissa % 2u32).is_zero() {
             mantissa /= 2u32;
-            exponent += 1;
+            exponent += 1_i32;
         }
 
         Self { mantissa, exponent }

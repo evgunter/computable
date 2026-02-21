@@ -71,7 +71,7 @@ impl Binary {
         if value.is_infinite() {
             return Err(BinaryError::Infinity);
         }
-        if value == 0.0 {
+        if value == 0.0_f64 {
             return Ok(Self::zero());
         }
         let (mantissa, exponent, sign) = value.integer_decode();
@@ -127,8 +127,8 @@ impl Binary {
         }
 
         while mantissa.is_even() {
-            mantissa /= 2;
-            exponent += 1;
+            mantissa /= 2_i32;
+            exponent += 1_i32;
         }
 
         Self { mantissa, exponent }

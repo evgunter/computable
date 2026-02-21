@@ -40,7 +40,7 @@ pub fn binary_pow(x: &Binary, n: u32) -> Binary {
 
     // Use exponentiation by squaring for O(log n) complexity.
     // Algorithm: x^n = (x^2)^(n/2) if n is even, x * (x^2)^((n-1)/2) if n is odd.
-    let mut result = Binary::new(BigInt::one(), BigInt::from(0));
+    let mut result = Binary::new(BigInt::one(), BigInt::from(0_i32));
     let mut base = x.clone();
     let mut exp = n;
 
@@ -48,7 +48,7 @@ pub fn binary_pow(x: &Binary, n: u32) -> Binary {
         if exp & 1 == 1 {
             result = result.mul(&base);
         }
-        exp >>= 1;
+        exp >>= 1_u32;
         if exp > 0 {
             base = base.mul(&base);
         }

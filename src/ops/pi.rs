@@ -41,7 +41,8 @@ const MARGIN_SHIFT: u32 = 3;
 ///
 /// Equivalent to floor(log2(x)) + 1 for x > 0, and 0 for x == 0.
 fn bit_length(x: usize) -> usize {
-    (usize::BITS - x.leading_zeros()) as usize
+    // usize::BITS and leading_zeros() both return u32; result is at most BITS, always fits
+    usize::try_from(usize::BITS - x.leading_zeros()).unwrap_or(0)
 }
 
 /// Computes the intermediate reciprocal precision needed for `num_terms` Taylor series terms.
@@ -91,7 +92,7 @@ pub fn pi() -> Computable {
     let node = Node::new(Arc::new(PiOp {
         num_terms: RwLock::new(INITIAL_PI_TERMS),
     }));
-    Computable { node }
+    Computable::from_node(node)
 }
 
 /// Returns bounds on pi with at least `precision_bits` bits of accuracy.
@@ -102,14 +103,15 @@ pub fn pi() -> Computable {
 /// The returned bounds (pi_lo, pi_hi) satisfy:
 /// - pi_lo <= true_pi <= pi_hi
 /// - (pi_hi - pi_lo) <= 2^(-precision_bits) approximately
-pub fn pi_bounds_at_precision(precision_bits: u64) -> (Binary, Binary) {
+pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
+    crate::assert_sane_computation_size!(precision_bits);
     // Compute enough terms to achieve the desired precision.
     // For arctan(1/5), error after n terms is bounded by (1/5)^(2n+1)/(2n+1).
     // We need (2n+1)*log2(5) > precision_bits + 4, i.e. n > (precision_bits + 4) / (2*log2(5)) - 0.5.
     // Since log2(5) > 2, using (precision_bits + 10) / 4 is conservative (integer-only).
-    let num_terms = ((precision_bits as usize + 10) / 4).max(5);
+    let num_terms = ((precision_bits + 10) / 4).max(5);
     let reciprocal_precision = precision_bits_for_num_terms(num_terms)
-        .max(precision_bits as usize + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1));
+        .max(precision_bits + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1));
     compute_pi_bounds(num_terms, reciprocal_precision)
 }
 
@@ -124,7 +126,7 @@ impl NodeOp for PiOp {
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
         let raw_bounds = Bounds::new_checked(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi))
-            .map_err(|_| ComputableError::InvalidBoundsOrder)?;
+?;
         // Simplify bounds to reduce precision bloat from high-precision pi computation
         let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
         Ok(simplify_bounds_if_needed(
@@ -178,8 +180,8 @@ fn compute_pi_bounds(num_terms: usize, precision_bits: usize) -> (Binary, Binary
     // So: pi_lo = 16*atan_5_lo - 4*atan_239_hi
     //     pi_hi = 16*atan_5_hi - 4*atan_239_lo
 
-    let sixteen = Binary::new(BigInt::from(1), BigInt::from(4)); // 2^4 = 16
-    let four = Binary::new(BigInt::from(1), BigInt::from(2)); // 2^2 = 4
+    let sixteen = Binary::new(BigInt::from(1_i32), BigInt::from(4_i32)); // 2^4 = 16
+    let four = Binary::new(BigInt::from(1_i32), BigInt::from(2_i32)); // 2^2 = 4
 
     // 16 * arctan(1/5) bounds
     let term1_lo = atan_5_lo.mul(&sixteen);
@@ -307,7 +309,7 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize, precision_bits: usize) -> 
     use num_bigint::BigUint;
 
     let exponent = 2 * num_terms + 1;
-    let coeff = BigUint::from(exponent as u64); // 2n+1
+    let coeff = BigUint::from(exponent); // 2n+1
 
     let k_big = BigUint::from(k);
     let mut k_power = BigUint::one();
@@ -322,23 +324,23 @@ fn arctan_recip_error_bound(k: u64, num_terms: usize, precision_bits: usize) -> 
 }
 
 /// Returns pi as a FiniteBounds interval with specified precision.
-pub fn pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
+pub fn pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
     let (lo, hi) = pi_bounds_at_precision(precision_bits);
     FiniteBounds::new(lo, hi)
 }
 
 /// Returns 2*pi as a FiniteBounds interval with specified precision.
-pub fn two_pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
+pub fn two_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
     use num_bigint::BigUint;
 
     let pi_interval = pi_interval_at_precision(precision_bits);
     // 2*pi: multiply by 2
-    let two = UBinary::new(BigUint::from(1u32), BigInt::from(1)); // 2^1 = 2
+    let two = UBinary::new(BigUint::from(1u32), BigInt::from(1_i32)); // 2^1 = 2
     pi_interval.scale_positive(&two)
 }
 
 /// Returns pi/2 as a FiniteBounds interval with specified precision.
-pub fn half_pi_interval_at_precision(precision_bits: u64) -> FiniteBounds {
+pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
     let (pi_lo, pi_hi) = pi_bounds_at_precision(precision_bits);
     // pi/2: divide by 2 (decrement exponent by 1)
     let half_pi_lo = Binary::new(pi_lo.mantissa().clone(), pi_lo.exponent() - BigInt::one());
@@ -456,7 +458,7 @@ mod tests {
 
     #[test]
     fn pi_bounds_at_precision_helper() {
-        const PRECISION_BITS: u64 = 50;
+        const PRECISION_BITS: usize = 50;
         let (lo, hi) = pi_bounds_at_precision(PRECISION_BITS);
         let width = hi.sub(&lo);
 

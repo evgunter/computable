@@ -28,10 +28,12 @@
 
 /// Maximum reasonable computation size in bits. A computation requiring more than
 /// 2^32 bits of precision would need ~512 MB just to store one number, and intermediate
-/// results would require far more.
-pub const MAX_COMPUTATION_BITS: u64 = 1u64 << 32;
+/// results would require far more. Typed as `usize` because the OOM guard directly
+/// reflects addressable memory limits.
+pub const MAX_COMPUTATION_BITS: usize = 1_usize << 32;
 
 use crate::binary::BinaryError;
+use crate::ordered_pair::IntervalError;
 
 /// Macro to flag unexpected but potentially valid extended reals cases.
 ///
@@ -110,20 +112,38 @@ macro_rules! detected_computable_would_exhaust_memory {
 /// # Example
 ///
 /// ```should_panic
-/// computable::assert_sane_computation_size!(u64::MAX);
+/// computable::assert_sane_computation_size!(usize::MAX);
 /// ```
 #[macro_export]
 macro_rules! assert_sane_computation_size {
     ($val:expr) => {
-        // Cast through i128 to handle both signed and unsigned integer types.
-        // Negative values (from signed types) are always fine — they represent
-        // small or zero-precision requests, not memory-exhausting ones.
-        if ($val as i128) > ($crate::MAX_COMPUTATION_BITS as i128) {
+        // $val must be usize. If it exceeds MAX_COMPUTATION_BITS, the
+        // computation would exhaust memory, so we panic early.
+        let __val: usize = $val;
+        if __val > $crate::MAX_COMPUTATION_BITS {
             $crate::detected_computable_would_exhaust_memory!(
                 concat!(stringify!($val), " exceeds MAX_COMPUTATION_BITS")
             );
         }
     };
+}
+
+/// Converts a `u64` bit count (e.g. from `BigUint::bits()`) to `usize`,
+/// panicking if the value exceeds `MAX_COMPUTATION_BITS`.
+///
+/// This centralizes the one unavoidable `u64 -> usize` platform cast that
+/// arises because `num_bigint::BigUint::bits()` returns `u64` but shift
+/// operations and precision parameters use `usize`.
+///
+/// # Panics
+///
+/// Panics via `detected_computable_would_exhaust_memory!` if `bits` exceeds
+/// `MAX_COMPUTATION_BITS`.
+pub fn bits_as_usize(bits: u64) -> usize {
+    #[allow(clippy::as_conversions)] // u64 -> usize: safe after MAX_COMPUTATION_BITS check
+    let result = bits as usize;
+    assert_sane_computation_size!(result);
+    result
 }
 
 use std::fmt;
@@ -179,6 +199,14 @@ impl std::error::Error for ComputableError {}
 impl From<BinaryError> for ComputableError {
     fn from(error: BinaryError) -> Self {
         Self::Binary(error)
+    }
+}
+
+impl From<IntervalError> for ComputableError {
+    fn from(error: IntervalError) -> Self {
+        match error {
+            IntervalError::InvalidOrder => Self::InvalidBoundsOrder,
+        }
     }
 }
 

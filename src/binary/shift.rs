@@ -34,22 +34,12 @@ where
     }
     let mut shifted = mantissa.clone();
     let mut remaining = shift.clone();
-    let chunk_limit_usize = {
-        let digits = chunk_limit.to_u64_digits();
-        match digits.first() {
-            Some(value) => *value as usize,
-            None => 0,
-        }
-    };
+    let chunk_limit_usize = chunk_limit.try_into().unwrap_or(usize::MAX);
     while remaining > BigUint::zero() {
-        let chunk_usize = if &remaining > chunk_limit {
+        let chunk_usize: usize = if &remaining > chunk_limit {
             chunk_limit_usize
         } else {
-            let digits = remaining.to_u64_digits();
-            match digits.first() {
-                Some(value) => *value as usize,
-                None => 0,
-            }
+            (&remaining).try_into().unwrap_or(usize::MAX)
         };
         shifted <<= chunk_usize;
         remaining -= BigUint::from(chunk_usize);

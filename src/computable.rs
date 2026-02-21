@@ -32,7 +32,7 @@ pub const DEFAULT_MAX_REFINEMENT_ITERATIONS: usize = 4096;
 /// A computable number backed by a shared node graph.
 #[derive(Clone)]
 pub struct Computable {
-    pub(crate) node: Arc<Node>,
+    node: Arc<Node>,
 }
 
 impl Computable {
@@ -51,6 +51,11 @@ impl Computable {
         let base_node_struct = TypedBaseNode::new(state, bounds, refine);
         let base_node: Arc<dyn BaseNode> = Arc::new(base_node_struct);
         let node = Node::new(Arc::new(BaseOp { base: base_node }));
+        Self { node }
+    }
+
+    /// Creates a Computable from a pre-built Node.
+    pub(crate) fn from_node(node: Arc<Node>) -> Self {
         Self { node }
     }
 

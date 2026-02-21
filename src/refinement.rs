@@ -140,7 +140,7 @@ impl RefinementGraph {
                         refiner
                             .sender
                             .send(RefineCommand::Step)
-                            .map_err(|_| ComputableError::RefinementChannelClosed)?;
+                            .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                     }
 
                     let mut expected_updates = refiners.len();
@@ -210,6 +210,7 @@ fn spawn_refiner<'scope, 'env>(
 ) -> RefinerHandle {
     let (command_tx, command_rx) = unbounded();
     scope.spawn(move || {
+        // TODO: investigate whether catch_unwind is the right pattern here
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             refiner_loop(node, stop, command_rx, updates)
         }));

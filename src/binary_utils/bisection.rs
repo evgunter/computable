@@ -246,7 +246,7 @@ pub fn normalize_bounds(
         width_ubinary.exponent().clone()
     } else {
         // Add 1 extra to account for rounding when flooring the lower bound
-        width_ubinary.exponent() + BigInt::from(width_bits as i64) + BigInt::one()
+        width_ubinary.exponent() + BigInt::from(width_bits) + BigInt::one()
     };
 
     // Floor the lower bound to this exponent

@@ -66,7 +66,7 @@ impl NodeOp for InvOp {
                 // TODO: If state reuse is implemented (e.g., Newton-Raphson iteration that
                 // builds on previous results), this should be changed to linear increment
                 // to avoid computing to higher precision than requested.
-                *precision = Some(current * 2);
+                *precision = Some(current * 2_i32);
             }
         }
         Ok(true)
@@ -147,7 +147,7 @@ fn reciprocal_bounds(
     };
 
     // TODO: can the type system ensure that the bounds remain ordered?
-    Bounds::new_checked(lower_bound, upper_bound).map_err(|_| ComputableError::InvalidBoundsOrder)
+    Ok(Bounds::new_checked(lower_bound, upper_bound)?)
 }
 
 #[cfg(test)]

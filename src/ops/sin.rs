@@ -94,8 +94,8 @@ impl NodeOp for SinOp {
 /// 5. Compute Taylor series on reduced interval
 /// 6. Apply sign flips and clamp to [-1, 1]
 fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, ComputableError> {
-    let neg_one = Binary::new(BigInt::from(-1), BigInt::zero());
-    let pos_one = Binary::new(BigInt::from(1), BigInt::zero());
+    let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
+    let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
 
     // Extract finite bounds, or return [-1, 1] for any infinite bounds
     let lower = input_bounds.small();
@@ -199,7 +199,7 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
     };
 
     let raw_bounds = Bounds::new_checked(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi))
-        .map_err(|_| ComputableError::InvalidBoundsOrder)?;
+?;
 
     // Simplify bounds to reduce precision bloat from Taylor series computation
     let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
@@ -242,7 +242,7 @@ enum ReductionResult {
 /// 2. pi_error contributes acceptably small error to final answer
 ///
 /// where k is the number of 2*pi periods subtracted.
-fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: usize) -> u64 {
+fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: usize) -> usize {
     // Estimate k = |x| / (2*pi) using a rough approximation
     // We use the larger magnitude endpoint
     let abs_lo = lower.magnitude();
@@ -252,16 +252,18 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
     // Rough estimate: k ~= max_abs / 6.28
     // We need: pi_precision > log2(k) + some_margin
     // log2(max_abs) ~= bit_length(mantissa) + exponent
-    let mantissa_bits = max_abs.mantissa().bits() as i64;
+    let mantissa_bits = crate::error::bits_as_usize(max_abs.mantissa().bits());
+    // Use i64 for signed exponent arithmetic (isize would truncate on 32-bit)
+    let mantissa_bits_i64 = i64::try_from(mantissa_bits).unwrap_or(i64::MAX);
     let exp = max_abs
         .exponent()
         .to_i64()
-        .unwrap_or(0)
-        .saturating_add(mantissa_bits);
+        .unwrap_or(0_i64)
+        .saturating_add(mantissa_bits_i64);
 
     // k ~= 2^exp / 2^2.65 (since 2*pi ~= 2^2.65)
     // log2(k) ~= exp - 2.65
-    let log2_k = (exp - 3).max(0) as u64;
+    let log2_k = usize::try_from(exp.saturating_sub(3_i64).max(0_i64)).unwrap_or(0);
 
     // Base precision for branch determination: log2(k) + 4
     let precision_for_branch = log2_k.saturating_add(4);
@@ -269,7 +271,7 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
     // Precision for final answer: depends on Taylor series precision
     // Taylor error ~= 2^(-taylor_terms * some_factor)
     // We want pi error to be smaller than this
-    let precision_for_answer = (taylor_terms as u64)
+    let precision_for_answer = taylor_terms
         .saturating_mul(3)
         .saturating_add(log2_k);
 
@@ -316,7 +318,7 @@ fn reduce_to_pi_range_interval(
     // After the analytical reduction, we should be close to [-π, π].
     // At most 2 fixup iterations handle the case where k was off by 1
     // (which can happen when the midpoint is near a multiple of 2π).
-    for _ in 0..2 {
+    for _ in 0_u32..2_u32 {
         // Check if we're within the outer bounds [-pi_hi, pi_hi].
         // This is acceptable because downstream code (reduce_to_half_pi_range_interval)
         // uses conservative interval comparisons with pi/half_pi that properly account
@@ -453,8 +455,8 @@ fn reduce_to_half_pi_range_interval(
     // This happens when the interval crosses a branch boundary (e.g., between
     // center and upper regions) without containing pi/2 or -pi/2.
     // Compute conservative bounds at both endpoints and take their union.
-    let neg_one = Binary::new(BigInt::from(-1), BigInt::zero());
-    let pos_one = Binary::new(BigInt::from(1), BigInt::zero());
+    let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
+    let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
 
     let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
     let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
@@ -551,13 +553,15 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     // To avoid losing precision, we shift mx up by enough bits so that
     // mx << shift_bits > mp, ensuring a non-zero quotient.
     // The shift should be at least mp.bits() - mx.bits() + some_precision.
-    let mx_bits = mx.magnitude().bits() as i64;
-    let mp_bits = mp.magnitude().bits() as i64;
+    let mx_bits = crate::error::bits_as_usize(mx.magnitude().bits());
+    let mp_bits = crate::error::bits_as_usize(mp.magnitude().bits());
 
-    // Shift by enough bits to get a meaningful quotient, plus extra precision for rounding
-    let precision_bits = (mp_bits - mx_bits + 64).max(64);
+    // Shift by enough bits to get a meaningful quotient, plus extra precision for rounding.
+    // When mp_bits > mx_bits, we need at least the difference plus 64 extra bits.
+    // When mx_bits >= mp_bits, 64 bits suffice.
+    let precision_bits = mp_bits.saturating_sub(mx_bits).saturating_add(64).max(64);
 
-    let shifted_mx = mx << precision_bits as usize;
+    let shifted_mx = mx << precision_bits;
     let quotient = &shifted_mx / mp;
     let result_exp = ex - ep - BigInt::from(precision_bits);
 
@@ -596,7 +600,7 @@ fn truncate_precision_directed(
 ) -> Binary {
     let mantissa = x.mantissa();
     let exponent = x.exponent();
-    let bit_length = mantissa.magnitude().bits() as usize;
+    let bit_length = crate::error::bits_as_usize(mantissa.magnitude().bits());
 
     if bit_length <= precision_bits {
         return x.clone();
@@ -776,7 +780,8 @@ fn divide_by_factorial_directed(
 
     // Use the caller-provided target precision, ensuring it is at least as large
     // as the input value's mantissa to avoid losing information.
-    let precision_bits = target_precision.max(value.mantissa().magnitude().bits() as usize);
+    let value_bits = crate::error::bits_as_usize(value.mantissa().magnitude().bits());
+    let precision_bits = target_precision.max(value_bits);
 
     // Determine rounding direction for reciprocal based on overall rounding and sign of value.
     // For directed rounding toward +/- infinity:

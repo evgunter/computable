@@ -218,7 +218,7 @@ pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
     // This relaxes the lower bound downward to find a shorter representation
     let original_lower = match bounds.small() {
         XBinary::Finite(lower) => lower.clone(),
-        _ => return bounds.clone(), // Can't simplify infinite lower bound
+        XBinary::NegInf | XBinary::PosInf => return bounds.clone(), // Can't simplify infinite lower bound
     };
 
     let relaxed_lower = original_lower.sub(&finite_margin.to_binary());
@@ -228,14 +228,14 @@ pub fn simplify_bounds(bounds: &Bounds, margin: &UXBinary) -> Bounds {
     );
     let new_lower = match shortest_xbinary_in_bounds(&lower_search_bounds) {
         XBinary::Finite(l) => l,
-        _ => return bounds.clone(),
+        XBinary::NegInf | XBinary::PosInf => return bounds.clone(),
     };
 
     // Step 2: Find shortest width in [min_width, min_width + margin]
     // where min_width = original_upper - new_lower (the minimum to contain original interval)
     let original_upper = match bounds.large() {
         XBinary::Finite(upper) => upper,
-        _ => return bounds.clone(), // Can't simplify infinite upper bound
+        XBinary::NegInf | XBinary::PosInf => return bounds.clone(), // Can't simplify infinite upper bound
     };
 
     // min_width = original_upper - new_lower
@@ -267,11 +267,11 @@ pub fn mantissa_bits(value: &Binary) -> u64 {
 pub fn bounds_precision(bounds: &Bounds) -> u64 {
     let lower_bits = match bounds.small() {
         XBinary::Finite(b) => mantissa_bits(b),
-        _ => 0,
+        XBinary::NegInf | XBinary::PosInf => 0,
     };
     let upper_bits = match bounds.large() {
         XBinary::Finite(b) => mantissa_bits(&b),
-        _ => 0,
+        XBinary::NegInf | XBinary::PosInf => 0,
     };
     lower_bits + upper_bits
 }

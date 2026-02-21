@@ -16,7 +16,7 @@ impl NodeOp for NegOp {
         let existing = self.inner.get_bounds()?;
         let lower = existing.small().neg();
         let upper = existing.large().neg();
-        Bounds::new_checked(upper, lower).map_err(|_| ComputableError::InvalidBoundsOrder)
+        Ok(Bounds::new_checked(upper, lower)?)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -44,7 +44,7 @@ impl NodeOp for AddOp {
         let right_bounds = self.right.get_bounds()?;
         let lower = left_bounds.small().add_lower(right_bounds.small());
         let upper = left_bounds.large().add_upper(&right_bounds.large());
-        Bounds::new_checked(lower, upper).map_err(|_| ComputableError::InvalidBoundsOrder)
+        Ok(Bounds::new_checked(lower, upper)?)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -93,7 +93,7 @@ impl NodeOp for MulOp {
             }
         }
 
-        Bounds::new_checked(min, max).map_err(|_| ComputableError::InvalidBoundsOrder)
+        Ok(Bounds::new_checked(min, max)?)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
