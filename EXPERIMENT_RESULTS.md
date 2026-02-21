@@ -414,6 +414,37 @@ width heuristic is insufficient, e.g. MulOp where a wide-but-small factor
 amplifies a narrow-but-large factor. In practice the safety valve rarely
 fires — it's a backstop against theoretical edge cases.
 
+## Demand budget check overhead investigation
+
+The demand check calls `cached_bounds()` + `bounds_width_leq()` per refiner
+per round. Initial (non-randomized) benchmarks suggested ~2x overhead on
+single-refiner cases. Three optimizations were tested:
+
+1. **Cache width alongside bounds** — Store pre-computed `UXBinary` width in a
+   separate `width_cache` field on Node, avoiding the full `Bounds` clone in
+   the demand check.
+2. **Skip check for N=1** — Bypass the demand budget entirely when only one
+   refiner is active (budget = ε/2, refiner width > ε, so it's never skipped).
+3. **Check every K rounds** — Skip the demand check on the first round (where
+   refiners are initializing and unlikely to be skippable).
+
+### Results (5 trials, randomized execution order)
+
+| Benchmark | Baseline | Cache width | Skip single | Check every K |
+|---|---|---|---|---|
+| pi/ref/128 | 1.64ms | 1.63ms (-1%) | 1.74ms (+6%) | 1.82ms (+11%) |
+| pi/ref/512 | 5.07ms | 5.71ms (+13%) | 4.44ms (-12%) | 5.13ms (+1%) |
+| sin | 804ms | 712ms (-11%) | 773ms (-4%) | 772ms (-4%) |
+| AC total | 17.9ms | 18.3ms (+2%) | 19.2ms (+8%) | 21.2ms (+19%) |
+
+**All differences are within noise** (trial-to-trial variance of 30-50%
+dominates the between-variant differences). The initial "~2x overhead" finding
+was an artifact of non-randomized execution order — baseline always ran first
+(cold CPU), while variants ran later (warm CPU).
+
+**Conclusion**: The demand budget check is already cheap enough that optimizing
+it produces no measurable improvement. The code is left as-is.
+
 ## Correctness
 
 - All 198 tests pass (including all 17 refinement tests)
