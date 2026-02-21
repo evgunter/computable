@@ -7,19 +7,10 @@ use num_traits::ToPrimitive;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Bounds, ReciprocalRounding, UXBinary, XBinary, margin_from_width,
-    reciprocal_rounded_abs_extended, simplify_bounds_if_needed,
+    Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-
-/// Precision threshold for triggering bounds simplification.
-/// 128 chosen: 12% faster than 64 due to lower overhead in precision-doubling refinement.
-const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
-
-/// margin parameter for bounds simplification.
-/// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const MARGIN_SHIFT: u32 = 3;
 
 /// Initial precision bits to start with for inv refinement when input bounds are infinite.
 /// Starting at a reasonable value avoids unnecessary early iterations.
@@ -37,13 +28,13 @@ impl NodeOp for InvOp {
         let existing = self.inner.get_bounds()?;
         let precision = self.precision_bits.read();
         let raw_bounds = reciprocal_bounds(&existing, precision.as_ref())?;
-        // Simplify bounds to reduce precision bloat from high-precision reciprocal computation
-        let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
-        Ok(simplify_bounds_if_needed(
-            &raw_bounds,
-            PRECISION_SIMPLIFICATION_THRESHOLD,
-            &margin,
-        ))
+        // For inv, we don't normalize to prefix form because prefix normalization
+        // can expand the interval by up to ~4x, which interferes with the
+        // precision-doubling refinement strategy. The reciprocal computation
+        // already produces bounds with controlled mantissa size (proportional to
+        // the precision parameter), so precision bloat is bounded by the
+        // precision-doubling schedule.
+        Ok(raw_bounds)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {

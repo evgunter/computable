@@ -18,6 +18,10 @@ impl NodeOp for BaseOp {
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
         self.base.refine()?;
+        let bounds = BoundsAccess::get_bounds(self.base.as_ref())?;
+        if bounds.small() == &bounds.large() {
+            return Ok(false);
+        }
         Ok(true)
     }
 

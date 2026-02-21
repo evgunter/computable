@@ -26,19 +26,11 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, XBinary, margin_from_width,
-    reciprocal_of_biguint, simplify_bounds_if_needed,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, XBinary, reciprocal_of_biguint,
 };
+use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-
-/// Precision threshold for triggering bounds simplification.
-/// 128 chosen: 8% faster than 64; Taylor series doesn't accumulate precision as rapidly as bisection.
-const PRECISION_SIMPLIFICATION_THRESHOLD: u64 = 128;
-
-/// margin parameter for bounds simplification.
-/// 3 = loosen by width/8. Benchmarks show margin has minimal performance impact.
-const MARGIN_SHIFT: u32 = 3;
 
 use super::pi::{
     half_pi_interval_at_precision, pi_interval_at_precision, two_pi_interval_at_precision,
@@ -54,14 +46,7 @@ impl NodeOp for SinOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let num_terms = self.num_terms.read().clone();
-        let raw_bounds = sin_bounds(&input_bounds, &num_terms)?;
-        // Simplify bounds to reduce precision bloat from Taylor series computation
-        let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
-        Ok(simplify_bounds_if_needed(
-            &raw_bounds,
-            PRECISION_SIMPLIFICATION_THRESHOLD,
-            &margin,
-        ))
+        sin_bounds(&input_bounds, &num_terms)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
@@ -198,16 +183,9 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
         result_hi
     };
 
-    let raw_bounds = Bounds::new_checked(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi))
-?;
-
-    // Simplify bounds to reduce precision bloat from Taylor series computation
-    let margin = margin_from_width(raw_bounds.width(), MARGIN_SHIFT);
-    Ok(simplify_bounds_if_needed(
-        &raw_bounds,
-        PRECISION_SIMPLIFICATION_THRESHOLD,
-        &margin,
-    ))
+    // Normalize to prefix form to prevent precision accumulation
+    let finite = FiniteBounds::new(clamped_lo, clamped_hi);
+    normalize_finite_to_bounds(&finite)
 }
 
 //=============================================================================
@@ -655,8 +633,10 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> Finit
     // The Taylor series with n terms yields roughly n*10 bits of accuracy
     // (conservative estimate for |x| ≤ π/2). Intermediate precision must match.
     let target_precision = n * 10;
-    let truncated_lo = truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
-    let truncated_hi = truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
+    let truncated_lo =
+        truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
+    let truncated_hi =
+        truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
 
     let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n, target_precision);
     let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n, target_precision);
@@ -1217,20 +1197,15 @@ mod tests {
         let width = unwrap_finite_uxbinary(bounds.width());
 
         // Width must be at most epsilon = 2^-512
-        assert!(
-            width <= epsilon,
-            "width {} should be <= 2^-512",
-            width
-        );
+        assert!(width <= epsilon, "width {} should be <= 2^-512", width);
 
         // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
         let midpoint = FiniteBounds::new(lower, upper).midpoint();
         let expected_f64 = 1.0_f64.sin();
-        let expected_bin = unwrap_finite(
-            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
-        );
+        let expected_bin =
+            unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
         let diff = if midpoint > expected_bin {
             midpoint.sub(&expected_bin)
         } else {
@@ -1267,9 +1242,8 @@ mod tests {
 
         // sin(2^20) ≈ -0.24271... — verify bounds contain this
         let expected_f64 = (1048576.0_f64).sin();
-        let expected = unwrap_finite(
-            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
-        );
+        let expected =
+            unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
         assert!(
             lower <= expected && expected <= upper,
             "sin(2^20) bounds [{}, {}] should contain expected value {}",
@@ -1318,9 +1292,8 @@ mod tests {
 
         // sin(-10000) ≈ 0.30561... — verify bounds contain this
         let expected_f64 = (-10000.0_f64).sin();
-        let expected = unwrap_finite(
-            &XBinary::from_f64(expected_f64).expect("expected value should convert"),
-        );
+        let expected =
+            unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
         assert!(
             lower <= expected && expected <= upper,
             "sin(-10000) bounds [{}, {}] should contain expected value {}",
@@ -1345,8 +1318,8 @@ mod tests {
         let lo = bin(0, 0);
         let hi = two_pi.lo().add(&bin(1, -60));
         let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
-        let result = sin_bounds(&input_bounds, &BigInt::from(5))
-            .expect("sin_bounds should succeed");
+        let result =
+            sin_bounds(&input_bounds, &BigInt::from(5)).expect("sin_bounds should succeed");
 
         // Because the width >= two_pi_lo, the conservative check should trigger
         // and return [-1, 1] (possibly slightly widened by simplification).

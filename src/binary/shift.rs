@@ -35,9 +35,7 @@ where
     M: ArbitraryPrecision,
 {
     if shift > &BigUint::from(MAX_COMPUTATION_BITS) {
-        crate::detected_computable_would_exhaust_memory!(
-            "shift by extreme exponent"
-        );
+        crate::detected_computable_would_exhaust_memory!("shift by extreme exponent");
     }
     let mut shifted = mantissa.clone();
     let mut remaining = shift.clone();
