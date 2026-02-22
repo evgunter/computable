@@ -280,7 +280,7 @@ pub fn normalize_bounds(
 /// 64 bits is chosen because:
 /// - It's large enough to avoid normalizing coarse early-refinement bounds
 /// - It's small enough to prevent significant precision bloat in long refinements
-const NORMALIZATION_PRECISION_THRESHOLD: u64 = 64;
+const NORMALIZATION_PRECISION_THRESHOLD: usize = 64;
 
 /// Normalizes finite bounds to `Bounds`, handling edge cases where prefix form isn't possible.
 ///
@@ -302,9 +302,9 @@ pub fn normalize_finite_to_bounds(
 ) -> Result<Bounds, crate::error::ComputableError> {
     use num_traits::Signed;
 
-    let lower_bits = bounds.small().mantissa().magnitude().bits();
-    let upper_bits = bounds.large().mantissa().magnitude().bits();
-    let total_precision = lower_bits + upper_bits;
+    let lower_bits = crate::error::bits_as_usize(bounds.small().mantissa().magnitude().bits());
+    let upper_bits = crate::error::bits_as_usize(bounds.large().mantissa().magnitude().bits());
+    let total_precision = crate::sane_arithmetic!(lower_bits, upper_bits; lower_bits + upper_bits);
 
     let can_normalize = total_precision > NORMALIZATION_PRECISION_THRESHOLD
         && !bounds.width().mantissa().is_zero()

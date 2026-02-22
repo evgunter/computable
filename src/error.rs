@@ -126,6 +126,33 @@ macro_rules! assert_sane_computation_size {
     };
 }
 
+/// Guards one or more `usize` values with [`assert_sane_computation_size!`], then
+/// evaluates an arithmetic expression with `clippy::arithmetic_side_effects` suppressed.
+///
+/// This bundles the common pattern of "check operands are bounded, then do arithmetic
+/// that provably can't overflow" into a single call, making it impossible to forget
+/// either half.
+///
+/// # Syntax
+///
+/// ```ignore
+/// sane_arithmetic!(guard1, guard2, ...; expression)
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// let exponent = sane_arithmetic!(num_terms; 2 * num_terms + 1);
+/// ```
+#[macro_export]
+macro_rules! sane_arithmetic {
+    ($($guard:expr),+ ; $expr:expr) => {{
+        $($crate::assert_sane_computation_size!($guard);)+
+        #[allow(clippy::arithmetic_side_effects)]
+        { $expr }
+    }};
+}
+
 /// Converts a `u64` bit count (e.g. from `BigUint::bits()`) to `usize`,
 /// panicking if the value exceeds `MAX_COMPUTATION_BITS`.
 ///
@@ -142,6 +169,14 @@ pub fn bits_as_usize(bits: u64) -> usize {
     let result = bits as usize;
     assert_sane_computation_size!(result);
     result
+}
+
+/// Subtracts one from a `NonZeroUsize`, returning the result as `usize`.
+///
+/// This is trivially correct: `NonZeroUsize` guarantees `>= 1`, so `- 1 >= 0`.
+pub fn sub_one(n: std::num::NonZeroUsize) -> usize {
+    #[allow(clippy::arithmetic_side_effects)]
+    { n.get() - 1 }
 }
 
 use std::fmt;

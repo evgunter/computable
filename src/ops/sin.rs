@@ -547,17 +547,18 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
         let shift = result_exp.to_usize().unwrap_or(0);
         &quotient << shift
     } else {
-        let shift = (-&result_exp).to_usize().unwrap_or(0);
-        if shift == 0 {
-            quotient.clone()
-        } else {
-            let half = BigInt::one() << (shift - 1);
-            let rounded = if quotient.is_negative() {
-                &quotient - &half
-            } else {
-                &quotient + &half
-            };
-            rounded >> shift
+        let shift_val = (-&result_exp).to_usize().unwrap_or(0);
+        match std::num::NonZeroUsize::new(shift_val) {
+            None => quotient.clone(),
+            Some(shift) => {
+                let half = BigInt::one() << crate::error::sub_one(shift);
+                let rounded = if quotient.is_negative() {
+                    &quotient - &half
+                } else {
+                    &quotient + &half
+                };
+                rounded >> shift.get()
+            }
         }
     }
 }
@@ -580,11 +581,13 @@ fn truncate_precision_directed(
     let exponent = x.exponent();
     let bit_length = crate::error::bits_as_usize(mantissa.magnitude().bits());
 
-    if bit_length <= precision_bits {
+    let Some(shift_nz) = bit_length
+        .checked_sub(precision_bits)
+        .and_then(std::num::NonZeroUsize::new)
+    else {
         return x.clone();
-    }
-
-    let shift = bit_length - precision_bits;
+    };
+    let shift = shift_nz.get();
 
     // Shift the magnitude (always truncates toward zero) and detect remainder
     let abs_shifted = mantissa.magnitude() >> shift;
@@ -632,7 +635,7 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> Finit
     //
     // The Taylor series with n terms yields roughly n*10 bits of accuracy
     // (conservative estimate for |x| ≤ π/2). Intermediate precision must match.
-    let target_precision = n * 10;
+    let target_precision = crate::sane_arithmetic!(n; n * 10);
     let truncated_lo =
         truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
     let truncated_hi =
@@ -694,25 +697,20 @@ fn taylor_sin_partial_sum(
     let mut power = x.clone(); // x^1
     let mut factorial = BigInt::one(); // 1!
 
-    for k in 0..n {
-        // Term k: (-1)^k * x^(2k+1) / (2k+1)!
-        let term_num = if k % 2 == 0 {
-            power.clone()
-        } else {
-            power.neg()
-        };
+    // First term (k=0): +x / 1!
+    let first_term = divide_by_factorial_directed(&power, &factorial, rounding, target_precision);
+    sum = sum.add(&first_term);
 
-        // Divide by factorial with directed rounding
+    for k in 1..n {
+        // Advance state: power *= x^2, factorial *= (2k)(2k+1)
+        power = power.mul(x).mul(x);
+        let k_big = BigInt::from(k);
+        factorial *= &k_big * 2_i64 * (&k_big * 2_i64 + 1_i64);
+
+        // Term k: (-1)^k * x^(2k+1) / (2k+1)!
+        let term_num = if k % 2 == 0 { power.clone() } else { power.neg() };
         let term = divide_by_factorial_directed(&term_num, &factorial, rounding, target_precision);
         sum = sum.add(&term);
-
-        // Prepare for next term: multiply power by x^2
-        if k + 1 < n {
-            power = power.mul(x).mul(x);
-            // factorial *= (2k+2) * (2k+3)
-            let next_k = k + 1;
-            factorial *= BigInt::from(2 * next_k) * BigInt::from(2 * next_k + 1);
-        }
     }
 
     sum
@@ -724,7 +722,7 @@ fn taylor_error_bound(x: &Binary, n: usize, target_precision: usize) -> Binary {
     // Compute |x|^(2n+1)
     let abs_x = x.magnitude().to_binary();
 
-    let exp = 2 * n + 1;
+    let exp = crate::sane_arithmetic!(n; 2 * n + 1);
     let mut power = Binary::new(BigInt::one(), BigInt::zero()); // 1
     for _ in 0..exp {
         power = power.mul(&abs_x);

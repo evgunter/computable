@@ -248,7 +248,7 @@ fn arctan_recip_partial_sum(
 
     for i in 0..num_terms {
         // Term i: (-1)^i / ((2i+1) * k^(2i+1))
-        let coeff = BigInt::from(2 * i + 1); // 2i+1
+        let coeff = BigInt::from(i) * 2_i64 + 1_i64; // 2i+1
         let denominator = &coeff * &k_power; // (2i+1) * k^(2i+1)
 
         // Compute 1/denominator with directed rounding
@@ -311,7 +311,7 @@ fn divide_one_by_bigint(
 fn arctan_recip_error_bound(k: u64, num_terms: usize, precision_bits: usize) -> Binary {
     use num_bigint::BigUint;
 
-    let exponent = 2 * num_terms + 1;
+    let exponent = crate::sane_arithmetic!(num_terms; 2 * num_terms + 1);
     let coeff = BigUint::from(exponent); // 2n+1
 
     let k_big = BigUint::from(k);
