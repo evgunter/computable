@@ -372,7 +372,7 @@ fn sin_analysis(rng: &mut StdRng) {
 }
 
 fn pi_analysis() {
-    let precision_bits: &[u64] = &[32, 64, 128, 256, 512, 1024];
+    let precision_bits: &[usize] = &[32, 64, 128, 256, 512, 1024];
 
     println!("== Pi Refinement Analysis ==");
     println!();
