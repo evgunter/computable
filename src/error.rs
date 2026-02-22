@@ -27,10 +27,14 @@
 //!   `#[allow(clippy::arithmetic_side_effects)]` since overflow is excluded.
 
 /// Maximum reasonable computation size in bits. A computation requiring more than
-/// 2^32 bits of precision would need ~512 MB just to store one number, and intermediate
-/// results would require far more. Typed as `usize` because the OOM guard directly
-/// reflects addressable memory limits.
-pub const MAX_COMPUTATION_BITS: usize = 1_usize << 32;
+/// ~2^32 bits of precision would need ~512 MB just to store one number, and intermediate
+/// results would require far more. Guaranteed `<= usize::MAX` on all platforms.
+pub const MAX_COMPUTATION_BITS: usize = if usize::BITS >= 32 {
+    #[allow(clippy::as_conversions)] // safe: branch guards usize::BITS >= 32
+    { u32::MAX as usize }
+} else {
+    usize::MAX
+};
 
 use crate::binary::BinaryError;
 use crate::ordered_pair::IntervalError;
@@ -165,10 +169,15 @@ macro_rules! sane_arithmetic {
 /// Panics via `detected_computable_would_exhaust_memory!` if `bits` exceeds
 /// `MAX_COMPUTATION_BITS`.
 pub fn bits_as_usize(bits: u64) -> usize {
-    #[allow(clippy::as_conversions)] // u64 -> usize: safe after MAX_COMPUTATION_BITS check
-    let result = bits as usize;
-    assert_sane_computation_size!(result);
-    result
+    // MAX_COMPUTATION_BITS <= usize::MAX by construction, so this single check
+    // guarantees both "won't exhaust memory" and "fits in usize".
+    #[allow(clippy::as_conversions)] // usize -> u64: always widens or is a no-op
+    let max = MAX_COMPUTATION_BITS as u64;
+    if bits > max {
+        detected_computable_would_exhaust_memory!("bit count exceeds MAX_COMPUTATION_BITS");
+    }
+    #[allow(clippy::as_conversions)] // safe: bits <= MAX_COMPUTATION_BITS <= usize::MAX
+    { bits as usize }
 }
 
 /// Subtracts one from a `NonZeroUsize`, returning the result as `usize`.

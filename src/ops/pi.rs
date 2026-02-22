@@ -63,16 +63,13 @@ fn bit_length(x: usize) -> usize {
 /// The margin `bit_length(n+2) + bit_length(2n+1)` covers `log2((n+2)*(2n+1))` because
 /// `bit_length(x) = floor(log2(x)) + 1 >= log2(x)`.
 fn precision_bits_for_num_terms(num_terms: usize) -> usize {
-    crate::assert_sane_computation_size!(num_terms);
-    // After the above guard, num_terms < 2^32, so all arithmetic below is well within usize.
-    #[allow(clippy::arithmetic_side_effects)]
-    {
+    crate::sane_arithmetic!(num_terms; {
         let n = num_terms;
         let two_n_plus_1 = 2 * n + 1;
         let taylor_bits = two_n_plus_1 * 3;
         let rounding_margin = bit_length(n + 2) + bit_length(two_n_plus_1);
         taylor_bits + rounding_margin
-    }
+    })
 }
 
 /// Returns pi as a Computable that can be refined to arbitrary precision.
@@ -107,18 +104,14 @@ pub fn pi() -> Computable {
 /// - pi_lo <= true_pi <= pi_hi
 /// - (pi_hi - pi_lo) <= 2^(-precision_bits) approximately
 pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
-    crate::assert_sane_computation_size!(precision_bits);
     // Compute enough terms to achieve the desired precision.
     // For arctan(1/5), error after n terms is bounded by (1/5)^(2n+1)/(2n+1).
     // We need (2n+1)*log2(5) > precision_bits + 4, i.e. n > (precision_bits + 4) / (2*log2(5)) - 0.5.
     // Since log2(5) > 2, using (precision_bits + 10) / 4 is conservative (integer-only).
-    // After the above guard, precision_bits < 2^32, so this arithmetic is safe.
-    #[allow(clippy::arithmetic_side_effects)]
-    let num_terms = ((precision_bits + 10) / 4).max(5);
+    let num_terms = crate::sane_arithmetic!(precision_bits; ((precision_bits + 10) / 4).max(5));
     // Minimum precision to keep rounding error below Taylor truncation error
-    #[allow(clippy::arithmetic_side_effects)]
-    let rounding_error_precision =
-        precision_bits + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1);
+    let rounding_error_precision = crate::sane_arithmetic!(precision_bits, num_terms;
+        precision_bits + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1));
     let reciprocal_precision =
         precision_bits_for_num_terms(num_terms).max(rounding_error_precision);
     compute_pi_bounds(num_terms, reciprocal_precision)
