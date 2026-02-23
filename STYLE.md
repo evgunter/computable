@@ -2,16 +2,6 @@
 
 This guide covers non-obvious conventions that go beyond what `rustfmt` and default `clippy` enforce. If something here seems obvious, it's included because it's easy to get wrong in practice.
 
-## Enforced Clippy Lints
-
-These lints are enabled in `lib.rs` and enforced project-wide:
-
-- **`clippy::wildcard_enum_match_arm`** — No wildcard `_` catch-alls in match on enums. List all variants explicitly so the compiler catches new ones.
-- **`clippy::let_underscore_must_use`** — Don't discard `#[must_use]` values with `let _ =`. Handle errors explicitly.
-- **`clippy::arithmetic_side_effects`** — No bare `+`, `-`, `*`, `/`, `%`, `<<`, `>>` on integers. See [Numerical Correctness](#numerical-correctness).
-- **`clippy::impl_trait_in_params`** — Use explicit generic parameters (`fn foo<T: Trait>(x: T)`) instead of `fn foo(x: impl Trait)`.
-- **`clippy::field_scoped_visibility_modifiers`** — No `pub(crate)` or `pub(super)` on struct fields.
-
 ## Numerical Correctness
 
 This is a math library. Arithmetic correctness is paramount.
