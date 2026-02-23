@@ -166,6 +166,7 @@ fn sin_bounds(
         &two_pi_interval,
         &pi_interval,
         &half_pi_interval,
+        n,
     );
 
     // Compute sin bounds based on the reduction result
@@ -324,6 +325,7 @@ fn reduce_to_half_pi_range_interval(
     two_pi: &FiniteBounds,
     pi: &FiniteBounds,
     half_pi: &FiniteBounds,
+    n: usize,
 ) -> ReductionResult {
     // First reduce to [-pi, pi]
     let reduced = reduce_to_pi_range_interval(input, two_pi, pi);
@@ -392,10 +394,8 @@ fn reduce_to_half_pi_range_interval(
     if spans_max {
         // The interval contains pi/2 where sin = 1
         // Compute the minimum sin value at the endpoints
-        // TODO: The hardcoded n=15 (~45 bits) doesn't scale with the requested
-        // precision. Should use the SinOp's num_terms (or derive from input precision).
-        let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
-        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
+        let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
         let sin_min = if sin_bounds_at_lo.lo() < sin_bounds_at_hi.lo() {
             sin_bounds_at_lo.lo().clone()
         } else {
@@ -408,8 +408,8 @@ fn reduce_to_half_pi_range_interval(
     // Case 6: Straddles -pi/2 only (contains minimum)
     if spans_min {
         // The interval contains -pi/2 where sin = -1
-        let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
-        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
+        let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
         let sin_max = if sin_bounds_at_lo.hi() > sin_bounds_at_hi.hi() {
             sin_bounds_at_lo.hi()
         } else {
@@ -426,8 +426,8 @@ fn reduce_to_half_pi_range_interval(
     let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
     let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
 
-    let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
-    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
+    let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
+    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
     let combined = sin_bounds_1.join(&sin_bounds_2);
 
     ReductionResult::SpansMultipleBranches {
