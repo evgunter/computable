@@ -42,3 +42,25 @@ harness = false
 [[bench]]
 name = "asymmetric_convergence"
 harness = false
+
+[lints.clippy]
+# These lints apply to all targets (lib, examples, benches).
+# The lib promotes them to deny via lib.rs; examples/benches just get warnings.
+shadow_reuse = "warn"
+shadow_same = "warn"
+shadow_unrelated = "warn"
+dbg_macro = "warn"
+print_stderr = "warn"
+todo = "warn"
+unimplemented = "warn"
+wildcard_enum_match_arm = "warn"
+let_underscore_must_use = "warn"
+arithmetic_side_effects = "warn"
+impl_trait_in_params = "warn"
+field_scoped_visibility_modifiers = "warn"
+as_conversions = "warn"
+lossy_float_literal = "warn"
+default_numeric_fallback = "warn"
+map_err_ignore = "warn"
+missing_asserts_for_indexing = "warn"
+undocumented_unsafe_blocks = "warn"

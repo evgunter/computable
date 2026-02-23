@@ -37,26 +37,25 @@
 #![cfg_attr(not(test), forbid(clippy::expect_used))]
 #![cfg_attr(not(test), forbid(clippy::panic))]
 #![cfg_attr(not(test), forbid(clippy::unwrap_used))]
-#![warn(
+// Lib-only lint: examples and benches need to print
+#![deny(clippy::print_stdout)]
+// Promote shared lints (from Cargo.toml [lints.clippy]) to deny for the lib crate.
+// Examples and benches keep them as non-blocking warnings.
+#![deny(
     clippy::shadow_reuse,
     clippy::shadow_same,
     clippy::shadow_unrelated,
     clippy::dbg_macro,
     clippy::print_stderr,
-    clippy::print_stdout,
-    clippy::todo,
     clippy::unimplemented,
-    // Style guide lints (see STYLE.md)
     clippy::wildcard_enum_match_arm,
     clippy::let_underscore_must_use,
     clippy::arithmetic_side_effects,
     clippy::impl_trait_in_params,
     clippy::field_scoped_visibility_modifiers,
-    // Cast and type safety
     clippy::as_conversions,
     clippy::lossy_float_literal,
     clippy::default_numeric_fallback,
-    // Logic and safety
     clippy::map_err_ignore,
     clippy::missing_asserts_for_indexing,
     clippy::undocumented_unsafe_blocks
