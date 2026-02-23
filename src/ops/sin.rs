@@ -249,9 +249,7 @@ fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: u
     // Precision for final answer: depends on Taylor series precision
     // Taylor error ~= 2^(-taylor_terms * some_factor)
     // We want pi error to be smaller than this
-    let precision_for_answer = taylor_terms
-        .saturating_mul(3)
-        .saturating_add(log2_k);
+    let precision_for_answer = taylor_terms.saturating_mul(3).saturating_add(log2_k);
 
     // Take max of the two precision requirements
     precision_for_branch.max(precision_for_answer)
@@ -708,7 +706,11 @@ fn taylor_sin_partial_sum(
         factorial *= &k_big * 2_i64 * (&k_big * 2_i64 + 1_i64);
 
         // Term k: (-1)^k * x^(2k+1) / (2k+1)!
-        let term_num = if k % 2 == 0 { power.clone() } else { power.neg() };
+        let term_num = if k % 2 == 0 {
+            power.clone()
+        } else {
+            power.neg()
+        };
         let term = divide_by_factorial_directed(&term_num, &factorial, rounding, target_precision);
         sum = sum.add(&term);
     }

@@ -198,8 +198,9 @@ impl RefinementGraph {
                                 .sender
                                 .send(RefineCommand::Step)
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
-                            expected = expected.checked_add(1).unwrap_or_else(||
-                                unreachable!("expected <= refiners.len(), cannot overflow usize"));
+                            expected = expected.checked_add(1).unwrap_or_else(|| {
+                                unreachable!("expected <= refiners.len(), cannot overflow usize")
+                            });
                         }
                     }
 
@@ -211,9 +212,14 @@ impl RefinementGraph {
                                 refiner
                                     .sender
                                     .send(RefineCommand::Step)
-                                    .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
-                                expected = expected.checked_add(1).unwrap_or_else(||
-                                    unreachable!("expected <= refiners.len(), cannot overflow usize"));
+                                    .map_err(|_send_err| {
+                                        ComputableError::RefinementChannelClosed
+                                    })?;
+                                expected = expected.checked_add(1).unwrap_or_else(|| {
+                                    unreachable!(
+                                        "expected <= refiners.len(), cannot overflow usize"
+                                    )
+                                });
                             }
                         }
                     }
@@ -443,7 +449,10 @@ mod tests {
 
     fn interval_refine_strict(state: IntervalState) -> Result<IntervalState, ComputableError> {
         let midpoint = midpoint_between(state.small(), &state.large());
-        Ok(Bounds::new(state.small().clone(), XBinary::Finite(midpoint)))
+        Ok(Bounds::new(
+            state.small().clone(),
+            XBinary::Finite(midpoint),
+        ))
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
@@ -582,7 +591,10 @@ mod tests {
             |inner_state: IntervalState| {
                 let upper = inner_state.large();
                 let worse_upper = unwrap_finite(&upper).add(&bin(1, 0));
-                Ok(Bounds::new(inner_state.small().clone(), XBinary::Finite(worse_upper)))
+                Ok(Bounds::new(
+                    inner_state.small().clone(),
+                    XBinary::Finite(worse_upper),
+                ))
             },
         );
         let epsilon = ubin(1, -2);

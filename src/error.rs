@@ -31,7 +31,9 @@
 /// results would require far more. Guaranteed `<= usize::MAX` on all platforms.
 pub const MAX_COMPUTATION_BITS: usize = if usize::BITS >= 32 {
     #[allow(clippy::as_conversions)] // safe: branch guards usize::BITS >= 32
-    { u32::MAX as usize }
+    {
+        u32::MAX as usize
+    }
 } else {
     usize::MAX
 };
@@ -123,9 +125,10 @@ macro_rules! assert_sane_computation_size {
         // computation would exhaust memory, so we panic early.
         let __val: usize = $val;
         if __val > $crate::MAX_COMPUTATION_BITS {
-            $crate::detected_computable_would_exhaust_memory!(
-                concat!(stringify!($val), " exceeds MAX_COMPUTATION_BITS")
-            );
+            $crate::detected_computable_would_exhaust_memory!(concat!(
+                stringify!($val),
+                " exceeds MAX_COMPUTATION_BITS"
+            ));
         }
     };
 }
@@ -177,7 +180,9 @@ pub fn bits_as_usize(bits: u64) -> usize {
         detected_computable_would_exhaust_memory!("bit count exceeds MAX_COMPUTATION_BITS");
     }
     #[allow(clippy::as_conversions)] // safe: bits <= MAX_COMPUTATION_BITS <= usize::MAX
-    { bits as usize }
+    {
+        bits as usize
+    }
 }
 
 /// Subtracts one from a `NonZeroUsize`, returning the result as `usize`.
@@ -185,7 +190,9 @@ pub fn bits_as_usize(bits: u64) -> usize {
 /// This is trivially correct: `NonZeroUsize` guarantees `>= 1`, so `- 1 >= 0`.
 pub fn sub_one(n: std::num::NonZeroUsize) -> usize {
     #[allow(clippy::arithmetic_side_effects)]
-    { n.get() - 1 }
+    {
+        n.get() - 1
+    }
 }
 
 use std::fmt;

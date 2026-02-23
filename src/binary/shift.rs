@@ -47,7 +47,9 @@ where
             (&remaining).try_into().unwrap_or(usize::MAX)
         };
         #[allow(clippy::arithmetic_side_effects)] // M: ArbitraryPrecision — only BigInt/BigUint
-        { shifted <<= chunk_usize; }
+        {
+            shifted <<= chunk_usize;
+        }
         remaining -= BigUint::from(chunk_usize);
     }
     shifted
