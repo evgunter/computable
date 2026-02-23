@@ -598,7 +598,7 @@ mod tests {
         let cloned = original.clone();
         let epsilon = ubin(1, -12);
 
-        let _ = cloned
+        let _bounds = cloned
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
 

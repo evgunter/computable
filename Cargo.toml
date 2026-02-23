@@ -64,3 +64,8 @@ default_numeric_fallback = "warn"
 map_err_ignore = "warn"
 missing_asserts_for_indexing = "warn"
 undocumented_unsafe_blocks = "warn"
+missing_transmute_annotations = "deny"
+enum_glob_use = "deny"
+
+[lints.rust]
+let_underscore_drop = "deny"

@@ -2,25 +2,11 @@
 
 This guide covers non-obvious conventions that go beyond what `rustfmt` and default `clippy` enforce. If something here seems obvious, it's included because it's easy to get wrong in practice.
 
-## Numerical Correctness
-
-This is a math library. Arithmetic correctness is paramount.
-
-**Never use operators that can panic on overflow.** Integer `+`, `-`, `*`, `/` panic in debug and silently wrap in release. Always use explicit checked variants:
-
-- `checked_add`, `checked_sub`, `checked_mul`, `checked_div` — return `Option`, forcing explicit error handling
-- For any arithmetic on integers, the question is not "might this overflow?" but "can I *prove* it won't?"
-- If you cannot prove overflow is impossible, use `checked_*` and handle the `None` case
-
-Do not use `wrapping_*`, `saturating_*`, or `overflowing_*` in this codebase — silently wrapping or clamping a numerical result will almost certainly introduce correctness bugs.
-
 ## Naming
 
-- **`as_`/`to_`/`into_` reflect ownership, not cost.** `as_` borrows and returns a borrow. `to_` borrows and returns owned (or owned Copy to owned Copy). `into_` consumes and returns owned. `mut` goes before the noun: `as_mut_slice`, not `as_slice_mut`.
 - **Iterator types match their producing method.** `keys()` returns `Keys`, `into_iter()` returns `IntoIter`. Never `KeyIterator`.
 - **Prefer `to_`/`as_`/`into_` over `from_`** for named conversion methods — they chain better. (`From` trait impls are still encouraged for trait interop.)
 - **Error types: verb-object-error order.** `ParseAddrError`, not `AddrParseError`.
-- **Acronyms are single words in CamelCase.** `GrpcType` not `GRPCType`, `Uuid` not `UUID`.
 - **Prefer full words over abbreviations.** `diagnostic` not `diag`, `transaction` not `txn`. Well-known domain abbreviations are acceptable when they're clearer to the team than the full form.
 - **Don't shadow standard type names.** Don't define `type Result<T> = std::result::Result<T, MyError>` or similarly redefine `Option`, `Vec`, etc. Readers should be able to trust that standard names mean the standard things.
 
@@ -35,7 +21,7 @@ Do not use `wrapping_*`, `saturating_*`, or `overflowing_*` in this codebase —
 
 - **Design traits for object safety** when they might plausibly be used as trait objects, even if you only use generics now. Use `where Self: Sized` escape hatches for methods that can't be object-safe.
 - **Use sealed traits** (public trait inheriting a private supertrait) when you want freedom to add methods without breaking downstream. Document why a trait is sealed.
-- **`Fn` > `FnMut` > `FnOnce` for parameters; reverse for implementations.** When accepting callbacks, use the most permissive bound for the caller (`Fn`). When implementing a callable, implement the most permissive trait for the implementer (`FnOnce`). This is the general principle of variance: accept the widest type, produce the narrowest type.
+- **Accept the widest type, produce the narrowest type** (variance). For example, `Fn` > `FnMut` > `FnOnce` for parameters (widest bound for callers), and reverse for implementations (most permissive trait for implementers).
 - **Prefer `impl Trait` over newtypes for opaque return types**, unless you need to name the type to add trait impls. More generally, lean on traits and the trait system for abstraction — traits are Rust's primary abstraction mechanism and should be preferred over alternatives like enum dispatch or manual vtables.
 
 ## Functions
@@ -59,10 +45,6 @@ Do not use `wrapping_*`, `saturating_*`, or `overflowing_*` in this codebase —
 ## Macros
 
 - **Item macros must compose with attributes** like `#[derive(...)]` and `#[cfg(...)]`, and must handle `super::` resolving differently inside function bodies vs. module level.
-
-## Unsafe
-
-- **Always turbofish both types on `transmute`.** Write `mem::transmute::<SourceType, DestType>(value)`. Never let inference figure out either type — a type change elsewhere could silently alter transmute behavior.
 
 ## Drop
 
