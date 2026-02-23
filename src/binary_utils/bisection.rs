@@ -282,21 +282,86 @@ pub fn normalize_bounds(
 /// - It's small enough to prevent significant precision bloat in long refinements
 const NORMALIZATION_PRECISION_THRESHOLD: usize = 64;
 
+/// Normalizes zero-crossing bounds by independently rounding each endpoint.
+///
+/// Prefix-form normalization cannot handle intervals that span zero, because
+/// `[m×2^e, (m+1)×2^e]` with m=-1 gives upper=0 and m=0 gives lower=0.
+///
+/// Instead, this function picks a target exponent (same formula as [`normalize_bounds`])
+/// and rounds the lower bound toward −∞ and the upper bound toward +∞. The resulting
+/// mantissas are small (a few bits each), preventing the precision bloat that would
+/// otherwise accumulate across refinement steps.
+///
+/// The interval may expand by up to ~4× but soundness is preserved: the normalized
+/// bounds always contain the original interval.
+fn normalize_zero_crossing_bounds(
+    bounds: &FiniteBounds,
+) -> Result<FiniteBounds, crate::error::ComputableError> {
+    use num_traits::Signed;
+
+    let lower = bounds.small();
+    let upper = &bounds.hi();
+    let width_ubinary = bounds.width();
+
+    let width_bits = width_ubinary.mantissa().bits();
+    // Same target exponent as normalize_bounds: ensures 2^target_exp > width.
+    // The +1 provides margin for rounding both endpoints.
+    let target_exp = width_ubinary.exponent() + BigInt::from(width_bits) + BigInt::one();
+
+    // Floor the lower bound toward −∞
+    let lo_shift = lower.exponent() - &target_exp;
+    let lo_mantissa = if lo_shift.is_zero() {
+        lower.mantissa().clone()
+    } else if lo_shift.is_positive() {
+        let n = lo_shift
+            .magnitude()
+            .to_usize()
+            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
+        lower.mantissa() << n
+    } else {
+        // BigInt >> rounds toward −∞ (arithmetic right shift)
+        let n = lo_shift
+            .magnitude()
+            .to_usize()
+            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
+        lower.mantissa() >> n
+    };
+
+    // Ceil the upper bound toward +∞
+    // ceil(m / 2^k) = −floor(−m / 2^k) = −((−m) >> k)
+    let hi_shift = upper.exponent() - &target_exp;
+    let hi_mantissa = if hi_shift.is_zero() {
+        upper.mantissa().clone()
+    } else if hi_shift.is_positive() {
+        let n = hi_shift
+            .magnitude()
+            .to_usize()
+            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
+        upper.mantissa() << n
+    } else {
+        let n = hi_shift
+            .magnitude()
+            .to_usize()
+            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
+        -((-upper.mantissa()) >> n)
+    };
+
+    let lo = Binary::new(lo_mantissa, target_exp.clone());
+    let hi = Binary::new(hi_mantissa, target_exp);
+    Ok(FiniteBounds::new(lo, hi))
+}
+
 /// Normalizes finite bounds to `Bounds`, handling edge cases where prefix form isn't possible.
 ///
 /// Prefix-form intervals `[m×2^e, (m+1)×2^e]` cannot represent:
 /// - **Zero-width intervals**: normalization would expand them to width 2^e
-/// - **Zero-crossing intervals**: no prefix interval can span zero
-///   (for m=-1 the upper is 0; for m=0 the lower is 0)
 ///
-/// Additionally, normalization is skipped when the total mantissa precision is
+/// Zero-crossing intervals are handled by [`normalize_zero_crossing_bounds`], which
+/// independently rounds each endpoint to a coarser exponent.
+///
+/// Normalization is skipped when the total mantissa precision is
 /// below [`NORMALIZATION_PRECISION_THRESHOLD`] to avoid unnecessary interval
 /// expansion during early refinement steps.
-///
-/// In these cases, the bounds are returned unchanged. This is fine because:
-/// - Zero-width bounds are already minimal (no precision to accumulate)
-/// - Zero-crossing bounds from sin/etc. have few mantissa bits (e.g., [-1, 1])
-/// - Low-precision bounds don't suffer from precision bloat
 pub fn normalize_finite_to_bounds(
     bounds: &FiniteBounds,
 ) -> Result<Bounds, crate::error::ComputableError> {
@@ -306,12 +371,17 @@ pub fn normalize_finite_to_bounds(
     let upper_bits = crate::error::bits_as_usize(bounds.large().mantissa().magnitude().bits());
     let total_precision = crate::sane_arithmetic!(lower_bits, upper_bits; lower_bits + upper_bits);
 
-    let can_normalize = total_precision > NORMALIZATION_PRECISION_THRESHOLD
-        && !bounds.width().mantissa().is_zero()
-        && !(bounds.small().mantissa().is_negative() && bounds.large().mantissa().is_positive());
+    let needs_normalization =
+        total_precision > NORMALIZATION_PRECISION_THRESHOLD && !bounds.width().mantissa().is_zero();
 
-    if can_normalize {
-        let normalized = normalize_bounds(bounds)?;
+    if needs_normalization {
+        let crosses_zero =
+            bounds.small().mantissa().is_negative() && bounds.large().mantissa().is_positive();
+        let normalized = if crosses_zero {
+            normalize_zero_crossing_bounds(bounds)?
+        } else {
+            normalize_bounds(bounds)?
+        };
         Ok(Bounds::from_lower_and_width(
             XBinary::Finite(normalized.small().clone()),
             UXBinary::Finite(normalized.width().clone()),
@@ -690,18 +760,49 @@ mod tests {
     }
 
     #[test]
-    fn normalize_finite_to_bounds_skips_zero_crossing() {
-        // Intervals that cross zero cannot be represented in prefix form.
-        // Use large mantissas to exceed the precision threshold.
+    fn normalize_finite_to_bounds_normalizes_zero_crossing() {
+        // Zero-crossing intervals with high precision should be normalized
+        // (not via prefix form, but by independently rounding each endpoint).
         let lo = bin(-((1i64 << 40) + 1), -40); // negative, ~41 bits
         let hi = bin((1i64 << 40) + 1, -40); // positive, ~41 bits
         let original = FiniteBounds::new(lo, hi);
 
         let result = normalize_finite_to_bounds(&original).expect("should succeed");
 
-        // Should return unchanged because the interval crosses zero
-        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
-        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+        let result_lo = match result.small() {
+            XBinary::Finite(b) => b,
+            _ => panic!("expected finite lower"),
+        };
+        let result_hi = match &result.large() {
+            XBinary::Finite(b) => b.clone(),
+            _ => panic!("expected finite upper"),
+        };
+
+        // Normalized bounds should contain original bounds
+        assert!(
+            result_lo <= original.small(),
+            "normalized lower {} should be <= original lower {}",
+            result_lo,
+            original.small()
+        );
+        assert!(
+            result_hi >= original.hi(),
+            "normalized upper {} should be >= original upper {}",
+            result_hi,
+            original.hi()
+        );
+
+        // Mantissa bits should be much smaller than the original ~41 bits per endpoint
+        assert!(
+            result_lo.mantissa().magnitude().bits() < 10,
+            "normalized lower mantissa should be small, got {} bits",
+            result_lo.mantissa().magnitude().bits()
+        );
+        assert!(
+            result_hi.mantissa().magnitude().bits() < 10,
+            "normalized upper mantissa should be small, got {} bits",
+            result_hi.mantissa().magnitude().bits()
+        );
     }
 
     #[test]
