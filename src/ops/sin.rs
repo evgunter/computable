@@ -675,8 +675,12 @@ fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, 
     let mut factorial = BigInt::one(); // 1!
 
     // First term (k=0): +x / 1!
-    let term_lo =
-        divide_by_factorial_directed(&power, &factorial, RoundingDirection::Down, target_precision);
+    let term_lo = divide_by_factorial_directed(
+        &power,
+        &factorial,
+        RoundingDirection::Down,
+        target_precision,
+    );
     let term_hi =
         divide_by_factorial_directed(&power, &factorial, RoundingDirection::Up, target_precision);
     sum_lo = sum_lo.add(&term_lo);

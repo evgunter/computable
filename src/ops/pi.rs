@@ -210,7 +210,8 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
 
     if num_terms == 0 {
         // No terms: error bound is 1 / (1 * k^1) = 1/k
-        let error = reciprocal_of_biguint(k_big.magnitude(), precision_bits, ReciprocalRounding::Ceil);
+        let error =
+            reciprocal_of_biguint(k_big.magnitude(), precision_bits, ReciprocalRounding::Ceil);
         return (error.neg(), error);
     }
 
@@ -228,8 +229,14 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
 
         let is_positive_term = i % 2 == 0;
 
-        let term_lo = divide_one_by_bigint(&denominator, RoundDir::Down, is_positive_term, precision_bits);
-        let term_hi = divide_one_by_bigint(&denominator, RoundDir::Up, is_positive_term, precision_bits);
+        let term_lo = divide_one_by_bigint(
+            &denominator,
+            RoundDir::Down,
+            is_positive_term,
+            precision_bits,
+        );
+        let term_hi =
+            divide_one_by_bigint(&denominator, RoundDir::Up, is_positive_term, precision_bits);
         sum_lo = sum_lo.add(&term_lo);
         sum_hi = sum_hi.add(&term_hi);
 
@@ -242,7 +249,11 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
     // Error = 1 / ((2n+1) * k^(2n+1))
     let error_coeff = BigInt::from(crate::sane_arithmetic!(num_terms; 2 * num_terms + 1));
     let error_denom = &error_coeff * &k_power;
-    let error = reciprocal_of_biguint(error_denom.magnitude(), precision_bits, ReciprocalRounding::Ceil);
+    let error = reciprocal_of_biguint(
+        error_denom.magnitude(),
+        precision_bits,
+        ReciprocalRounding::Ceil,
+    );
 
     (sum_lo.sub(&error), sum_hi.add(&error))
 }
