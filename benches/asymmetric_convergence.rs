@@ -21,7 +21,7 @@ use computable::{Binary, Computable, UBinary, pi};
 
 /// Precision targets (in bits). Kept small because PiOp's exponential term
 /// growth makes high precision prohibitively slow in the pathological cases.
-const PRECISION_BITS: &[u64] = &[4, 6];
+const PRECISION_BITS: &[usize] = &[4, 6];
 
 fn sqrt_2() -> Computable {
     Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)))
@@ -42,7 +42,7 @@ fn bench_asymmetric(c: &mut Criterion) {
     group.sample_size(10);
 
     for &bits in PRECISION_BITS {
-        let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(bits as i64)));
+        let epsilon = UBinary::new(BigUint::from(1u32), -BigInt::from(bits));
 
         group.bench_with_input(
             BenchmarkId::new("sqrt2+pi", bits),
@@ -81,7 +81,7 @@ fn bench_controls(c: &mut Criterion) {
     group.sample_size(10);
 
     for &bits in PRECISION_BITS {
-        let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(bits as i64)));
+        let epsilon = UBinary::new(BigUint::from(1u32), -BigInt::from(bits));
 
         // Single-refiner baselines
         group.bench_with_input(
