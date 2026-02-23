@@ -6,8 +6,8 @@ use num_bigint::{BigInt, BigUint};
 use common::verbose;
 use computable::{Binary, Computable, UBinary, pi, pi_bounds_at_precision};
 
-const PRECISION_BITS: &[u64] = &[32, 64, 128, 256, 512, 1024];
-const HIGH_PRECISION_BITS: &[u64] = &[2048, 4096, 8192];
+const PRECISION_BITS: &[usize] = &[32, 64, 128, 256, 512, 1024];
+const HIGH_PRECISION_BITS: &[usize] = &[2048, 4096, 8192];
 
 fn bench_pi_refinement(c: &mut Criterion) {
     if verbose() {
