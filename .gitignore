@@ -1,3 +1,5 @@
 /target
 /benchmarks/results.md
 .autofix/
+# symlink to AGENTS.md so claude code auto-loads it
+.claude/CLAUDE.md
