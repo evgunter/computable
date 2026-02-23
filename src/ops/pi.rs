@@ -27,7 +27,7 @@ use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
 /// Initial number of Taylor series terms for pi computation.
-const INITIAL_PI_TERMS: usize = 10;
+pub(crate) const INITIAL_PI_TERMS: usize = 10;
 
 /// Returns the number of bits in the binary representation of `x`.
 ///
@@ -226,6 +226,9 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
 /// Computes partial sum of arctan(1/k) Taylor series with directed rounding.
 ///
 /// sum = sum_{i=0}^{n-1} (-1)^i / ((2i+1) * k^(2i+1))
+// TODO: This recomputes the entire sum from term 0 each call. When PiOp doubles
+// num_terms from n to 2n, all n previous terms are recomputed. The running sum
+// and k_power could be stored in PiOp's refiner state and extended incrementally.
 fn arctan_recip_partial_sum(
     k: u64,
     num_terms: usize,

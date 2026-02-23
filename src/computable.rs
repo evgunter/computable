@@ -14,7 +14,7 @@ use crate::binary::Bounds;
 use crate::binary::{Binary, UBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
-use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PowOp, SinOp};
+use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
 use crate::refinement::{RefinementGraph, bounds_width_leq};
 
 use parking_lot::RwLock;
@@ -135,8 +135,12 @@ impl Computable {
     /// The error bound |x|^(2n+1)/(2n+1)! is also computed conservatively (rounded up)
     /// to ensure the true value is always contained within the returned bounds.
     pub fn sin(self) -> Self {
+        let pi_node = Node::new(Arc::new(PiOp {
+            num_terms: RwLock::new(crate::ops::pi::INITIAL_PI_TERMS),
+        }));
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
+            pi_node,
             num_terms: RwLock::new(BigInt::one()),
         }));
         Self { node }

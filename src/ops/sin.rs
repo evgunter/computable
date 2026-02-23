@@ -26,37 +26,49 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, XBinary, reciprocal_of_biguint,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, XBinary, reciprocal_of_biguint,
 };
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
-use super::pi::{
-    half_pi_interval_at_precision, pi_interval_at_precision, two_pi_interval_at_precision,
-};
-
 /// Sine operation with Taylor series refinement.
 pub struct SinOp {
     pub inner: Arc<Node>,
+    pub pi_node: Arc<Node>,
     pub num_terms: RwLock<BigInt>,
 }
 
 impl NodeOp for SinOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
+        let pi_bounds = self.pi_node.get_bounds()?;
         let num_terms = self.num_terms.read().clone();
-        sin_bounds(&input_bounds, &num_terms)
+        sin_bounds(&input_bounds, &pi_bounds, &num_terms)
     }
 
     fn refine_step(&self) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
+
+        // Leap to match input precision when possible
+        if let Ok(input_bounds) = self.inner.get_bounds()
+            && let Some(width_bits) = estimate_precision_bits(&input_bounds)
+        {
+            // n*3 bits ~ conservative Taylor accuracy estimate
+            let needed_n = (width_bits / 3).max(1);
+            let needed = BigInt::from(needed_n);
+            if needed > *num_terms {
+                *num_terms = needed;
+            }
+        }
+
+        // Always +1: keeps refiner alive, sole driver for exact inputs
         *num_terms += BigInt::one();
         Ok(true)
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
-        vec![Arc::clone(&self.inner)]
+        vec![Arc::clone(&self.inner), Arc::clone(&self.pi_node)]
     }
 
     fn is_refiner(&self) -> bool {
@@ -72,13 +84,17 @@ impl NodeOp for SinOp {
 ///
 /// ## Algorithm Overview
 ///
-/// 1. Compute pi precision based on input magnitude
+/// 1. Extract pi bounds from the graph node
 /// 2. Range reduce input to interval in [-pi, pi] (tracking pi error)
 /// 3. Further reduce to interval in [-pi/2, pi/2] (tracking pi error)
 /// 4. Detect if reduced interval straddles critical points (pi/2, -pi/2)
 /// 5. Compute Taylor series on reduced interval
 /// 6. Apply sign flips and clamp to [-1, 1]
-fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, ComputableError> {
+fn sin_bounds(
+    input_bounds: &Bounds,
+    pi_bounds: &Bounds,
+    num_terms: &BigInt,
+) -> Result<Bounds, ComputableError> {
     let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
     let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
 
@@ -95,19 +111,35 @@ fn sin_bounds(input_bounds: &Bounds, num_terms: &BigInt) -> Result<Bounds, Compu
         }
     };
 
+    // Extract finite pi bounds, or return [-1, 1] if pi bounds are infinite
+    let pi_lo = pi_bounds.small();
+    let pi_hi_xb = pi_bounds.large();
+    let pi_interval = match (pi_lo, &pi_hi_xb) {
+        (XBinary::Finite(lo), XBinary::Finite(hi)) => FiniteBounds::new(lo.clone(), hi.clone()),
+        _ => {
+            return Ok(Bounds::new(
+                XBinary::Finite(neg_one),
+                XBinary::Finite(pos_one),
+            ));
+        }
+    };
+
+    // Derive two_pi and half_pi from pi by scaling
+    let two = UBinary::new(num_bigint::BigUint::from(1_u32), BigInt::from(1_i32)); // 2^1 = 2
+    let two_pi_interval = pi_interval.scale_positive(&two);
+    let half_pi_lo = Binary::new(
+        pi_interval.lo().mantissa().clone(),
+        pi_interval.lo().exponent() - BigInt::one(),
+    );
+    let half_pi_hi_val = pi_interval.hi();
+    let half_pi_hi = Binary::new(
+        half_pi_hi_val.mantissa().clone(),
+        half_pi_hi_val.exponent() - BigInt::one(),
+    );
+    let half_pi_interval = FiniteBounds::new(half_pi_lo, half_pi_hi);
+
     // Convert num_terms to usize (capped at reasonable limit)
     let n = num_terms.to_usize().unwrap_or(1).max(1);
-
-    // Compute required pi precision based on input magnitude.
-    // We need enough precision that:
-    // 1. We can determine which branch we're in after range reduction
-    // 2. The final error from pi is smaller than our Taylor series precision
-    let precision_bits = compute_required_pi_precision(lower_bin, upper_bin, n);
-
-    // Get pi-related intervals at the computed precision
-    let two_pi_interval = two_pi_interval_at_precision(precision_bits);
-    let pi_interval = pi_interval_at_precision(precision_bits);
-    let half_pi_interval = half_pi_interval_at_precision(precision_bits);
 
     // Process each endpoint through range reduction with full interval tracking
     let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
@@ -211,48 +243,6 @@ enum ReductionResult {
         overall_lo: Binary,
         overall_hi: Binary,
     },
-}
-
-/// Computes required pi precision based on input magnitude and Taylor terms.
-///
-/// We need pi precision such that:
-/// 1. k * 2 * pi_error < pi/4 (to determine which branch we're in)
-/// 2. pi_error contributes acceptably small error to final answer
-///
-/// where k is the number of 2*pi periods subtracted.
-fn compute_required_pi_precision(lower: &Binary, upper: &Binary, taylor_terms: usize) -> usize {
-    // Estimate k = |x| / (2*pi) using a rough approximation
-    // We use the larger magnitude endpoint
-    let abs_lo = lower.magnitude();
-    let abs_hi = upper.magnitude();
-    let max_abs = if abs_lo > abs_hi { abs_lo } else { abs_hi };
-
-    // Rough estimate: k ~= max_abs / 6.28
-    // We need: pi_precision > log2(k) + some_margin
-    // log2(max_abs) ~= bit_length(mantissa) + exponent
-    let mantissa_bits = crate::error::bits_as_usize(max_abs.mantissa().bits());
-    // Use i64 for signed exponent arithmetic (isize would truncate on 32-bit)
-    let mantissa_bits_i64 = i64::try_from(mantissa_bits).unwrap_or(i64::MAX);
-    let exp = max_abs
-        .exponent()
-        .to_i64()
-        .unwrap_or(0_i64)
-        .saturating_add(mantissa_bits_i64);
-
-    // k ~= 2^exp / 2^2.65 (since 2*pi ~= 2^2.65)
-    // log2(k) ~= exp - 2.65
-    let log2_k = usize::try_from(exp.saturating_sub(3_i64).max(0_i64)).unwrap_or(0);
-
-    // Base precision for branch determination: log2(k) + 4
-    let precision_for_branch = log2_k.saturating_add(4);
-
-    // Precision for final answer: depends on Taylor series precision
-    // Taylor error ~= 2^(-taylor_terms * some_factor)
-    // We want pi error to be smaller than this
-    let precision_for_answer = taylor_terms.saturating_mul(3).saturating_add(log2_k);
-
-    // Take max of the two precision requirements
-    precision_for_branch.max(precision_for_answer)
 }
 
 /// Reduces an input interval to approximately [-pi, pi] using interval arithmetic.
@@ -402,6 +392,8 @@ fn reduce_to_half_pi_range_interval(
     if spans_max {
         // The interval contains pi/2 where sin = 1
         // Compute the minimum sin value at the endpoints
+        // TODO: The hardcoded n=15 (~45 bits) doesn't scale with the requested
+        // precision. Should use the SinOp's num_terms (or derive from input precision).
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), 15, pi, half_pi);
         let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), 15, pi, half_pi);
         let sin_min = if sin_bounds_at_lo.lo() < sin_bounds_at_hi.lo() {
@@ -685,6 +677,9 @@ fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, 
 ///
 /// For RoundingDirection::Down: rounds all division operations toward -infinity
 /// For RoundingDirection::Up: rounds all division operations toward +infinity
+// TODO: This recomputes the entire sum from term 0 each call. When going from
+// n to n+1 terms, the running sum/power/factorial could be stored in SinOp's
+// refiner state and extended incrementally.
 fn taylor_sin_partial_sum(
     x: &Binary,
     n: usize,
@@ -720,6 +715,9 @@ fn taylor_sin_partial_sum(
 
 /// Computes |x|^(2n+1) / (2n+1)! as an upper bound on Taylor series truncation error.
 /// Always rounds UP to be conservative.
+// TODO: This recomputes |x|^(2n+1) and (2n+1)! from scratch in a loop that
+// duplicates work already done by taylor_sin_partial_sum. Could share
+// intermediate power/factorial from the refiner state.
 fn taylor_error_bound(x: &Binary, n: usize, target_precision: usize) -> Binary {
     // Compute |x|^(2n+1)
     let abs_x = x.magnitude().to_binary();
@@ -780,6 +778,32 @@ fn divide_by_factorial_directed(
 
     // Multiply value by reciprocal
     value.mul(&reciprocal)
+}
+
+/// Estimates the number of precision bits in a `Bounds` interval.
+///
+/// Returns `Some(bits)` where `bits ≈ -log2(width)` for finite bounds with
+/// nonzero width. Returns `None` for zero-width (exact) or infinite bounds.
+fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
+    let lo = bounds.small();
+    let hi_xb = bounds.large();
+    let (lo_bin, hi_bin) = match (lo, &hi_xb) {
+        (XBinary::Finite(l), XBinary::Finite(h)) => (l, h),
+        _ => return None,
+    };
+
+    let width = hi_bin.sub(lo_bin);
+    if width.mantissa().is_zero() {
+        return None;
+    }
+
+    // -log2(width) ≈ -(mantissa_bits + exponent)
+    let mantissa_bits = crate::error::bits_as_usize(width.mantissa().magnitude().bits());
+    let mantissa_bits_i64 = i64::try_from(mantissa_bits).unwrap_or(i64::MAX);
+    let exp_i64 = width.exponent().to_i64().unwrap_or(0_i64);
+    let log2_width = exp_i64.saturating_add(mantissa_bits_i64);
+    let neg_log2 = log2_width.saturating_neg().max(0_i64);
+    usize::try_from(neg_log2).ok()
 }
 
 // Test helpers - exposed for integration tests
@@ -1311,15 +1335,17 @@ mod tests {
         // We directly call sin_bounds with an interval whose width is slightly
         // above the lower bound of 2π. The result should be [-1, 1] because
         // the interval might span a full period.
-        use super::two_pi_interval_at_precision;
+        use super::super::pi::{pi_bounds_at_precision, two_pi_interval_at_precision};
 
         let two_pi = two_pi_interval_at_precision(64);
         // Create an interval [0, two_pi_lo + epsilon]: width > two_pi_lo
         let lo = bin(0, 0);
         let hi = two_pi.lo().add(&bin(1, -60));
         let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
-        let result =
-            sin_bounds(&input_bounds, &BigInt::from(5)).expect("sin_bounds should succeed");
+        let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
+        let pi_bounds = Bounds::new(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
+        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(5))
+            .expect("sin_bounds should succeed");
 
         // Because the width >= two_pi_lo, the conservative check should trigger
         // and return [-1, 1] (possibly slightly widened by simplification).
