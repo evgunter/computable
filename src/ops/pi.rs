@@ -206,61 +206,45 @@ fn compute_pi_bounds(num_terms: usize, precision_bits: usize) -> (Binary, Binary
 ///
 /// Returns (lower_bound, upper_bound) for arctan(1/k).
 fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
+    let k_big = BigInt::from(k);
+
     if num_terms == 0 {
-        // No terms computed, just return error bound interval centered at 0
-        let error = arctan_recip_error_bound(k, 0, precision_bits);
+        // No terms: error bound is 1 / (1 * k^1) = 1/k
+        let error = reciprocal_of_biguint(k_big.magnitude(), precision_bits, ReciprocalRounding::Ceil);
         return (error.neg(), error);
     }
 
-    // Compute partial sum with directed rounding
-    let sum_lo = arctan_recip_partial_sum(k, num_terms, RoundDir::Down, precision_bits);
-    let sum_hi = arctan_recip_partial_sum(k, num_terms, RoundDir::Up, precision_bits);
-
-    // Compute error bound for truncation (always round up for conservative bound)
-    let error = arctan_recip_error_bound(k, num_terms, precision_bits);
-
-    // Final bounds: [sum_lo - error, sum_hi + error]
-    (sum_lo.sub(&error), sum_hi.add(&error))
-}
-
-/// Computes partial sum of arctan(1/k) Taylor series with directed rounding.
-///
-/// sum = sum_{i=0}^{n-1} (-1)^i / ((2i+1) * k^(2i+1))
-// TODO: This recomputes the entire sum from term 0 each call. When PiOp doubles
-// num_terms from n to 2n, all n previous terms are recomputed. The running sum
-// and k_power could be stored in PiOp's refiner state and extended incrementally.
-fn arctan_recip_partial_sum(
-    k: u64,
-    num_terms: usize,
-    rounding: RoundDir,
-    precision_bits: usize,
-) -> Binary {
-    let mut sum = Binary::zero();
-    let k_big = BigInt::from(k);
     let k_squared = &k_big * &k_big;
+    let mut sum_lo = Binary::zero();
+    let mut sum_hi = Binary::zero();
 
     // Start with k^1 in denominator
-    let mut k_power = k_big.clone(); // k^(2i+1), starts at k^1
+    let mut k_power = k_big; // k^(2i+1), starts at k^1
 
     for i in 0..num_terms {
         // Term i: (-1)^i / ((2i+1) * k^(2i+1))
         let coeff = BigInt::from(i) * 2_i64 + 1_i64; // 2i+1
         let denominator = &coeff * &k_power; // (2i+1) * k^(2i+1)
 
-        // Compute 1/denominator with directed rounding
-        // For positive terms (even i): round down for lower, round up for upper
-        // For negative terms (odd i): round up for lower, round down for upper
         let is_positive_term = i % 2 == 0;
 
-        let term = divide_one_by_bigint(&denominator, rounding, is_positive_term, precision_bits);
-        sum = sum.add(&term);
+        let term_lo = divide_one_by_bigint(&denominator, RoundDir::Down, is_positive_term, precision_bits);
+        let term_hi = divide_one_by_bigint(&denominator, RoundDir::Up, is_positive_term, precision_bits);
+        sum_lo = sum_lo.add(&term_lo);
+        sum_hi = sum_hi.add(&term_hi);
 
         // Prepare for next iteration: k^(2i+1) -> k^(2(i+1)+1) = k^(2i+3)
-        // Multiply by k^2
         k_power = &k_power * &k_squared;
     }
 
-    sum
+    // Derive error bound from the loop's final k_power state.
+    // After the loop, k_power = k^(2*num_terms + 1) (advanced one past the last term).
+    // Error = 1 / ((2n+1) * k^(2n+1))
+    let error_coeff = BigInt::from(crate::sane_arithmetic!(num_terms; 2 * num_terms + 1));
+    let error_denom = &error_coeff * &k_power;
+    let error = reciprocal_of_biguint(error_denom.magnitude(), precision_bits, ReciprocalRounding::Ceil);
+
+    (sum_lo.sub(&error), sum_hi.add(&error))
 }
 
 /// Computes 1/denominator as a Binary with directed rounding.
@@ -293,33 +277,6 @@ fn divide_one_by_bigint(
     } else {
         unsigned_result.neg()
     }
-}
-
-/// Computes error bound for arctan(1/k) Taylor series after n terms.
-///
-/// Uses the shared `reciprocal_of_biguint` function from the binary module.
-///
-/// For alternating series with decreasing terms, the error is bounded by
-/// the absolute value of the first omitted term:
-/// |error| <= 1 / ((2n+1) * k^(2n+1))
-///
-/// We round UP (ceiling) to get a conservative (safe) error bound.
-fn arctan_recip_error_bound(k: u64, num_terms: usize, precision_bits: usize) -> Binary {
-    use num_bigint::BigUint;
-
-    let exponent = crate::sane_arithmetic!(num_terms; 2 * num_terms + 1);
-    let coeff = BigUint::from(exponent); // 2n+1
-
-    let k_big = BigUint::from(k);
-    let mut k_power = BigUint::one();
-    for _ in 0..exponent {
-        k_power *= &k_big;
-    }
-
-    let denominator = &coeff * &k_power; // (2n+1) * k^(2n+1)
-
-    // Compute 1/denominator, rounding UP for conservative error bound.
-    reciprocal_of_biguint(&denominator, precision_bits, ReciprocalRounding::Ceil)
 }
 
 /// Returns pi as a FiniteBounds interval with specified precision.

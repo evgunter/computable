@@ -652,47 +652,35 @@ enum RoundingDirection {
 /// Taylor series: sin(x) = sum_{k=0}^{n-1} (-1)^k * x^(2k+1) / (2k+1)!
 /// Error after n terms: |R_n| <= |x|^(2n+1) / (2n+1)!
 ///
-/// Uses directed rounding to compute provably correct bounds:
-/// - Lower bound: all intermediate operations round DOWN (toward -inf)
-/// - Upper bound: all intermediate operations round UP (toward +inf)
+/// Uses a single loop to compute both the lower (round-down) and upper (round-up)
+/// partial sums simultaneously, then derives the error bound from the loop's final
+/// power/factorial state. This eliminates 2/3 of the expensive BigInt power and
+/// factorial multiplications compared to running three independent loops.
 fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
     if n == 0 {
-        // No terms: just use error bound (always round UP for conservative bounds)
-        let error = taylor_error_bound(x, 0, target_precision);
+        // No terms: error bound is |x|^1 / 1! = |x|
+        let abs_x = x.magnitude().to_binary();
+        let error = divide_by_factorial_directed(
+            &abs_x,
+            &BigInt::one(),
+            RoundingDirection::Up,
+            target_precision,
+        );
         return (error.neg(), error);
     }
 
-    // Compute lower and upper partial sums with directed rounding
-    let sum_lower = taylor_sin_partial_sum(x, n, RoundingDirection::Down, target_precision);
-    let sum_upper = taylor_sin_partial_sum(x, n, RoundingDirection::Up, target_precision);
-
-    // Compute error bound (always round UP for conservative bounds)
-    let error = taylor_error_bound(x, n, target_precision);
-
-    // Return bounds: lower_sum - error, upper_sum + error
-    (sum_lower.sub(&error), sum_upper.add(&error))
-}
-
-/// Computes Taylor series partial sum for sin(x) with directed rounding.
-///
-/// For RoundingDirection::Down: rounds all division operations toward -infinity
-/// For RoundingDirection::Up: rounds all division operations toward +infinity
-// TODO: This recomputes the entire sum from term 0 each call. When going from
-// n to n+1 terms, the running sum/power/factorial could be stored in SinOp's
-// refiner state and extended incrementally.
-fn taylor_sin_partial_sum(
-    x: &Binary,
-    n: usize,
-    rounding: RoundingDirection,
-    target_precision: usize,
-) -> Binary {
-    let mut sum = Binary::zero();
+    let mut sum_lo = Binary::zero();
+    let mut sum_hi = Binary::zero();
     let mut power = x.clone(); // x^1
     let mut factorial = BigInt::one(); // 1!
 
     // First term (k=0): +x / 1!
-    let first_term = divide_by_factorial_directed(&power, &factorial, rounding, target_precision);
-    sum = sum.add(&first_term);
+    let term_lo =
+        divide_by_factorial_directed(&power, &factorial, RoundingDirection::Down, target_precision);
+    let term_hi =
+        divide_by_factorial_directed(&power, &factorial, RoundingDirection::Up, target_precision);
+    sum_lo = sum_lo.add(&term_lo);
+    sum_hi = sum_hi.add(&term_hi);
 
     for k in 1..n {
         // Advance state: power *= x^2, factorial *= (2k)(2k+1)
@@ -706,36 +694,41 @@ fn taylor_sin_partial_sum(
         } else {
             power.neg()
         };
-        let term = divide_by_factorial_directed(&term_num, &factorial, rounding, target_precision);
-        sum = sum.add(&term);
+        let t_lo = divide_by_factorial_directed(
+            &term_num,
+            &factorial,
+            RoundingDirection::Down,
+            target_precision,
+        );
+        let t_hi = divide_by_factorial_directed(
+            &term_num,
+            &factorial,
+            RoundingDirection::Up,
+            target_precision,
+        );
+        sum_lo = sum_lo.add(&t_lo);
+        sum_hi = sum_hi.add(&t_hi);
     }
 
-    sum
-}
+    // Derive error bound from the loop's final power/factorial state.
+    // After the loop, power = x^(2(n-1)+1) = x^(2n-1) and factorial = (2n-1)!.
+    // The error term needs |x|^(2n+1) / (2n+1)!, so advance one more step.
+    power = power.mul(x).mul(x); // x^(2n+1)
+    let n_big = BigInt::from(n);
+    factorial *= &n_big * 2_i64 * (&n_big * 2_i64 + 1_i64); // (2n+1)!
 
-/// Computes |x|^(2n+1) / (2n+1)! as an upper bound on Taylor series truncation error.
-/// Always rounds UP to be conservative.
-// TODO: This recomputes |x|^(2n+1) and (2n+1)! from scratch in a loop that
-// duplicates work already done by taylor_sin_partial_sum. Could share
-// intermediate power/factorial from the refiner state.
-fn taylor_error_bound(x: &Binary, n: usize, target_precision: usize) -> Binary {
-    // Compute |x|^(2n+1)
-    let abs_x = x.magnitude().to_binary();
+    let error_power = Binary::new(
+        BigInt::from(power.mantissa().magnitude().clone()),
+        power.exponent().clone(),
+    );
+    let error = divide_by_factorial_directed(
+        &error_power,
+        &factorial,
+        RoundingDirection::Up,
+        target_precision,
+    );
 
-    let exp = crate::sane_arithmetic!(n; 2 * n + 1);
-    let mut power = Binary::new(BigInt::one(), BigInt::zero()); // 1
-    for _ in 0..exp {
-        power = power.mul(&abs_x);
-    }
-
-    // Compute (2n+1)!
-    let mut factorial = BigInt::one();
-    for i in 1..=exp {
-        factorial *= BigInt::from(i);
-    }
-
-    // error = power / factorial (round UP for conservative error bound)
-    divide_by_factorial_directed(&power, &factorial, RoundingDirection::Up, target_precision)
+    (sum_lo.sub(&error), sum_hi.add(&error))
 }
 
 /// Divides a Binary by a BigInt factorial with directed rounding.
@@ -810,17 +803,6 @@ fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
 #[cfg(test)]
 pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
     taylor_sin_bounds(x, n, n * 10)
-}
-
-#[cfg(test)]
-pub fn taylor_sin_partial_sum_test(x: &Binary, n: usize, down: bool) -> Binary {
-    let target_precision = n * 10;
-    let rounding = if down {
-        RoundingDirection::Down
-    } else {
-        RoundingDirection::Up
-    };
-    taylor_sin_partial_sum(x, n, rounding, target_precision)
 }
 
 #[cfg(test)]
@@ -1118,19 +1100,18 @@ mod tests {
 
     #[test]
     fn directed_rounding_lower_bound_is_lower() {
-        // Verify that rounding down produces smaller values than rounding up
+        // Verify that the lower bound is <= the upper bound from taylor_sin_bounds
         let x = bin(1, 0); // 1.0
         let n = 5;
 
-        let sum_down = taylor_sin_partial_sum_test(&x, n, true);
-        let sum_up = taylor_sin_partial_sum_test(&x, n, false);
+        let (lower, upper) = taylor_sin_bounds_test(&x, n);
 
-        // The down-rounded sum should be <= up-rounded sum
+        // The lower bound should be <= upper bound
         assert!(
-            sum_down <= sum_up,
-            "Rounding down {} should produce <= rounding up {}",
-            sum_down,
-            sum_up
+            lower <= upper,
+            "Lower bound {} should be <= upper bound {}",
+            lower,
+            upper
         );
     }
 
