@@ -80,7 +80,11 @@ impl NodeOp for MulOp {
         let lu_rl = left_upper.mul(right_lower);
         let lu_ru = left_upper.mul(&right_upper);
 
-        let min = ll_rl.clone().min(ll_ru.clone()).min(lu_rl.clone()).min(lu_ru.clone());
+        let min = ll_rl
+            .clone()
+            .min(ll_ru.clone())
+            .min(lu_rl.clone())
+            .min(lu_ru.clone());
         let max = ll_rl.max(ll_ru).max(lu_rl).max(lu_ru);
 
         Ok(Bounds::new_checked(min, max)?)
