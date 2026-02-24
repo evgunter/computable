@@ -2,13 +2,6 @@
 
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
-### <a id="inv-bounds-order"></a>inv-bounds-order: Type system for bounds ordering
-**File:** `src/ops/inv.rs:140`
-```rust
-// TODO: can the type system ensure that the bounds remain ordered?
-```
-Use the type system to prevent invalid bounds ordering rather than runtime checks.
-
 ### <a id="pow-type-bounds"></a>pow-type-bounds: Type system for invalid bounds in pow
 **File:** `src/ops/pow.rs:53`
 ```rust
@@ -16,6 +9,13 @@ Use the type system to prevent invalid bounds ordering rather than runtime check
 ```
 Type-level prevention of invalid states.
 
+
+### <a id="epsilon-in-refine-step"></a>epsilon-in-refine-step: Pass target epsilon to refiners
+**File:** `src/ops/inv.rs:27`
+```rust
+// TODO: Ideally the seed precision would be derived from the target epsilon
+```
+The refiner protocol (`RefineCommand`) currently only sends `Step`/`Stop` — refiners have no knowledge of the target precision. Passing epsilon (or a precision budget) through to `refine_step` would let refiners like `InvOp` choose a seed precision matched to the target, avoiding unnecessary N-R iterations for low-precision requests and under-seeding for high-precision ones. This would affect the `RefineCommand` enum, the `NodeOp::refine_step` trait method, and all refiner implementations (inv, sin, pi, nth_root).
 
 ### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
 **File:** `src/refinement.rs:15`
