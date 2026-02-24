@@ -142,14 +142,18 @@ macro_rules! assert_sane_computation_size {
 ///
 /// # Syntax
 ///
-/// ```ignore
+/// ```text
 /// sane_arithmetic!(guard1, guard2, ...; expression)
 /// ```
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use computable::sane_arithmetic;
+///
+/// let num_terms: usize = 10;
 /// let exponent = sane_arithmetic!(num_terms; 2 * num_terms + 1);
+/// assert_eq!(exponent, 21);
 /// ```
 #[macro_export]
 macro_rules! sane_arithmetic {
