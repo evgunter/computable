@@ -3,6 +3,7 @@
 use num_bigint::{BigInt, BigUint};
 
 use computable::{Binary, Computable, UBinary};
+use criterion::BenchmarkId;
 
 /// Standard precision sweep: epsilon = 2^(-bits) for each value.
 const STANDARD_BITS: &[i64] = &[1, 4, 16, 64, 256];
@@ -28,6 +29,16 @@ pub fn high_precision() -> bool {
 /// Create an epsilon of 2^(-bits).
 pub fn epsilon(bits: i64) -> UBinary {
     UBinary::new(BigUint::from(1u32), -BigInt::from(bits))
+}
+
+/// Create a `BenchmarkId` with a `precision-{bits}` parameter suffix.
+pub fn bench_id(bits: impl std::fmt::Display) -> BenchmarkId {
+    BenchmarkId::from_parameter(format!("precision-{bits}"))
+}
+
+/// Create a `BenchmarkId` with function name and `precision-{bits}` parameter.
+pub fn bench_id_named(name: impl Into<String>, bits: impl std::fmt::Display) -> BenchmarkId {
+    BenchmarkId::new(name, format!("precision-{bits}"))
 }
 
 /// Whether to print diagnostic info (enabled by `BENCH_VERBOSE=1`).

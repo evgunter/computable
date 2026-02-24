@@ -1,10 +1,10 @@
 mod common;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, epsilon, precision_bits, verbose};
+use common::{balanced_sum, bench_id, epsilon, precision_bits, verbose};
 use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 200_000;
@@ -36,7 +36,7 @@ fn bench_summation(c: &mut Criterion) {
             eprintln!("[summation/{bits}] width: {}", bounds.width());
         }
 
-        group.bench_with_input(BenchmarkId::from_parameter(bits), &eps, |b, eps| {
+        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
             b.iter(|| {
                 let mut terms = Vec::with_capacity(computable_inputs.len() + 1);
                 terms.push(Computable::constant(Binary::from_f64(base).unwrap()));

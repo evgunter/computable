@@ -1,9 +1,9 @@
 mod common;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use num_bigint::BigInt;
 
-use common::{epsilon, precision_bits, verbose};
+use common::{bench_id, bench_id_named, epsilon, precision_bits, verbose};
 use computable::{Binary, Computable, pi, pi_bounds_at_precision};
 
 fn bench_pi_refinement(c: &mut Criterion) {
@@ -20,7 +20,7 @@ fn bench_pi_refinement(c: &mut Criterion) {
             eprintln!("[pi/refinement/{bits}] width: {}", bounds.width());
         }
 
-        group.bench_with_input(BenchmarkId::from_parameter(bits), &eps, |b, eps| {
+        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
                     pi().refine_to_default(eps.clone())
@@ -52,11 +52,9 @@ fn bench_pi_bounds_at_precision(c: &mut Criterion) {
             );
         }
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(bits),
-            &bits_usize,
-            |b, &bits_usize| b.iter(|| black_box(pi_bounds_at_precision(bits_usize))),
-        );
+        group.bench_with_input(bench_id(bits), &bits_usize, |b, &bits_usize| {
+            b.iter(|| black_box(pi_bounds_at_precision(bits_usize)))
+        });
     }
 
     group.finish();
@@ -69,7 +67,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
     for &bits in precision_bits() {
         let eps = epsilon(bits);
 
-        group.bench_with_input(BenchmarkId::new("2pi", bits), &eps, |b, eps| {
+        group.bench_with_input(bench_id_named("2pi", bits), &eps, |b, eps| {
             b.iter(|| {
                 let two = Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)));
                 black_box(
@@ -80,7 +78,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
             })
         });
 
-        group.bench_with_input(BenchmarkId::new("pi_half", bits), &eps, |b, eps| {
+        group.bench_with_input(bench_id_named("pi_half", bits), &eps, |b, eps| {
             b.iter(|| {
                 let half = Computable::constant(Binary::new(BigInt::from(1), BigInt::from(-1)));
                 black_box(
@@ -91,7 +89,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
             })
         });
 
-        group.bench_with_input(BenchmarkId::new("pi_sq", bits), &eps, |b, eps| {
+        group.bench_with_input(bench_id_named("pi_sq", bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
                     (pi() * pi())
@@ -101,7 +99,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
             })
         });
 
-        group.bench_with_input(BenchmarkId::new("inv_pi", bits), &eps, |b, eps| {
+        group.bench_with_input(bench_id_named("inv_pi", bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
                     pi().inv()
@@ -124,7 +122,7 @@ fn bench_sin_pi(c: &mut Criterion) {
 
         for &multiplier in &[1u64, 2, 10, 100] {
             group.bench_with_input(
-                BenchmarkId::new(format!("mul_{multiplier}"), bits),
+                bench_id_named(format!("mul_{multiplier}"), bits),
                 &eps,
                 |b, eps| {
                     b.iter(|| {

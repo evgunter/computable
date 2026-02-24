@@ -2,11 +2,11 @@ mod common;
 
 use std::num::NonZeroU32;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, epsilon, precision_bits, verbose};
+use common::{balanced_sum, bench_id, epsilon, precision_bits, verbose};
 use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 1_000;
@@ -45,7 +45,7 @@ fn bench_integer_roots(c: &mut Criterion) {
             eprintln!("[integer_roots/{bits}] width: {}", bounds.width());
         }
 
-        group.bench_with_input(BenchmarkId::from_parameter(bits), &eps, |b, eps| {
+        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
                     balanced_sum(build_terms(&inputs))

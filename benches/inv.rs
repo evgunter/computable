@@ -1,10 +1,10 @@
 mod common;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, epsilon, precision_bits, verbose};
+use common::{balanced_sum, bench_id, epsilon, precision_bits, verbose};
 use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 100;
@@ -35,7 +35,7 @@ fn bench_inv(c: &mut Criterion) {
             eprintln!("[inv/{bits}] width: {}", bounds.width());
         }
 
-        group.bench_with_input(BenchmarkId::from_parameter(bits), &eps, |b, eps| {
+        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
                     balanced_sum(build_terms(&inputs))

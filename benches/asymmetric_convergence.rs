@@ -14,9 +14,12 @@
 
 use std::num::NonZeroU32;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+mod common;
+
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use num_bigint::{BigInt, BigUint};
 
+use common::bench_id_named;
 use computable::{Binary, Computable, UBinary, pi};
 
 /// Precision targets (in bits). Kept small because PiOp's exponential term
@@ -48,33 +51,25 @@ fn bench_asymmetric(c: &mut Criterion) {
     for &bits in PRECISION_BITS {
         let epsilon = UBinary::new(BigUint::from(1u32), -BigInt::from(bits));
 
-        group.bench_with_input(
-            BenchmarkId::new("sqrt2+pi", bits),
-            &epsilon,
-            |b, epsilon| {
-                b.iter(|| {
-                    black_box(
-                        (sqrt_2() + pi())
-                            .refine_to_default(epsilon.clone())
-                            .expect("should succeed"),
-                    )
-                })
-            },
-        );
+        group.bench_with_input(bench_id_named("sqrt2+pi", bits), &epsilon, |b, epsilon| {
+            b.iter(|| {
+                black_box(
+                    (sqrt_2() + pi())
+                        .refine_to_default(epsilon.clone())
+                        .expect("should succeed"),
+                )
+            })
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("sqrt2*pi", bits),
-            &epsilon,
-            |b, epsilon| {
-                b.iter(|| {
-                    black_box(
-                        (sqrt_2() * pi())
-                            .refine_to_default(epsilon.clone())
-                            .expect("should succeed"),
-                    )
-                })
-            },
-        );
+        group.bench_with_input(bench_id_named("sqrt2*pi", bits), &epsilon, |b, epsilon| {
+            b.iter(|| {
+                black_box(
+                    (sqrt_2() * pi())
+                        .refine_to_default(epsilon.clone())
+                        .expect("should succeed"),
+                )
+            })
+        });
     }
 
     group.finish();
@@ -89,7 +84,7 @@ fn bench_controls(c: &mut Criterion) {
 
         // Single-refiner baselines
         group.bench_with_input(
-            BenchmarkId::new("sqrt2+const3", bits),
+            bench_id_named("sqrt2+const3", bits),
             &epsilon,
             |b, epsilon| {
                 b.iter(|| {
@@ -102,23 +97,19 @@ fn bench_controls(c: &mut Criterion) {
             },
         );
 
-        group.bench_with_input(
-            BenchmarkId::new("pi+const1", bits),
-            &epsilon,
-            |b, epsilon| {
-                b.iter(|| {
-                    black_box(
-                        (pi() + constant(1))
-                            .refine_to_default(epsilon.clone())
-                            .expect("should succeed"),
-                    )
-                })
-            },
-        );
+        group.bench_with_input(bench_id_named("pi+const1", bits), &epsilon, |b, epsilon| {
+            b.iter(|| {
+                black_box(
+                    (pi() + constant(1))
+                        .refine_to_default(epsilon.clone())
+                        .expect("should succeed"),
+                )
+            })
+        });
 
         // Symmetric convergence control
         group.bench_with_input(
-            BenchmarkId::new("sqrt2+cbrt3", bits),
+            bench_id_named("sqrt2+cbrt3", bits),
             &epsilon,
             |b, epsilon| {
                 b.iter(|| {
