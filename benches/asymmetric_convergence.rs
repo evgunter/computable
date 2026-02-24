@@ -21,6 +21,10 @@ use computable::{Binary, Computable, UBinary, pi};
 
 /// Precision targets (in bits). Kept small because PiOp's exponential term
 /// growth makes high precision prohibitively slow in the pathological cases.
+///
+/// TODO(demand-propagation-asymmetric): Once the coordinator can skip refiners
+/// whose bounds already far exceed the target (rather than stepping them and
+/// paying their exponential cost), switch to `common::precision_bits()`.
 const PRECISION_BITS: &[usize] = &[4, 6];
 
 fn sqrt_2() -> Computable {
