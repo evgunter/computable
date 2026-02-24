@@ -362,24 +362,10 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{Binary, Bounds, UBinary, XBinary};
+    use crate::binary::{Bounds, XBinary};
     use crate::test_utils::{
-        interval_midpoint_computable, ubin, unwrap_finite, unwrap_finite_uxbinary,
+        bin, interval_midpoint_computable, ubin, unwrap_finite, unwrap_finite_uxbinary,
     };
-
-    fn assert_bounds_compatible_with_expected(
-        bounds: &Bounds,
-        expected: &Binary,
-        epsilon: &UBinary,
-    ) {
-        let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let width = unwrap_finite_uxbinary(bounds.width());
-        let upper = unwrap_finite(&upper_xb);
-
-        assert!(lower <= *expected && *expected <= upper);
-        assert!(width <= *epsilon);
-    }
 
     #[test]
     fn inv_allows_infinite_bounds() {
@@ -391,16 +377,35 @@ mod tests {
 
     #[test]
     fn inv_bounds_for_positive_interval() {
+        // interval_midpoint_computable(2, 4) refines to midpoint 3, so inv()
+        // should produce bounds that bracket 1/3.
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
         let epsilon = ubin(1, -8);
         let bounds = inv
             .refine_to_default(epsilon.clone())
             .expect("refine_to should succeed");
-        let expected_binary =
-            XBinary::from_f64(1.0 / 3.0).expect("expected value should convert to extended binary");
-        let expected_value = unwrap_finite(&expected_binary);
 
-        assert_bounds_compatible_with_expected(&bounds, &expected_value, &epsilon);
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+        let width = unwrap_finite_uxbinary(bounds.width());
+        let three = bin(3, 0);
+        let one = bin(1, 0);
+
+        // Verify bounds bracket 1/3 using exact arithmetic: lower * 3 <= 1 <= upper * 3.
+        assert!(
+            lower.mul(&three) <= one,
+            "lower bound {lower} exceeds 1/3: lower * 3 = {}",
+            lower.mul(&three)
+        );
+        assert!(
+            upper.mul(&three) >= one,
+            "upper bound {upper} is below 1/3: upper * 3 = {}",
+            upper.mul(&three)
+        );
+        assert!(
+            width <= epsilon,
+            "width {width} exceeds epsilon {epsilon}"
+        );
     }
 }
