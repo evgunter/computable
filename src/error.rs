@@ -218,26 +218,17 @@ pub fn sub_one(n: std::num::NonZeroUsize) -> usize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Sane(pub usize);
 
-// Compile-time assertion: our overflow reasoning assumes usize fits in 64 bits.
+// Compile-time assertions:
+// - usize ≤ 64 bits: our overflow reasoning assumes checked_* catches all overflows
+// - usize ≥ 32 bits: u32 literals can be converted to usize with `as`
 const _: () = assert!(usize::BITS <= 64);
-
-impl Sane {
-    /// Converts an `i32` to `Sane`, panicking if negative.
-    #[inline]
-    fn from_i32(n: i32) -> Sane {
-        match usize::try_from(n) {
-            Ok(v) => Sane(v),
-            Err(_) => crate::detected_computable_would_exhaust_memory!(
-                "negative integer in Sane arithmetic"
-            ),
-        }
-    }
-}
+const _: () = assert!(u32::BITS <= usize::BITS);
 
 /// Implements checked arithmetic operators for [`Sane`].
 ///
-/// Each invocation generates three impls: `Sane op Sane`, `Sane op i32`, and
-/// `i32 op Sane`. The `i32` variants convert via [`Sane::from_i32`] first.
+/// Each invocation generates three impls: `Sane op Sane`, `Sane op u32`, and
+/// `u32 op Sane`. The `u32` variants convert via `as usize` (safe per
+/// compile-time assert `u32::BITS <= usize::BITS`).
 macro_rules! impl_sane_binary_op {
     ($trait:ident, $method:ident, $checked:ident, $msg:literal) => {
         impl core::ops::$trait for Sane {
@@ -251,19 +242,23 @@ macro_rules! impl_sane_binary_op {
             }
         }
 
-        impl core::ops::$trait<i32> for Sane {
+        impl core::ops::$trait<u32> for Sane {
             type Output = Sane;
             #[inline]
-            fn $method(self, rhs: i32) -> Sane {
-                core::ops::$trait::$method(self, Sane::from_i32(rhs))
+            fn $method(self, rhs: u32) -> Sane {
+                #[allow(clippy::as_conversions)]
+                // safe: compile-time assert guarantees u32 fits in usize
+                core::ops::$trait::$method(self, Sane(rhs as usize))
             }
         }
 
-        impl core::ops::$trait<Sane> for i32 {
+        impl core::ops::$trait<Sane> for u32 {
             type Output = Sane;
             #[inline]
             fn $method(self, rhs: Sane) -> Sane {
-                core::ops::$trait::$method(Sane::from_i32(self), rhs)
+                #[allow(clippy::as_conversions)]
+                // safe: compile-time assert guarantees u32 fits in usize
+                core::ops::$trait::$method(Sane(self as usize), rhs)
             }
         }
     };
@@ -390,19 +385,19 @@ mod tests {
     }
 
     #[test]
-    fn sane_arithmetic_i32_cross_ops() {
-        assert_eq!(Sane(3) + 4_i32, Sane(7));
-        assert_eq!(4_i32 + Sane(3), Sane(7));
-        assert_eq!(Sane(10) - 3_i32, Sane(7));
-        assert_eq!(2_i32 * Sane(5), Sane(10));
-        assert_eq!(Sane(5) * 2_i32, Sane(10));
-        assert_eq!(Sane(20) / 4_i32, Sane(5));
+    fn sane_arithmetic_u32_cross_ops() {
+        assert_eq!(Sane(3) + 4_u32, Sane(7));
+        assert_eq!(4_u32 + Sane(3), Sane(7));
+        assert_eq!(Sane(10) - 3_u32, Sane(7));
+        assert_eq!(2_u32 * Sane(5), Sane(10));
+        assert_eq!(Sane(5) * 2_u32, Sane(10));
+        assert_eq!(Sane(20) / 4_u32, Sane(5));
     }
 
     #[test]
     fn sane_arithmetic_macro_works() {
         let n: usize = 10;
-        let result = crate::sane_arithmetic!(n; 2_i32 * n + 1_i32);
+        let result = crate::sane_arithmetic!(n; 2 * n + 1);
         assert_eq!(result, 21_usize);
     }
 
@@ -425,16 +420,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "negative integer in Sane arithmetic")]
-    fn sane_from_negative_i32_panics() {
-        let _ = Sane(5) + (-1_i32);
-    }
-
-    #[test]
     #[should_panic(expected = "exceeds MAX_COMPUTATION_BITS")]
     fn sane_arithmetic_macro_rejects_large_result() {
         let n: usize = MAX_COMPUTATION_BITS;
         // n + 1 doesn't overflow usize, but exceeds MAX_COMPUTATION_BITS
-        let _ = crate::sane_arithmetic!(n; n + 1_i32);
+        let _ = crate::sane_arithmetic!(n; n + 1);
     }
 }
