@@ -8,7 +8,7 @@ use std::ops::ShlAssign;
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 
-use crate::error::MAX_COMPUTATION_BITS;
+use crate::sane::MAX_COMPUTATION_BITS;
 
 /// Marker trait for arbitrary-precision integer types whose arithmetic
 /// (including `<<=`) cannot overflow. Implemented only for `BigInt` and

@@ -38,6 +38,6 @@ arithmetic-side-effects-allowed = [
     # Sane newtype (checked arithmetic, panics on overflow)
     "Sane",
     "computable::Sane",
-    "computable::error::Sane",
-    "error::Sane",
+    "computable::sane::Sane",
+    "sane::Sane",
 ]

@@ -367,8 +367,8 @@ pub fn normalize_finite_to_bounds(
 ) -> Result<Bounds, crate::error::ComputableError> {
     use num_traits::Signed;
 
-    let lower_bits = crate::error::bits_as_usize(bounds.small().mantissa().magnitude().bits());
-    let upper_bits = crate::error::bits_as_usize(bounds.large().mantissa().magnitude().bits());
+    let lower_bits = crate::sane::bits_as_usize(bounds.small().mantissa().magnitude().bits());
+    let upper_bits = crate::sane::bits_as_usize(bounds.large().mantissa().magnitude().bits());
     let total_precision = crate::sane_arithmetic!(lower_bits, upper_bits; lower_bits + upper_bits);
 
     let needs_normalization =

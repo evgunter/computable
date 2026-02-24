@@ -73,6 +73,7 @@ mod error;
 mod node;
 mod ops;
 mod refinement;
+mod sane;
 
 // Test utilities module (only compiled in test mode)
 #[cfg(test)]
@@ -82,6 +83,7 @@ pub mod test_utils;
 pub use binary::Bounds;
 pub use binary::{Binary, BinaryError, FiniteBounds, UBinary, UXBinary, XBinary, XBinaryError};
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
-pub use error::{ComputableError, MAX_COMPUTATION_BITS, Sane};
+pub use error::ComputableError;
 pub use ops::{pi, pi_bounds_at_precision};
 pub use ordered_pair::{Interval, IntervalError};
+pub use sane::{MAX_COMPUTATION_BITS, Sane};

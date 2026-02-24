@@ -23,8 +23,9 @@ use crate::binary::{
 };
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
-use crate::error::{ComputableError, Sane};
+use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::sane::Sane;
 
 /// Initial number of Taylor series terms for pi computation.
 pub(crate) const INITIAL_PI_TERMS: usize = 10;

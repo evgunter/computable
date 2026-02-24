@@ -521,8 +521,8 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     // To avoid losing precision, we shift mx up by enough bits so that
     // mx << shift_bits > mp, ensuring a non-zero quotient.
     // The shift should be at least mp.bits() - mx.bits() + some_precision.
-    let mx_bits = crate::error::bits_as_usize(mx.magnitude().bits());
-    let mp_bits = crate::error::bits_as_usize(mp.magnitude().bits());
+    let mx_bits = crate::sane::bits_as_usize(mx.magnitude().bits());
+    let mp_bits = crate::sane::bits_as_usize(mp.magnitude().bits());
 
     // Shift by enough bits to get a meaningful quotient, plus extra precision for rounding.
     // When mp_bits > mx_bits, we need at least the difference plus 64 extra bits.
@@ -541,7 +541,7 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
         match std::num::NonZeroUsize::new(shift_val) {
             None => quotient.clone(),
             Some(shift) => {
-                let half = BigInt::one() << crate::error::sub_one(shift);
+                let half = BigInt::one() << crate::sane::sub_one(shift);
                 let rounded = if quotient.is_negative() {
                     &quotient - &half
                 } else {
@@ -569,7 +569,7 @@ fn truncate_precision_directed(
 ) -> Binary {
     let mantissa = x.mantissa();
     let exponent = x.exponent();
-    let bit_length = crate::error::bits_as_usize(mantissa.magnitude().bits());
+    let bit_length = crate::sane::bits_as_usize(mantissa.magnitude().bits());
 
     let Some(shift_nz) = bit_length
         .checked_sub(precision_bits)
@@ -755,7 +755,7 @@ fn divide_by_factorial_directed(
 
     // Use the caller-provided target precision, ensuring it is at least as large
     // as the input value's mantissa to avoid losing information.
-    let value_bits = crate::error::bits_as_usize(value.mantissa().magnitude().bits());
+    let value_bits = crate::sane::bits_as_usize(value.mantissa().magnitude().bits());
     let precision_bits = target_precision.max(value_bits);
 
     // Determine rounding direction for reciprocal based on overall rounding and sign of value.
@@ -795,7 +795,7 @@ fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
     }
 
     // -log2(width) ≈ -(mantissa_bits + exponent)
-    let mantissa_bits = crate::error::bits_as_usize(width.mantissa().magnitude().bits());
+    let mantissa_bits = crate::sane::bits_as_usize(width.mantissa().magnitude().bits());
     let mantissa_bits_i64 = i64::try_from(mantissa_bits).unwrap_or(i64::MAX);
     let exp_i64 = width.exponent().to_i64().unwrap_or(0_i64);
     let log2_width = exp_i64.saturating_add(mantissa_bits_i64);

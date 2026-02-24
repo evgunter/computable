@@ -15,7 +15,8 @@ fn build_terms(inputs: &[(u64, NonZeroU32)]) -> Vec<Computable> {
     inputs
         .iter()
         .map(|&(value, n)| {
-            let value_binary = Binary::new(num_bigint::BigInt::from(value), num_bigint::BigInt::from(0));
+            let value_binary =
+                Binary::new(num_bigint::BigInt::from(value), num_bigint::BigInt::from(0));
             Computable::constant(value_binary).nth_root(n)
         })
         .collect()

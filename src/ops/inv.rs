@@ -12,8 +12,9 @@ use num_traits::Signed;
 use parking_lot::RwLock;
 
 use crate::binary::{Binary, Bounds, ReciprocalRounding, XBinary, reciprocal_rounded_abs_extended};
-use crate::error::{self, ComputableError};
+use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::sane;
 
 /// Initial precision bits for the Newton-Raphson seed reciprocal.
 ///
@@ -311,7 +312,7 @@ fn newton_step(approx: &mut ReciprocalApprox, denom: &Binary) {
 /// Truncate a positive `Binary` to at most `precision_bits` mantissa bits,
 /// rounding toward -∞ (floor). The result is always ≤ the input.
 fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
-    let bit_length = error::bits_as_usize(x.mantissa().magnitude().bits());
+    let bit_length = sane::bits_as_usize(x.mantissa().magnitude().bits());
     let Some(shift) = bit_length
         .checked_sub(precision_bits)
         .filter(|&s| s > 0_usize)
@@ -337,7 +338,7 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
 /// Truncate a positive `Binary` to at most `precision_bits` mantissa bits,
 /// rounding toward +∞ (ceil). The result is always ≥ the input.
 fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
-    let bit_length = error::bits_as_usize(x.mantissa().magnitude().bits());
+    let bit_length = sane::bits_as_usize(x.mantissa().magnitude().bits());
     let Some(shift) = bit_length
         .checked_sub(precision_bits)
         .filter(|&s| s > 0_usize)
@@ -403,9 +404,6 @@ mod tests {
             "upper bound {upper} is below 1/3: upper * 3 = {}",
             upper.mul(&three)
         );
-        assert!(
-            width <= epsilon,
-            "width {width} exceeds epsilon {epsilon}"
-        );
+        assert!(width <= epsilon, "width {width} exceeds epsilon {epsilon}");
     }
 }
