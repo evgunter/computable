@@ -75,23 +75,13 @@ impl NodeOp for MulOp {
         let right_lower = right_bounds.small();
         let right_upper = right_bounds.large();
 
-        let candidates = [
-            left_lower.mul(right_lower),
-            left_lower.mul(&right_upper),
-            left_upper.mul(right_lower),
-            left_upper.mul(&right_upper),
-        ];
+        let ll_rl = left_lower.mul(right_lower);
+        let ll_ru = left_lower.mul(&right_upper);
+        let lu_rl = left_upper.mul(right_lower);
+        let lu_ru = left_upper.mul(&right_upper);
 
-        let mut min = candidates[0].clone();
-        let mut max = candidates[0].clone();
-        for candidate in candidates.iter().skip(1) {
-            if candidate < &min {
-                min = candidate.clone();
-            }
-            if candidate > &max {
-                max = candidate.clone();
-            }
-        }
+        let min = ll_rl.clone().min(ll_ru.clone()).min(lu_rl.clone()).min(lu_ru.clone());
+        let max = ll_rl.max(ll_ru).max(lu_rl).max(lu_ru);
 
         Ok(Bounds::new_checked(min, max)?)
     }

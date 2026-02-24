@@ -224,7 +224,10 @@ impl Computable {
     /// Creates a constant computable with exact bounds.
     pub fn constant(value: Binary) -> Self {
         fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
-            Ok(Bounds::point(XBinary::Finite(value.clone())))
+            Ok(Bounds::new(
+                XBinary::Finite(value.clone()),
+                XBinary::Finite(value.clone()),
+            ))
         }
 
         fn refine(value: Binary) -> Result<Binary, ComputableError> {
