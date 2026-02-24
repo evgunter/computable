@@ -1,8 +1,36 @@
 #![allow(dead_code)]
 
-use computable::{Binary, Computable};
+use num_bigint::{BigInt, BigUint};
 
-/// Whether to print diagnostic info (enabled by BENCH_VERBOSE=1).
+use computable::{Binary, Computable, UBinary};
+
+/// Standard precision sweep: epsilon = 2^(-bits) for each value.
+const STANDARD_BITS: &[i64] = &[1, 4, 16, 64, 256];
+
+/// Extended sweep, enabled by `BENCH_HIGH_PRECISION=1`.
+const EXTENDED_BITS: &[i64] = &[1, 4, 16, 64, 256, 1024, 2048, 4096, 8192];
+
+/// Returns the precision sweep to use. Set `BENCH_HIGH_PRECISION=1` to include
+/// higher precisions (1024+).
+pub fn precision_bits() -> &'static [i64] {
+    if high_precision() {
+        EXTENDED_BITS
+    } else {
+        STANDARD_BITS
+    }
+}
+
+/// Whether high-precision benchmarks are enabled (via `BENCH_HIGH_PRECISION=1`).
+pub fn high_precision() -> bool {
+    std::env::var("BENCH_HIGH_PRECISION").is_ok()
+}
+
+/// Create an epsilon of 2^(-bits).
+pub fn epsilon(bits: i64) -> UBinary {
+    UBinary::new(BigUint::from(1u32), -BigInt::from(bits))
+}
+
+/// Whether to print diagnostic info (enabled by `BENCH_VERBOSE=1`).
 pub fn verbose() -> bool {
     std::env::var("BENCH_VERBOSE").is_ok()
 }

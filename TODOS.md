@@ -1,5 +1,17 @@
 # TODOs - Ranked by Ease of Completion
 
+## Tier 2: Medium
+
+### <a id="demand-propagation-asymmetric"></a>demand-propagation-asymmetric: Coordinator should handle asymmetric convergence rates efficiently
+**File:** `benches/asymmetric_convergence.rs:25`
+```rust
+// TODO(demand-propagation-asymmetric): Once the coordinator can skip refiners
+// whose bounds already far exceed the target ...
+```
+Expressions like `sqrt(2) + pi()` are pathologically slow because PiOp's exponential term growth (each step doubles term count) dominates even though pi converges far past the target after ~2 rounds. The coordinator's demand-based skipping (`width <= epsilon/N`) helps, but isn't enough — once pi has been stepped a few times, each *additional* unnecessary step is exponentially more expensive than the last. The coordinator needs to more aggressively avoid stepping refiners that are already far below the precision target. Once fixed, the asymmetric_convergence benchmark can switch from its limited `[4, 6]` precision range to `common::precision_bits()`.
+
+---
+
 ## Tier 3: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="pow-type-bounds"></a>pow-type-bounds: Type system for invalid bounds in pow

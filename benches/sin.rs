@@ -1,15 +1,13 @@
 mod common;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use num_bigint::{BigInt, BigUint};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, verbose};
-use computable::{Binary, Computable, UBinary};
+use common::{balanced_sum, epsilon, precision_bits, verbose};
+use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 100;
-const PRECISION_BITS: i64 = 128;
 
 fn build_terms(inputs: &[f64]) -> Vec<Computable> {
     inputs
@@ -32,30 +30,36 @@ fn bench_sin(c: &mut Criterion) {
         })
         .collect();
 
-    let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-PRECISION_BITS));
+    let mut group = c.benchmark_group("sin");
+    group.sample_size(10);
 
-    if verbose() {
-        let bounds = balanced_sum(build_terms(&inputs))
-            .refine_to_default(epsilon.clone())
-            .expect("refine_to should succeed");
-        eprintln!("[sin] width: {}", bounds.width());
+    for &bits in precision_bits() {
+        let eps = epsilon(bits);
+
+        if verbose() {
+            let bounds = balanced_sum(build_terms(&inputs))
+                .refine_to_default(eps.clone())
+                .expect("refine_to should succeed");
+            eprintln!("[sin/{bits}] width: {}", bounds.width());
+        }
+
+        group.bench_with_input(BenchmarkId::from_parameter(bits), &eps, |b, eps| {
+            b.iter(|| {
+                black_box(
+                    balanced_sum(build_terms(&inputs))
+                        .refine_to_default(eps.clone())
+                        .expect("refine_to should succeed"),
+                )
+            })
+        });
     }
 
-    c.bench_function("sin", |b| {
-        let epsilon = epsilon.clone();
-        b.iter(|| {
-            black_box(
-                balanced_sum(build_terms(&inputs))
-                    .refine_to_default(epsilon.clone())
-                    .expect("refine_to should succeed"),
-            )
-        })
-    });
+    group.finish();
 }
 
 criterion_group! {
     name = benches;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default();
     targets = bench_sin
 }
 criterion_main!(benches);
