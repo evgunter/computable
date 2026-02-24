@@ -20,11 +20,11 @@
 //!   policy. Unlike the infinite-value macro, this always panics (not just in debug builds)
 //!   because there is no safe fallback.
 //!
-//! - **`assert_sane_computation_size!(...)`**: Use before integer arithmetic on values
-//!   representing computation sizes (precision bits, term counts, bit lengths). If the
-//!   value exceeds `MAX_COMPUTATION_BITS`, the computation would exhaust memory, so we
-//!   panic early. After this check, the subsequent arithmetic can be
-//!   `#[allow(clippy::arithmetic_side_effects)]` since overflow is excluded.
+//! - **`sane_arithmetic!(var1, var2, ...; expr)`**: Use for integer arithmetic on values
+//!   representing computation sizes (precision bits, term counts, bit lengths). Each
+//!   guard variable is shadowed as a [`Sane`] newtype whose operators use `checked_*`
+//!   internally, panicking on overflow. The result is unwrapped back to `usize` and
+//!   checked against `MAX_COMPUTATION_BITS`.
 
 /// Maximum reasonable computation size in bits. A computation requiring more than
 /// ~2^32 bits of precision would need ~512 MB just to store one number, and intermediate
@@ -133,18 +133,21 @@ macro_rules! assert_sane_computation_size {
     };
 }
 
-/// Guards one or more `usize` values with [`assert_sane_computation_size!`], then
-/// evaluates an arithmetic expression with `clippy::arithmetic_side_effects` suppressed.
+/// Guards one or more `usize` variables and evaluates an arithmetic expression using
+/// checked arithmetic via [`Sane`].
 ///
-/// This bundles the common pattern of "check operands are bounded, then do arithmetic
-/// that provably can't overflow" into a single call, making it impossible to forget
-/// either half.
+/// Each guard variable is shadowed as a [`Sane`] newtype whose `+`, `-`, `*`, `/`
+/// operators use `checked_*` internally, panicking via
+/// [`detected_computable_would_exhaust_memory!`] on overflow. The result is unwrapped
+/// back to `usize` and checked against [`MAX_COMPUTATION_BITS`].
 ///
 /// # Syntax
 ///
 /// ```text
-/// sane_arithmetic!(guard1, guard2, ...; expression)
+/// sane_arithmetic!(var1, var2, ...; expression)
 /// ```
+///
+/// Guards must be identifiers (not arbitrary expressions).
 ///
 /// # Example
 ///
@@ -157,10 +160,14 @@ macro_rules! assert_sane_computation_size {
 /// ```
 #[macro_export]
 macro_rules! sane_arithmetic {
-    ($($guard:expr),+ ; $expr:expr) => {{
-        $($crate::assert_sane_computation_size!($guard);)+
-        #[allow(clippy::arithmetic_side_effects)]
-        { $expr }
+    ($($guard:ident),+ ; $expr:expr) => {{
+        $(
+            #[allow(clippy::shadow_reuse)]
+            let $guard = $crate::Sane($guard);
+        )+
+        let $crate::Sane(__result) = { $expr };
+        $crate::assert_sane_computation_size!(__result);
+        __result
     }};
 }
 
@@ -198,6 +205,74 @@ pub fn sub_one(n: std::num::NonZeroUsize) -> usize {
         n.get() - 1
     }
 }
+
+/// Newtype for checked arithmetic on computation-size values.
+///
+/// Overloads `+`, `-`, `*`, `/` to use `checked_*` internally, panicking via
+/// [`detected_computable_would_exhaust_memory!`] on overflow. This makes it
+/// impossible to silently overflow when doing arithmetic on precision bits,
+/// term counts, etc.
+///
+/// Created automatically by the [`sane_arithmetic!`] macro — not intended for
+/// direct construction outside of that macro.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Sane(pub usize);
+
+// Compile-time assertion: our overflow reasoning assumes usize fits in 64 bits.
+const _: () = assert!(usize::BITS <= 64);
+
+impl Sane {
+    /// Converts an `i32` to `Sane`, panicking if negative.
+    #[inline]
+    fn from_i32(n: i32) -> Sane {
+        match usize::try_from(n) {
+            Ok(v) => Sane(v),
+            Err(_) => crate::detected_computable_would_exhaust_memory!(
+                "negative integer in Sane arithmetic"
+            ),
+        }
+    }
+}
+
+/// Implements checked arithmetic operators for [`Sane`].
+///
+/// Each invocation generates three impls: `Sane op Sane`, `Sane op i32`, and
+/// `i32 op Sane`. The `i32` variants convert via [`Sane::from_i32`] first.
+macro_rules! impl_sane_binary_op {
+    ($trait:ident, $method:ident, $checked:ident, $msg:literal) => {
+        impl core::ops::$trait for Sane {
+            type Output = Sane;
+            #[inline]
+            fn $method(self, rhs: Sane) -> Sane {
+                match self.0.$checked(rhs.0) {
+                    Some(r) => Sane(r),
+                    None => crate::detected_computable_would_exhaust_memory!($msg),
+                }
+            }
+        }
+
+        impl core::ops::$trait<i32> for Sane {
+            type Output = Sane;
+            #[inline]
+            fn $method(self, rhs: i32) -> Sane {
+                core::ops::$trait::$method(self, Sane::from_i32(rhs))
+            }
+        }
+
+        impl core::ops::$trait<Sane> for i32 {
+            type Output = Sane;
+            #[inline]
+            fn $method(self, rhs: Sane) -> Sane {
+                core::ops::$trait::$method(Sane::from_i32(self), rhs)
+            }
+        }
+    };
+}
+
+impl_sane_binary_op!(Add, add, checked_add, "Sane addition overflow");
+impl_sane_binary_op!(Sub, sub, checked_sub, "Sane subtraction underflow");
+impl_sane_binary_op!(Mul, mul, checked_mul, "Sane multiplication overflow");
+impl_sane_binary_op!(Div, div, checked_div, "Sane division by zero");
 
 use std::fmt;
 
@@ -304,5 +379,62 @@ mod tests {
     #[should_panic(expected = "test message")]
     fn detected_computable_would_exhaust_memory_macro_panics() {
         detected_computable_would_exhaust_memory!("test message");
+    }
+
+    #[test]
+    fn sane_arithmetic_basic_ops() {
+        assert_eq!(Sane(3) + Sane(4), Sane(7));
+        assert_eq!(Sane(10) - Sane(3), Sane(7));
+        assert_eq!(Sane(5) * Sane(6), Sane(30));
+        assert_eq!(Sane(20) / Sane(4), Sane(5));
+    }
+
+    #[test]
+    fn sane_arithmetic_i32_cross_ops() {
+        assert_eq!(Sane(3) + 4_i32, Sane(7));
+        assert_eq!(4_i32 + Sane(3), Sane(7));
+        assert_eq!(Sane(10) - 3_i32, Sane(7));
+        assert_eq!(2_i32 * Sane(5), Sane(10));
+        assert_eq!(Sane(5) * 2_i32, Sane(10));
+        assert_eq!(Sane(20) / 4_i32, Sane(5));
+    }
+
+    #[test]
+    fn sane_arithmetic_macro_works() {
+        let n: usize = 10;
+        let result = crate::sane_arithmetic!(n; 2_i32 * n + 1_i32);
+        assert_eq!(result, 21_usize);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sane multiplication overflow")]
+    fn sane_mul_overflow_panics() {
+        let _ = Sane(usize::MAX) * Sane(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sane subtraction underflow")]
+    fn sane_sub_underflow_panics() {
+        let _ = Sane(3) - Sane(5);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sane division by zero")]
+    fn sane_div_by_zero_panics() {
+        let _ = Sane(10) / Sane(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "negative integer in Sane arithmetic")]
+    fn sane_from_negative_i32_panics() {
+        let _ = Sane(5) + (-1_i32);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds MAX_COMPUTATION_BITS")]
+    fn sane_arithmetic_macro_rejects_large_result() {
+        let n: usize = MAX_COMPUTATION_BITS;
+        // n + 1 doesn't overflow usize, but exceeds MAX_COMPUTATION_BITS
+        let _ = crate::sane_arithmetic!(n; n + 1_i32);
     }
 }

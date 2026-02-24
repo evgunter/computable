@@ -51,7 +51,7 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 **Blocked by:** [async-refinement](#async-refinement)
 
 ### <a id="arithmetic-lint-audit"></a>arithmetic-lint-audit: Audit and fix remaining arithmetic_side_effects warnings
-26 clippy::arithmetic_side_effects warnings remain on `usize`/`i64`/`u64` arithmetic (precision calculations, iteration counters, bit lengths). Each site should be individually reviewed: add `assert_sane_computation_size!` guards where the value represents a computation size, or convert to `checked_*` arithmetic where overflow is a genuine concern. Don't mechanically `#[allow]` — think about whether each case could actually be a bug.
+Remaining clippy::arithmetic_side_effects warnings on `usize`/`i64`/`u64` arithmetic (precision calculations, iteration counters, bit lengths). Each site should be individually reviewed: use `sane_arithmetic!` with the `Sane` newtype where the value represents a computation size (this now uses checked arithmetic internally), or convert to `checked_*` arithmetic where overflow is a genuine concern. Don't mechanically `#[allow]` — think about whether each case could actually be a bug. Note: the `sane_arithmetic!` macro was refactored to use a `Sane` newtype with checked operators instead of `#[allow(clippy::arithmetic_side_effects)]`.
 
 ---
 

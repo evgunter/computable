@@ -23,7 +23,7 @@ use crate::binary::{
 };
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
-use crate::error::ComputableError;
+use crate::error::{ComputableError, Sane};
 use crate::node::{Node, NodeOp};
 
 /// Initial number of Taylor series terms for pi computation.
@@ -32,13 +32,16 @@ pub(crate) const INITIAL_PI_TERMS: usize = 10;
 /// Returns the number of bits in the binary representation of `x`.
 ///
 /// Equivalent to floor(log2(x)) + 1 for x > 0, and 0 for x == 0.
-fn bit_length(x: usize) -> usize {
+///
+/// Accepts and returns [`Sane`] so it composes naturally inside
+/// [`sane_arithmetic!`] blocks.
+fn bit_length(x: Sane) -> Sane {
     // leading_zeros() is always <= BITS, so this subtraction cannot underflow.
     // TODO: investigate whether the type system could prevent this case.
     let bits = usize::BITS
-        .checked_sub(x.leading_zeros())
+        .checked_sub(x.0.leading_zeros())
         .unwrap_or_else(|| unreachable!("leading_zeros() is always <= usize::BITS"));
-    usize::try_from(bits).unwrap_or(0)
+    Sane(usize::try_from(bits).unwrap_or(0))
 }
 
 /// Computes the intermediate reciprocal precision needed for `num_terms` Taylor series terms.
@@ -65,9 +68,9 @@ fn bit_length(x: usize) -> usize {
 fn precision_bits_for_num_terms(num_terms: usize) -> usize {
     crate::sane_arithmetic!(num_terms; {
         let n = num_terms;
-        let two_n_plus_1 = 2 * n + 1;
-        let taylor_bits = two_n_plus_1 * 3;
-        let rounding_margin = bit_length(n + 2) + bit_length(two_n_plus_1);
+        let two_n_plus_1 = 2_i32 * n + 1_i32;
+        let taylor_bits = two_n_plus_1 * 3_i32;
+        let rounding_margin = bit_length(n + 2_i32) + bit_length(two_n_plus_1);
         taylor_bits + rounding_margin
     })
 }
@@ -108,10 +111,11 @@ pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
     // For arctan(1/5), error after n terms is bounded by (1/5)^(2n+1)/(2n+1).
     // We need (2n+1)*log2(5) > precision_bits + 4, i.e. n > (precision_bits + 4) / (2*log2(5)) - 0.5.
     // Since log2(5) > 2, using (precision_bits + 10) / 4 is conservative (integer-only).
-    let num_terms = crate::sane_arithmetic!(precision_bits; ((precision_bits + 10) / 4).max(5));
+    let num_terms =
+        crate::sane_arithmetic!(precision_bits; (precision_bits + 10_i32) / 4_i32).max(5);
     // Minimum precision to keep rounding error below Taylor truncation error
     let rounding_error_precision = crate::sane_arithmetic!(precision_bits, num_terms;
-        precision_bits + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1));
+        precision_bits + bit_length(num_terms + 2_i32) + bit_length(2_i32 * num_terms + 1_i32));
     let reciprocal_precision =
         precision_bits_for_num_terms(num_terms).max(rounding_error_precision);
     compute_pi_bounds(num_terms, reciprocal_precision)
@@ -247,7 +251,7 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
     // Derive error bound from the loop's final k_power state.
     // After the loop, k_power = k^(2*num_terms + 1) (advanced one past the last term).
     // Error = 1 / ((2n+1) * k^(2n+1))
-    let error_coeff = BigInt::from(crate::sane_arithmetic!(num_terms; 2 * num_terms + 1));
+    let error_coeff = BigInt::from(crate::sane_arithmetic!(num_terms; 2_i32 * num_terms + 1_i32));
     let error_denom = &error_coeff * &k_power;
     let error = reciprocal_of_biguint(
         error_denom.magnitude(),

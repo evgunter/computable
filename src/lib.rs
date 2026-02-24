@@ -82,6 +82,6 @@ pub mod test_utils;
 pub use binary::Bounds;
 pub use binary::{Binary, BinaryError, FiniteBounds, UBinary, UXBinary, XBinary, XBinaryError};
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
-pub use error::{ComputableError, MAX_COMPUTATION_BITS};
+pub use error::{ComputableError, MAX_COMPUTATION_BITS, Sane};
 pub use ops::{pi, pi_bounds_at_precision};
 pub use ordered_pair::{Interval, IntervalError};

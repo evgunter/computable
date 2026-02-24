@@ -625,7 +625,7 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> Finit
     //
     // The Taylor series with n terms yields roughly n*10 bits of accuracy
     // (conservative estimate for |x| ≤ π/2). Intermediate precision must match.
-    let target_precision = crate::sane_arithmetic!(n; n * 10);
+    let target_precision = crate::sane_arithmetic!(n; n * 10_i32);
     let truncated_lo =
         truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
     let truncated_hi =
