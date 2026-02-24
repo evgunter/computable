@@ -11,9 +11,7 @@ use num_bigint::BigInt;
 use num_traits::Signed;
 use parking_lot::RwLock;
 
-use crate::binary::{
-    Binary, Bounds, ReciprocalRounding, XBinary, reciprocal_rounded_abs_extended,
-};
+use crate::binary::{Binary, Bounds, ReciprocalRounding, XBinary, reciprocal_rounded_abs_extended};
 use crate::error::{self, ComputableError};
 use crate::node::{Node, NodeOp};
 
@@ -314,7 +312,10 @@ fn newton_step(approx: &mut ReciprocalApprox, denom: &Binary) {
 /// rounding toward -∞ (floor). The result is always ≤ the input.
 fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
     let bit_length = error::bits_as_usize(x.mantissa().magnitude().bits());
-    let Some(shift) = bit_length.checked_sub(precision_bits).filter(|&s| s > 0_usize) else {
+    let Some(shift) = bit_length
+        .checked_sub(precision_bits)
+        .filter(|&s| s > 0_usize)
+    else {
         return x.clone();
     };
     let shifted = x.mantissa().magnitude() >> shift;
@@ -337,7 +338,10 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
 /// rounding toward +∞ (ceil). The result is always ≥ the input.
 fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
     let bit_length = error::bits_as_usize(x.mantissa().magnitude().bits());
-    let Some(shift) = bit_length.checked_sub(precision_bits).filter(|&s| s > 0_usize) else {
+    let Some(shift) = bit_length
+        .checked_sub(precision_bits)
+        .filter(|&s| s > 0_usize)
+    else {
         return x.clone();
     };
     let shifted = x.mantissa().magnitude() >> shift;
