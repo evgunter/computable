@@ -17,18 +17,10 @@ use std::num::NonZeroU32;
 mod common;
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 
-use common::bench_id_named;
-use computable::{Binary, Computable, UBinary, pi};
-
-/// Precision targets (in bits). Kept small because PiOp's exponential term
-/// growth makes high precision prohibitively slow in the pathological cases.
-///
-/// TODO(demand-propagation-asymmetric): Once the coordinator can skip refiners
-/// whose bounds already far exceed the target (rather than stepping them and
-/// paying their exponential cost), switch to `common::precision_bits()`.
-const PRECISION_BITS: &[usize] = &[4, 6];
+use common::{bench_id_named, epsilon, precision_bits};
+use computable::{Binary, Computable, pi};
 
 fn sqrt_2() -> Computable {
     Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)))
@@ -48,24 +40,24 @@ fn bench_asymmetric(c: &mut Criterion) {
     let mut group = c.benchmark_group("asymmetric_convergence/mixed");
     group.sample_size(10);
 
-    for &bits in PRECISION_BITS {
-        let epsilon = UBinary::new(BigUint::from(1u32), -BigInt::from(bits));
+    for &bits in precision_bits() {
+        let eps = epsilon(bits);
 
-        group.bench_with_input(bench_id_named("sqrt2+pi", bits), &epsilon, |b, epsilon| {
+        group.bench_with_input(bench_id_named("sqrt2+pi", bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
                     (sqrt_2() + pi())
-                        .refine_to_default(epsilon.clone())
+                        .refine_to_default(eps.clone())
                         .expect("should succeed"),
                 )
             })
         });
 
-        group.bench_with_input(bench_id_named("sqrt2*pi", bits), &epsilon, |b, epsilon| {
+        group.bench_with_input(bench_id_named("sqrt2*pi", bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
                     (sqrt_2() * pi())
-                        .refine_to_default(epsilon.clone())
+                        .refine_to_default(eps.clone())
                         .expect("should succeed"),
                 )
             })
@@ -79,29 +71,29 @@ fn bench_controls(c: &mut Criterion) {
     let mut group = c.benchmark_group("asymmetric_convergence/controls");
     group.sample_size(10);
 
-    for &bits in PRECISION_BITS {
-        let epsilon = UBinary::new(BigUint::from(1u32), -BigInt::from(bits));
+    for &bits in precision_bits() {
+        let eps = epsilon(bits);
 
         // Single-refiner baselines
         group.bench_with_input(
             bench_id_named("sqrt2+const3", bits),
-            &epsilon,
-            |b, epsilon| {
+            &eps,
+            |b, eps| {
                 b.iter(|| {
                     black_box(
                         (sqrt_2() + constant(3))
-                            .refine_to_default(epsilon.clone())
+                            .refine_to_default(eps.clone())
                             .expect("should succeed"),
                     )
                 })
             },
         );
 
-        group.bench_with_input(bench_id_named("pi+const1", bits), &epsilon, |b, epsilon| {
+        group.bench_with_input(bench_id_named("pi+const1", bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
                     (pi() + constant(1))
-                        .refine_to_default(epsilon.clone())
+                        .refine_to_default(eps.clone())
                         .expect("should succeed"),
                 )
             })
@@ -110,12 +102,12 @@ fn bench_controls(c: &mut Criterion) {
         // Symmetric convergence control
         group.bench_with_input(
             bench_id_named("sqrt2+cbrt3", bits),
-            &epsilon,
-            |b, epsilon| {
+            &eps,
+            |b, eps| {
                 b.iter(|| {
                     black_box(
                         (sqrt_2() + cbrt_3())
-                            .refine_to_default(epsilon.clone())
+                            .refine_to_default(eps.clone())
                             .expect("should succeed"),
                     )
                 })

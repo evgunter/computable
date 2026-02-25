@@ -12,7 +12,8 @@
 //! 3. Check iteration cap
 //! 4. Compute demand budget (ε / 2^⌈log₂(N)⌉) and skip refiners already below it
 //! 5. Send Step command to remaining active refiners (safety valve: if all were
-//!    skipped but root precision isn't met, step them all anyway)
+//!    skipped but root precision isn't met, step the least-precise refiners,
+//!    skipping extreme outliers whose width is negligible vs the widest)
 //! 6. After EACH response, apply the update and check precision (early exit)
 //! 7. If a refiner reports Exhausted, mark it inactive and track the reason
 //! 8. If a refiner reports Error, return the error immediately
@@ -204,22 +205,47 @@ impl RefinementGraph {
                         }
                     }
 
-                    // Safety valve: if all active refiners were below demand
-                    // but root precision isn't met, step them all anyway.
+                    // Safety valve: all active refiners were below demand but root
+                    // precision isn't met. Step the least-precise refiners, skipping
+                    // extreme outliers whose width is negligible vs the widest.
                     if expected == 0 {
+                        // Find widest active refiner width.
+                        let max_width = (0..refiners.len())
+                            .filter(|&i| active[i])
+                            .map(|i| {
+                                self.refiners[i]
+                                    .cached_bounds()
+                                    .map_or(UXBinary::Inf, |b| b.width().clone())
+                            })
+                            .max();
+
+                        // Step all active refiners except extreme outliers
+                        // (those whose width is negligibly small vs the widest).
                         for (i, refiner) in refiners.iter().enumerate() {
-                            if active[i] {
+                            if !active[i] {
+                                continue;
+                            }
+                            let dominated = max_width.as_ref().is_some_and(|max_w| {
+                                self.refiners[i].cached_bounds().is_some_and(|b| {
+                                    is_width_dominated(
+                                        b.width(),
+                                        max_w,
+                                    )
+                                })
+                            });
+                            if !dominated {
                                 refiner
                                     .sender
                                     .send(RefineCommand::Step)
-                                    .map_err(|_send_err| {
+                                    .map_err(|_| {
                                         ComputableError::RefinementChannelClosed
                                     })?;
-                                expected = expected.checked_add(1).unwrap_or_else(|| {
-                                    unreachable!(
+                                expected =
+                                    expected.checked_add(1).unwrap_or_else(|| {
+                                        unreachable!(
                                         "expected <= refiners.len(), cannot overflow usize"
                                     )
-                                });
+                                    });
                             }
                         }
                     }
@@ -415,6 +441,28 @@ fn compute_demand_budget(epsilon: &UBinary, num_active: usize) -> Option<UBinary
         epsilon.mantissa().clone(),
         epsilon.exponent() - BigInt::from(shift),
     ))
+}
+
+/// Refiners whose width is <= max_width >> SAFETY_VALVE_SKIP_SHIFT are
+/// skipped in the safety valve. This prevents exponentially expensive steps
+/// on fast-converging refiners (e.g. PiOp) that are already far more precise
+/// than the bottleneck. The exact value barely matters — any reasonable
+/// threshold prevents the pathological case.
+const SAFETY_VALVE_SKIP_SHIFT: i64 = 4; // skip if width << 4 <= max_width, i.e. width * 16 <= max_width
+
+/// Returns true when `width` is negligibly narrow compared to `max_width`,
+/// i.e. `width << SAFETY_VALVE_SKIP_SHIFT <= max_width`.
+fn is_width_dominated(width: &UXBinary, max_width: &UXBinary) -> bool {
+    match width {
+        UXBinary::Inf => false,
+        UXBinary::Finite(w) => {
+            let shifted = UBinary::new(
+                w.mantissa().clone(),
+                w.exponent() + BigInt::from(SAFETY_VALVE_SKIP_SHIFT),
+            );
+            UXBinary::Finite(shifted) <= *max_width
+        }
+    }
 }
 
 /// Compares bounds width (UXBinary) against epsilon (UBinary).
