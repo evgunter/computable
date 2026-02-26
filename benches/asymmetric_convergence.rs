@@ -47,7 +47,7 @@ fn bench_asymmetric(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     (sqrt_2() + pi())
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("should succeed"),
                 )
             })
@@ -57,7 +57,7 @@ fn bench_asymmetric(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     (sqrt_2() * pi())
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("should succeed"),
                 )
             })
@@ -82,7 +82,7 @@ fn bench_controls(c: &mut Criterion) {
                 b.iter(|| {
                     black_box(
                         (sqrt_2() + constant(3))
-                            .refine_to_default(eps.clone())
+                            .refine_to_default(*eps)
                             .expect("should succeed"),
                     )
                 })
@@ -93,7 +93,7 @@ fn bench_controls(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     (pi() + constant(1))
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("should succeed"),
                 )
             })
@@ -107,7 +107,7 @@ fn bench_controls(c: &mut Criterion) {
                 b.iter(|| {
                     black_box(
                         (sqrt_2() + cbrt_3())
-                            .refine_to_default(eps.clone())
+                            .refine_to_default(*eps)
                             .expect("should succeed"),
                     )
                 })

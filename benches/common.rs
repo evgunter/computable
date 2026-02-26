@@ -1,19 +1,17 @@
 #![allow(dead_code)]
 
-use num_bigint::{BigInt, BigUint};
-
-use computable::{Binary, Computable, UBinary};
+use computable::{Binary, Computable, XUsize};
 use criterion::BenchmarkId;
 
 /// Standard precision sweep: epsilon = 2^(-bits) for each value.
-const STANDARD_BITS: &[i64] = &[1, 4, 16, 64, 256];
+const STANDARD_BITS: &[usize] = &[1, 4, 16, 64, 256];
 
 /// Extended sweep, enabled by `BENCH_HIGH_PRECISION=1`.
-const EXTENDED_BITS: &[i64] = &[1, 4, 16, 64, 256, 1024, 2048, 4096, 8192];
+const EXTENDED_BITS: &[usize] = &[1, 4, 16, 64, 256, 1024, 2048, 4096, 8192];
 
 /// Returns the precision sweep to use. Set `BENCH_HIGH_PRECISION=1` to include
 /// higher precisions (1024+).
-pub fn precision_bits() -> &'static [i64] {
+pub fn precision_bits() -> &'static [usize] {
     if high_precision() {
         EXTENDED_BITS
     } else {
@@ -26,9 +24,9 @@ pub fn high_precision() -> bool {
     std::env::var("BENCH_HIGH_PRECISION").is_ok()
 }
 
-/// Create an epsilon of 2^(-bits).
-pub fn epsilon(bits: i64) -> UBinary {
-    UBinary::new(BigUint::from(1u32), -BigInt::from(bits))
+/// Create a tolerance exponent for 2^(-bits) precision.
+pub fn epsilon(bits: usize) -> XUsize {
+    XUsize::Finite(bits)
 }
 
 /// Create a `BenchmarkId` with a `precision-{bits}` parameter suffix.

@@ -812,33 +812,30 @@ pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::UBinary;
     use crate::computable::Computable;
-    use crate::test_utils::{
-        bin, interval_midpoint_computable, ubin, unwrap_finite, unwrap_finite_uxbinary, xbin,
-    };
+    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite, xbin};
 
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        epsilon: &UBinary,
+        tolerance_exp: &XUsize,
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
-        let width = unwrap_finite_uxbinary(bounds.width());
         let upper = unwrap_finite(&upper_xb);
 
         assert!(lower <= *expected && *expected <= upper);
-        assert!(width <= *epsilon);
+        assert!(bounds_width_leq(bounds, tolerance_exp));
     }
 
     #[test]
     fn sin_of_zero() {
         let zero = Computable::constant(bin(0, 0));
         let sin_zero = zero.sin();
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = sin_zero
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         // sin(0) = 0
@@ -852,9 +849,9 @@ mod tests {
         // We approximate it as 3217/2048 ~= 1.5708...
         let pi_over_2 = Computable::constant(bin(3217, -11));
         let sin_pi_2 = pi_over_2.sin();
-        let epsilon = ubin(1, -6);
+        let epsilon = XUsize::Finite(6);
         let bounds = sin_pi_2
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         // sin(pi/2) = 1
@@ -876,9 +873,9 @@ mod tests {
         // We approximate it as 6434/2048 ~= 3.1416...
         let pi_approx = Computable::constant(bin(6434, -11));
         let sin_pi = pi_approx.sin();
-        let epsilon = ubin(1, -6);
+        let epsilon = XUsize::Finite(6);
         let bounds = sin_pi
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         // sin(pi) ~= 0 (should be close to 0)
@@ -897,9 +894,9 @@ mod tests {
         // -pi/2 ~= -1.5707963...
         let neg_pi_over_2 = Computable::constant(bin(-3217, -11));
         let sin_neg_pi_2 = neg_pi_over_2.sin();
-        let epsilon = ubin(1, -6);
+        let epsilon = XUsize::Finite(6);
         let bounds = sin_neg_pi_2
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         // sin(-pi/2) = -1
@@ -937,9 +934,9 @@ mod tests {
         // For small x, sin(x) ~= x
         let small = Computable::constant(bin(1, -4)); // 1/16 = 0.0625
         let sin_small = small.sin();
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = sin_small
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         // sin(0.0625) ~= 0.0624593...
@@ -990,9 +987,9 @@ mod tests {
         let two = Computable::constant(bin(2, 0));
         let expr = sin_x.clone() * two; // 2 * sin(1)
 
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = expr
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         // 2 * sin(1) ~= 2 * 0.8414... ~= 1.6829...
@@ -1125,9 +1122,9 @@ mod tests {
         // This exercises the pi error propagation
         let x = Computable::constant(bin(100, 0)); // 100
         let sin_x = x.sin();
-        let epsilon = ubin(1, -4);
+        let epsilon = XUsize::Finite(4);
         let bounds = sin_x
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
@@ -1171,9 +1168,9 @@ mod tests {
         let pi_approx = Binary::new(pi_mid.mantissa().clone(), pi_mid.exponent() - BigInt::one());
 
         let sin_pi = Computable::constant(pi_approx).sin();
-        let epsilon = ubin(1, -10);
+        let epsilon = XUsize::Finite(10);
         let bounds = sin_pi
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
@@ -1197,16 +1194,14 @@ mod tests {
         // compute_sin_on_monotonic_interval and divide_by_factorial_directed directly.
         let one = Computable::constant(bin(1, 0));
         let sin_one = one.sin();
-        let epsilon = ubin(1, -512);
+        let epsilon = XUsize::Finite(512);
         // Need many Taylor terms for 512-bit accuracy; allow up to 1024 refinement steps.
         let bounds = sin_one
-            .refine_to::<1024>(epsilon.clone())
+            .refine_to::<1024>(epsilon)
             .expect("refine_to 512-bit precision should succeed");
 
-        let width = unwrap_finite_uxbinary(bounds.width());
-
-        // Width must be at most epsilon = 2^-512
-        assert!(width <= epsilon, "width {} should be <= 2^-512", width);
+        // Width must be at most 2^-512
+        assert!(bounds_width_leq(&bounds, &epsilon), "width should be <= 2^-512");
 
         // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
         let lower = unwrap_finite(bounds.small());
@@ -1236,9 +1231,9 @@ mod tests {
         // Correctness invariant for large inputs: 2^20 ≈ 1_048_576 (k ≈ 166_886).
         let large = Computable::constant(bin(1, 20)); // 2^20 = 1_048_576
         let sin_large = large.sin();
-        let epsilon = ubin(1, -4);
+        let epsilon = XUsize::Finite(4);
         let bounds = sin_large
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed for very large input");
 
         let lower = unwrap_finite(bounds.small());
@@ -1267,9 +1262,9 @@ mod tests {
         // Correctness invariant: 2^30 ≈ 1 billion, k ≈ 170 million
         let large = Computable::constant(bin(1, 30));
         let sin_large = large.sin();
-        let epsilon = ubin(1, -4);
+        let epsilon = XUsize::Finite(4);
         let bounds = sin_large
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed for 2^30 input");
 
         let lower = unwrap_finite(bounds.small());
@@ -1286,9 +1281,9 @@ mod tests {
         // Correctness invariant: large negative input -10000
         let x = Computable::constant(bin(-10000, 0));
         let sin_x = x.sin();
-        let epsilon = ubin(1, -4);
+        let epsilon = XUsize::Finite(4);
         let bounds = sin_x
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed for large negative input");
 
         let lower = unwrap_finite(bounds.small());
