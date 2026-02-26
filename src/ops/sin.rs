@@ -47,14 +47,24 @@ impl NodeOp for SinOp {
         sin_bounds(&input_bounds, &pi_bounds, &num_terms)
     }
 
-    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
-        // Leap to match input precision when possible
+        // Leap based on coordinator's precision target.
+        // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.
+        if precision_bits <= crate::MAX_COMPUTATION_BITS {
+            let needed_n = (precision_bits / 3).max(1);
+            let needed = BigInt::from(needed_n);
+            if needed > *num_terms {
+                *num_terms = needed;
+            }
+        }
+
+        // Leap to match input precision when possible (complementary: handles
+        // cases where inner bounds are still wide).
         if let Ok(input_bounds) = self.inner.get_bounds()
             && let Some(width_bits) = estimate_precision_bits(&input_bounds)
         {
-            // n*3 bits ~ conservative Taylor accuracy estimate
             let needed_n = (width_bits / 3).max(1);
             let needed = BigInt::from(needed_n);
             if needed > *num_terms {
