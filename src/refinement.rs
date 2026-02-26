@@ -55,7 +55,7 @@ pub enum XUsize {
 /// Command sent to a refiner thread.
 #[derive(Clone, Copy)]
 pub enum RefineCommand {
-    Step,
+    Step { precision_bits: usize },
     Stop,
 }
 
@@ -193,6 +193,10 @@ impl RefinementGraph {
 
                     // Compute demand budget for this round.
                     let demand_budget = compute_demand_budget(tolerance_exp, active_count);
+                    let precision_bits = match demand_budget {
+                        XUsize::Finite(n) => n,
+                        XUsize::Inf => usize::MAX,
+                    };
 
                     // Send Step to active refiners ABOVE demand budget only.
                     let mut expected = 0_usize;
@@ -200,15 +204,13 @@ impl RefinementGraph {
                         if !active[i] {
                             continue;
                         }
-                        let skip = demand_budget.as_ref().is_some_and(|budget| {
-                            self.refiners[i]
-                                .cached_bounds()
-                                .is_some_and(|b| bounds_width_leq(&b, budget))
-                        });
+                        let skip = self.refiners[i]
+                            .cached_bounds()
+                            .is_some_and(|b| bounds_width_leq(&b, &demand_budget));
                         if !skip {
                             refiner
                                 .sender
-                                .send(RefineCommand::Step)
+                                .send(RefineCommand::Step { precision_bits })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             expected = expected.checked_add(1).unwrap_or_else(|| {
                                 unreachable!("expected <= refiners.len(), cannot overflow usize")
@@ -247,7 +249,7 @@ impl RefinementGraph {
                             if !dominated {
                                 refiner
                                     .sender
-                                    .send(RefineCommand::Step)
+                                    .send(RefineCommand::Step { precision_bits })
                                     .map_err(|_send_err| {
                                         ComputableError::RefinementChannelClosed
                                     })?;
@@ -364,7 +366,7 @@ fn refiner_loop(
 ) {
     while !stop.is_stopped() {
         match commands.recv() {
-            Ok(RefineCommand::Step) => match node.refine_step(usize::MAX) {
+            Ok(RefineCommand::Step { precision_bits }) => match node.refine_step(precision_bits) {
                 Ok(true) => {
                     let bounds = match node.compute_bounds() {
                         Ok(b) => b,
@@ -437,12 +439,13 @@ fn refiner_loop(
 
 /// Demand budget = epsilon / 2^ceil(log2(N)).
 /// A refiner with width <= budget is "precise enough" to skip this round.
-fn compute_demand_budget(tolerance_exp: &XUsize, num_active: usize) -> Option<XUsize> {
-    if num_active == 0 {
-        return None;
-    }
+///
+/// Precondition: `num_active >= 1` (the coordinator returns an exhaustion error
+/// before dispatching when no active refiners remain).
+fn compute_demand_budget(tolerance_exp: &XUsize, num_active: usize) -> XUsize {
+    debug_assert!(num_active >= 1, "compute_demand_budget called with 0 active refiners");
     match tolerance_exp {
-        XUsize::Inf => Some(XUsize::Inf),
+        XUsize::Inf => XUsize::Inf,
         XUsize::Finite(exp) => {
             // ceil(log2(N)) = BITS - leading_zeros(N), which for N>=1 gives the
             // number of bits needed to represent N, i.e. the shift amount that
@@ -454,7 +457,7 @@ fn compute_demand_budget(tolerance_exp: &XUsize, num_active: usize) -> Option<XU
             let shift = shift_u32 as usize;
             let tolerance = *exp;
             let budget = crate::sane_arithmetic!(tolerance, shift; tolerance + shift);
-            Some(XUsize::Finite(budget))
+            XUsize::Finite(budget)
         }
     }
 }
