@@ -16,19 +16,11 @@ use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::sane;
 
-/// Initial precision bits for the Newton-Raphson seed reciprocal.
+/// Minimum seed precision bits for Newton-Raphson initialization.
 ///
-/// A higher seed precision means fewer N-R doublings are needed to reach the
-/// target precision, which reduces the number of refinement rounds (each round
-/// involves thread coordination and bounds propagation across the node graph).
-/// The seed is computed via integer division, which is cheap for typical
-/// denominator sizes.
-///
-/// TODO: Ideally the seed precision would be derived from the target epsilon
-/// rather than using a fixed constant, but the refiner protocol currently only
-/// sends Step/Stop commands without a precision target. See the
-/// `epsilon-in-refine-step` TODO in TODOS.md.
-pub const INV_INITIAL_PRECISION_BITS: i64 = 64;
+/// Even when the coordinator requests low precision, we use at least this many
+/// bits for the seed to ensure N-R converges quickly for typical use cases.
+const MIN_SEED_PRECISION_BITS: usize = 64;
 
 /// N-R approximation of `1/denom`: maintains `lower <= 1/denom <= upper`.
 ///
@@ -110,13 +102,20 @@ impl NodeOp for InvOp {
         }
     }
 
-    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.newton_state.write();
 
         match &mut *state {
             None => {
-                *state = try_initialize(&input_bounds)?;
+                // Cap seed precision: usize::MAX (from Inf targets) would exhaust
+                // memory. Use MIN_SEED_PRECISION_BITS as fallback for unreasonable values.
+                let seed_precision = if precision_bits <= crate::MAX_COMPUTATION_BITS {
+                    precision_bits.max(MIN_SEED_PRECISION_BITS)
+                } else {
+                    MIN_SEED_PRECISION_BITS
+                };
+                *state = try_initialize(&input_bounds, seed_precision)?;
                 Ok(true)
             }
             Some(s) => {
@@ -124,6 +123,9 @@ impl NodeOp for InvOp {
                 update_denominators(s, &input_bounds)?;
 
                 // One N-R step on each endpoint.
+                // TODO: With a high-precision seed, the N-R doubling may overshoot
+                // significantly. Consider capping at precision_bits rather than
+                // unconditionally doubling.
                 newton_step(&mut s.lo, &s.abs_upper);
                 newton_step(&mut s.hi, &s.abs_lower);
                 Ok(true)
@@ -142,7 +144,13 @@ impl NodeOp for InvOp {
 
 /// Try to initialize Newton state from the current inner bounds.
 /// Returns `Ok(None)` if bounds span zero or are infinite (caller should retry later).
-fn try_initialize(input_bounds: &Bounds) -> Result<Option<NewtonState>, ComputableError> {
+///
+/// `seed_precision` controls the number of bits used for the initial reciprocal
+/// seed. A higher value means fewer N-R doublings to reach the target precision.
+fn try_initialize(
+    input_bounds: &Bounds,
+    seed_precision: usize,
+) -> Result<Option<NewtonState>, ComputableError> {
     let lower = input_bounds.small();
     let upper = input_bounds.large();
     let zero = XBinary::zero();
@@ -162,8 +170,8 @@ fn try_initialize(input_bounds: &Bounds) -> Result<Option<NewtonState>, Computab
         (lower_finite, upper_finite)
     };
 
-    let lo = seed_reciprocal(&abs_upper)?;
-    let hi = seed_reciprocal(&abs_lower)?;
+    let lo = seed_reciprocal(&abs_upper, seed_precision)?;
+    let hi = seed_reciprocal(&abs_lower, seed_precision)?;
 
     Ok(Some(NewtonState {
         lo,
@@ -174,9 +182,12 @@ fn try_initialize(input_bounds: &Bounds) -> Result<Option<NewtonState>, Computab
     }))
 }
 
-/// Compute a low-precision seed reciprocal for N-R initialization.
-fn seed_reciprocal(denom: &Binary) -> Result<ReciprocalApprox, ComputableError> {
-    let precision = BigInt::from(INV_INITIAL_PRECISION_BITS);
+/// Compute a seed reciprocal for N-R initialization at the given precision.
+fn seed_reciprocal(
+    denom: &Binary,
+    seed_precision: usize,
+) -> Result<ReciprocalApprox, ComputableError> {
+    let precision = BigInt::from(seed_precision);
     let xb_denom = XBinary::Finite(denom.clone());
 
     let lower_xb =
@@ -193,11 +204,10 @@ fn seed_reciprocal(denom: &Binary) -> Result<ReciprocalApprox, ComputableError> 
         XBinary::NegInf | XBinary::PosInf => Binary::zero(),
     };
 
-    #[allow(clippy::as_conversions)] // INV_INITIAL_PRECISION_BITS is a small positive constant
     Ok(ReciprocalApprox {
         lower,
         upper,
-        precision: INV_INITIAL_PRECISION_BITS as usize,
+        precision: seed_precision,
     })
 }
 
