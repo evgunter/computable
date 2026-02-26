@@ -239,12 +239,9 @@ impl RefinementGraph {
                                 continue;
                             }
                             let dominated = max_width.as_ref().is_some_and(|max_w| {
-                                self.refiners[i].cached_bounds().is_some_and(|b| {
-                                    is_width_dominated(
-                                        b.width(),
-                                        max_w,
-                                    )
-                                })
+                                self.refiners[i]
+                                    .cached_bounds()
+                                    .is_some_and(|b| is_width_dominated(b.width(), max_w))
                             });
                             if !dominated {
                                 refiner
@@ -253,12 +250,11 @@ impl RefinementGraph {
                                     .map_err(|_send_err| {
                                         ComputableError::RefinementChannelClosed
                                     })?;
-                                expected =
-                                    expected.checked_add(1).unwrap_or_else(|| {
-                                        unreachable!(
+                                expected = expected.checked_add(1).unwrap_or_else(|| {
+                                    unreachable!(
                                         "expected <= refiners.len(), cannot overflow usize"
                                     )
-                                    });
+                                });
                             }
                         }
                     }
@@ -443,7 +439,10 @@ fn refiner_loop(
 /// Precondition: `num_active >= 1` (the coordinator returns an exhaustion error
 /// before dispatching when no active refiners remain).
 fn compute_demand_budget(tolerance_exp: &XUsize, num_active: usize) -> XUsize {
-    debug_assert!(num_active >= 1, "compute_demand_budget called with 0 active refiners");
+    debug_assert!(
+        num_active >= 1,
+        "compute_demand_budget called with 0 active refiners"
+    );
     match tolerance_exp {
         XUsize::Inf => XUsize::Inf,
         XUsize::Finite(exp) => {
@@ -493,9 +492,7 @@ pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
         UXBinary::Inf => false,
         UXBinary::Finite(width) => match tolerance_exp {
             XUsize::Inf => width.mantissa().is_zero(),
-            XUsize::Finite(exp) => {
-                *width <= UBinary::new(BigUint::from(1u32), -BigInt::from(*exp))
-            }
+            XUsize::Finite(exp) => *width <= UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)),
         },
     }
 }

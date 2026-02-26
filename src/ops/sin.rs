@@ -1211,7 +1211,10 @@ mod tests {
             .expect("refine_to 512-bit precision should succeed");
 
         // Width must be at most 2^-512
-        assert!(bounds_width_leq(&bounds, &epsilon), "width should be <= 2^-512");
+        assert!(
+            bounds_width_leq(&bounds, &epsilon),
+            "width should be <= 2^-512"
+        );
 
         // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
         let lower = unwrap_finite(bounds.small());

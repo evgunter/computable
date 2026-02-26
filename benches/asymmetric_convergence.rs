@@ -75,19 +75,15 @@ fn bench_controls(c: &mut Criterion) {
         let eps = epsilon(bits);
 
         // Single-refiner baselines
-        group.bench_with_input(
-            bench_id_named("sqrt2+const3", bits),
-            &eps,
-            |b, eps| {
-                b.iter(|| {
-                    black_box(
-                        (sqrt_2() + constant(3))
-                            .refine_to_default(*eps)
-                            .expect("should succeed"),
-                    )
-                })
-            },
-        );
+        group.bench_with_input(bench_id_named("sqrt2+const3", bits), &eps, |b, eps| {
+            b.iter(|| {
+                black_box(
+                    (sqrt_2() + constant(3))
+                        .refine_to_default(*eps)
+                        .expect("should succeed"),
+                )
+            })
+        });
 
         group.bench_with_input(bench_id_named("pi+const1", bits), &eps, |b, eps| {
             b.iter(|| {
@@ -100,19 +96,15 @@ fn bench_controls(c: &mut Criterion) {
         });
 
         // Symmetric convergence control
-        group.bench_with_input(
-            bench_id_named("sqrt2+cbrt3", bits),
-            &eps,
-            |b, eps| {
-                b.iter(|| {
-                    black_box(
-                        (sqrt_2() + cbrt_3())
-                            .refine_to_default(*eps)
-                            .expect("should succeed"),
-                    )
-                })
-            },
-        );
+        group.bench_with_input(bench_id_named("sqrt2+cbrt3", bits), &eps, |b, eps| {
+            b.iter(|| {
+                black_box(
+                    (sqrt_2() + cbrt_3())
+                        .refine_to_default(*eps)
+                        .expect("should succeed"),
+                )
+            })
+        });
     }
 
     group.finish();
