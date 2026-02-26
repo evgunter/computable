@@ -47,7 +47,7 @@ impl NodeOp for SinOp {
         sin_bounds(&input_bounds, &pi_bounds, &num_terms)
     }
 
-    fn refine_step(&self) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
         // Leap to match input precision when possible

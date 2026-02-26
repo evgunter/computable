@@ -110,7 +110,7 @@ impl NodeOp for InvOp {
         }
     }
 
-    fn refine_step(&self) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.newton_state.write();
 

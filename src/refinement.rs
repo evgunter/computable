@@ -364,7 +364,7 @@ fn refiner_loop(
 ) {
     while !stop.is_stopped() {
         match commands.recv() {
-            Ok(RefineCommand::Step) => match node.refine_step() {
+            Ok(RefineCommand::Step) => match node.refine_step(usize::MAX) {
                 Ok(true) => {
                     let bounds = match node.compute_bounds() {
                         Ok(b) => b,

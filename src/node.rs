@@ -126,7 +126,7 @@ impl<T: BaseNode + ?Sized> BoundsAccess for T {
 // TODO: ensure it is possible to create user-defined composed nodes.
 pub trait NodeOp: Send + Sync {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError>;
-    fn refine_step(&self) -> Result<bool, ComputableError>;
+    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError>;
     fn children(&self) -> Vec<Arc<Node>>;
     fn is_refiner(&self) -> bool;
 }
@@ -220,8 +220,8 @@ impl Node {
     }
 
     /// Performs one refinement step. Returns whether refinement was applied.
-    pub fn refine_step(&self) -> Result<bool, ComputableError> {
-        self.op.refine_step()
+    pub fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
+        self.op.refine_step(precision_bits)
     }
 
     pub fn children(&self) -> Vec<Arc<Node>> {

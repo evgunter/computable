@@ -19,7 +19,7 @@ impl NodeOp for NegOp {
         Ok(Bounds::new_checked(upper, lower)?)
     }
 
-    fn refine_step(&self) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
         Ok(false)
     }
 
@@ -47,7 +47,7 @@ impl NodeOp for AddOp {
         Ok(Bounds::new_checked(lower, upper)?)
     }
 
-    fn refine_step(&self) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
         Ok(false)
     }
 
@@ -90,7 +90,7 @@ impl NodeOp for MulOp {
         Ok(Bounds::new_checked(min, max)?)
     }
 
-    fn refine_step(&self) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
         Ok(false)
     }
 

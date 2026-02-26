@@ -62,7 +62,7 @@ impl NodeOp for PowOp {
         )
     }
 
-    fn refine_step(&self) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
         // This is a passive combinator - it doesn't refine, just propagates bounds
         Ok(false)
     }

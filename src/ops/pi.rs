@@ -134,7 +134,7 @@ impl NodeOp for PiOp {
         normalize_finite_to_bounds(&finite)
     }
 
-    fn refine_step(&self) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
         // Double the number of terms for faster convergence (at least 1)
         *num_terms = (*num_terms).saturating_mul(2).max(1_usize);
