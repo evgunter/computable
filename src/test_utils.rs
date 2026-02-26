@@ -71,6 +71,12 @@ pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
 use crate::binary::{Bounds, FiniteBounds};
 use crate::computable::Computable;
 
+/// Creates a Binary representing 2^(-n), for test assertions that need
+/// epsilon as a Binary value for arithmetic.
+pub fn epsilon_as_binary(n: usize) -> Binary {
+    Binary::new(BigInt::from(1), BigInt::from(-(n as i64)))
+}
+
 /// Computes the midpoint between two finite XBinary values.
 ///
 /// # Panics

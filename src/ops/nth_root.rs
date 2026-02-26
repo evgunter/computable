@@ -367,11 +367,9 @@ fn initialize_nth_root_bisection_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::UBinary;
     use crate::computable::Computable;
-    use crate::test_utils::{
-        bin, interval_noop_computable, ubin, unwrap_finite, unwrap_finite_uxbinary,
-    };
+    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
     /// Helper to create NonZeroU32 from a literal in tests.
     fn nz(n: u32) -> NonZeroU32 {
@@ -381,11 +379,10 @@ mod tests {
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        epsilon: &UBinary,
+        tolerance_exp: &XUsize,
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
-        let width = unwrap_finite_uxbinary(bounds.width());
         let upper = unwrap_finite(&upper_xb);
 
         assert!(
@@ -396,10 +393,8 @@ mod tests {
             upper
         );
         assert!(
-            width <= *epsilon,
-            "Width {} should be <= epsilon {}",
-            width,
-            epsilon
+            bounds_width_leq(bounds, tolerance_exp),
+            "Bounds width should be <= tolerance",
         );
     }
 
@@ -408,9 +403,9 @@ mod tests {
         // sqrt(4) = 2
         let four = Computable::constant(bin(4, 0));
         let sqrt_four = four.nth_root(nz(2));
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = sqrt_four
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let expected = bin(2, 0);
@@ -422,9 +417,9 @@ mod tests {
         // sqrt(2) ~= 1.414...
         let two = Computable::constant(bin(2, 0));
         let sqrt_two = two.nth_root(nz(2));
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = sqrt_two
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let expected_f64 = 2.0_f64.sqrt();
@@ -440,9 +435,9 @@ mod tests {
         // cbrt(8) = 2
         let eight = Computable::constant(bin(8, 0));
         let cbrt_eight = eight.nth_root(nz(3));
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = cbrt_eight
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let expected = bin(2, 0);
@@ -454,9 +449,9 @@ mod tests {
         // cbrt(-8) = -2
         let neg_eight = Computable::constant(bin(-8, 0));
         let cbrt_neg_eight = neg_eight.nth_root(nz(3));
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = cbrt_neg_eight
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let expected = bin(-2, 0);
@@ -468,9 +463,9 @@ mod tests {
         // 16^(1/4) = 2
         let sixteen = Computable::constant(bin(16, 0));
         let fourth_root = sixteen.nth_root(nz(4));
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = fourth_root
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let expected = bin(2, 0);
@@ -482,9 +477,9 @@ mod tests {
         // sqrt(0.5) ~= 0.707...
         let half = Computable::constant(bin(1, -1));
         let sqrt_half = half.nth_root(nz(2));
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = sqrt_half
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let expected_f64 = 0.5_f64.sqrt();
@@ -502,9 +497,9 @@ mod tests {
         let cbrt_8 = Computable::constant(bin(8, 0)).nth_root(nz(3));
         let sum = sqrt_2 + cbrt_8;
 
-        let epsilon = ubin(1, -8);
+        let epsilon = XUsize::Finite(8);
         let bounds = sum
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
         let expected_f64 = 2.0_f64.sqrt() + 2.0;

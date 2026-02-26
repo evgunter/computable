@@ -15,7 +15,7 @@ fn bench_pi_refinement(c: &mut Criterion) {
 
         if verbose() {
             let bounds = pi()
-                .refine_to_default(eps.clone())
+                .refine_to_default(eps)
                 .expect("pi refinement should succeed");
             eprintln!("[pi/refinement/{bits}] width: {}", bounds.width());
         }
@@ -23,7 +23,7 @@ fn bench_pi_refinement(c: &mut Criterion) {
         group.bench_with_input(bench_id(bits), &eps, |b, eps| {
             b.iter(|| {
                 black_box(
-                    pi().refine_to_default(eps.clone())
+                    pi().refine_to_default(*eps)
                         .expect("pi refinement should succeed"),
                 )
             })
@@ -42,18 +42,16 @@ fn bench_pi_bounds_at_precision(c: &mut Criterion) {
     group.sample_size(10);
 
     for &bits in precision_bits() {
-        let bits_usize = bits as usize;
-
         if verbose() {
-            let (lower, upper) = pi_bounds_at_precision(bits_usize);
+            let (lower, upper) = pi_bounds_at_precision(bits);
             eprintln!(
                 "[pi/bounds_at_precision/{bits}] width: {}",
                 upper.sub(&lower)
             );
         }
 
-        group.bench_with_input(bench_id(bits), &bits_usize, |b, &bits_usize| {
-            b.iter(|| black_box(pi_bounds_at_precision(bits_usize)))
+        group.bench_with_input(bench_id(bits), &bits, |b, &bits| {
+            b.iter(|| black_box(pi_bounds_at_precision(bits)))
         });
     }
 
@@ -72,7 +70,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
                 let two = Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)));
                 black_box(
                     (two * pi())
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("2pi should succeed"),
                 )
             })
@@ -83,7 +81,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
                 let half = Computable::constant(Binary::new(BigInt::from(1), BigInt::from(-1)));
                 black_box(
                     (half * pi())
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("pi/2 should succeed"),
                 )
             })
@@ -93,7 +91,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     (pi() * pi())
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("pi^2 should succeed"),
                 )
             })
@@ -103,7 +101,7 @@ fn bench_pi_arithmetic(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     pi().inv()
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("1/pi should succeed"),
                 )
             })
@@ -136,7 +134,7 @@ fn bench_sin_pi(c: &mut Criterion) {
                         };
                         black_box(
                             n_pi.sin()
-                                .refine_to_default(eps.clone())
+                                .refine_to_default(*eps)
                                 .expect("sin(n*pi) should succeed"),
                         )
                     })

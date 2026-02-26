@@ -11,11 +11,11 @@ use num_bigint::BigInt;
 use num_traits::One;
 
 use crate::binary::Bounds;
-use crate::binary::{Binary, UBinary, XBinary};
+use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
-use crate::refinement::{RefinementGraph, bounds_width_leq};
+use crate::refinement::{RefinementGraph, XUsize, bounds_width_leq};
 
 use parking_lot::RwLock;
 
@@ -64,28 +64,28 @@ impl Computable {
         self.node.get_bounds()
     }
 
-    /// Refines this computable until the bounds width is at most epsilon.
+    /// Refines this computable until the bounds width is at most 2^(-tolerance_exp).
     ///
     /// # Arguments
-    /// * `epsilon` - Maximum width for the returned bounds. May be zero to request
-    ///   exact bounds (width = 0).
+    /// * `tolerance_exp` - Tolerance exponent. `Finite(n)` requests width ≤ 2^(-n).
+    ///   `Inf` requests exact bounds (width = 0).
     ///
     /// # Type Parameters
     /// * `MAX_REFINEMENT_ITERATIONS` - Maximum number of refinement iterations
     ///
     /// # Warning
-    /// Setting `epsilon = 0` will only succeed for values that can be represented
-    /// exactly in binary (e.g., integers, dyadic rationals like 1/2 or 3/4).
+    /// Using `XUsize::Inf` (epsilon = 0) will only succeed for values that can be
+    /// represented exactly in binary (e.g., integers, dyadic rationals like 1/2 or 3/4).
     /// For values that cannot be exactly represented (e.g., 1/3, sqrt(2), pi),
     /// refinement will never achieve zero width and will return
     /// [`ComputableError::MaxRefinementIterations`] after exhausting the iteration limit.
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         &self,
-        epsilon: UBinary,
+        tolerance_exp: XUsize,
     ) -> Result<Bounds, ComputableError> {
         loop {
             let bounds = self.node.get_bounds()?;
-            if bounds_width_leq(&bounds, &epsilon) {
+            if bounds_width_leq(&bounds, &tolerance_exp) {
                 return Ok(bounds);
             }
 
@@ -95,7 +95,7 @@ impl Computable {
                 drop(state_guard);
 
                 let graph = RefinementGraph::new(Arc::clone(&self.node))?;
-                let result = graph.refine_to::<MAX_REFINEMENT_ITERATIONS>(&epsilon);
+                let result = graph.refine_to::<MAX_REFINEMENT_ITERATIONS>(&tolerance_exp);
 
                 let mut completion_guard = self.node.refinement.state.lock();
                 completion_guard.active = false;
@@ -114,8 +114,8 @@ impl Computable {
     }
 
     /// Refines this computable using the default maximum iterations.
-    pub fn refine_to_default(&self, epsilon: UBinary) -> Result<Bounds, ComputableError> {
-        self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(epsilon)
+    pub fn refine_to_default(&self, tolerance_exp: XUsize) -> Result<Bounds, ComputableError> {
+        self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(tolerance_exp)
     }
 
     /// Returns the multiplicative inverse of this computable.
@@ -299,7 +299,8 @@ impl std::ops::Div for Computable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{bin, ubin, unwrap_finite};
+    use crate::refinement::XUsize;
+    use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
         Computable::constant(bin(value_int as i64, 0))
@@ -324,9 +325,9 @@ mod tests {
         let sqrt2 = sqrt_computable(2);
         let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
 
-        let epsilon = ubin(1, -12);
+        let tolerance_exp = XUsize::Finite(12);
         let bounds = expr
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
@@ -336,7 +337,7 @@ mod tests {
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
-        let eps_binary = epsilon.to_binary();
+        let eps_binary = epsilon_as_binary(12);
 
         let lower_plus = lower.add(&eps_binary);
         let upper_minus = upper.sub(&eps_binary);
@@ -350,9 +351,9 @@ mod tests {
         let shared = sqrt_computable(2);
         let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
 
-        let epsilon = ubin(1, -12);
+        let tolerance_exp = XUsize::Finite(12);
         let bounds = expr
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
@@ -362,7 +363,7 @@ mod tests {
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
-        let eps_binary = epsilon.to_binary();
+        let eps_binary = epsilon_as_binary(12);
 
         let lower_plus = lower.add(&eps_binary);
         let upper_minus = upper.sub(&eps_binary);

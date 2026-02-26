@@ -31,7 +31,7 @@ fn bench_summation(c: &mut Criterion) {
             terms.push(Computable::constant(Binary::from_f64(base).unwrap()));
             terms.extend(computable_inputs.iter().cloned());
             let bounds = balanced_sum(terms)
-                .refine_to_default(eps.clone())
+                .refine_to_default(eps)
                 .expect("refine_to should succeed");
             eprintln!("[summation/{bits}] width: {}", bounds.width());
         }
@@ -43,7 +43,7 @@ fn bench_summation(c: &mut Criterion) {
                 terms.extend(computable_inputs.iter().cloned());
                 black_box(
                     balanced_sum(terms)
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("refine_to should succeed"),
                 )
             })

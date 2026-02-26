@@ -364,9 +364,8 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
 #[cfg(test)]
 mod tests {
     use crate::binary::{Bounds, XBinary};
-    use crate::test_utils::{
-        bin, interval_midpoint_computable, ubin, unwrap_finite, unwrap_finite_uxbinary,
-    };
+    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
 
     #[test]
     fn inv_allows_infinite_bounds() {
@@ -382,14 +381,13 @@ mod tests {
         // should produce bounds that bracket 1/3.
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
-        let epsilon = ubin(1, -8);
+        let tolerance_exp = XUsize::Finite(8);
         let bounds = inv
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-        let width = unwrap_finite_uxbinary(bounds.width());
         let three = bin(3, 0);
         let one = bin(1, 0);
 
@@ -404,6 +402,9 @@ mod tests {
             "upper bound {upper} is below 1/3: upper * 3 = {}",
             upper.mul(&three)
         );
-        assert!(width <= epsilon, "width {width} exceeds epsilon {epsilon}");
+        assert!(
+            bounds_width_leq(&bounds, &tolerance_exp),
+            "bounds width exceeds tolerance"
+        );
     }
 }

@@ -18,9 +18,9 @@ use std::num::NonZeroU32;
 use std::time::Instant;
 
 use computable::{
-    Binary, Bounds, Computable, FiniteBounds, UBinary, XBinary, pi, pi_bounds_at_precision,
+    Binary, Bounds, Computable, FiniteBounds, XBinary, XUsize, pi, pi_bounds_at_precision,
 };
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -213,7 +213,7 @@ fn integer_roots_analysis(rng: &mut StdRng) {
     }
     let float_duration = float_start.elapsed();
 
-    let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(0));
+    let epsilon = XUsize::Finite(0);
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
@@ -256,7 +256,7 @@ fn integer_roots_analysis(rng: &mut StdRng) {
 
 fn inv_analysis(rng: &mut StdRng) {
     const SAMPLE_COUNT: usize = 100;
-    const PRECISION_BITS: i64 = 256;
+    const PRECISION_BITS: usize = 256;
 
     let inputs: Vec<f64> = (0..SAMPLE_COUNT)
         .map(|_| rng.gen_range(0.1..100.0))
@@ -266,7 +266,7 @@ fn inv_analysis(rng: &mut StdRng) {
     let float_sum: f64 = inputs.iter().map(|x| 1.0 / x).sum();
     let float_duration = float_start.elapsed();
 
-    let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-PRECISION_BITS));
+    let epsilon = XUsize::Finite(PRECISION_BITS);
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
@@ -306,7 +306,7 @@ fn inv_analysis(rng: &mut StdRng) {
 
 fn sin_analysis(rng: &mut StdRng) {
     const SAMPLE_COUNT: usize = 100;
-    const PRECISION_BITS: i64 = 128;
+    const PRECISION_BITS: usize = 128;
 
     let inputs: Vec<f64> = (0..SAMPLE_COUNT)
         .map(|i| {
@@ -324,7 +324,7 @@ fn sin_analysis(rng: &mut StdRng) {
     let float_sum: f64 = inputs.iter().map(|x| x.sin()).sum();
     let float_duration = float_start.elapsed();
 
-    let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-PRECISION_BITS));
+    let epsilon = XUsize::Finite(PRECISION_BITS);
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
@@ -379,7 +379,7 @@ fn pi_analysis() {
     let pi_f64 = Binary::from_f64(std::f64::consts::PI).unwrap();
 
     for &bits in precision_bits {
-        let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(bits as i64)));
+        let epsilon = XUsize::Finite(bits);
 
         let start = Instant::now();
         let bounds = pi()
@@ -418,7 +418,7 @@ fn pi_analysis() {
     }
 
     // Arithmetic with pi
-    let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-64));
+    let epsilon = XUsize::Finite(64);
 
     println!();
     println!("== Pi Arithmetic ==");
@@ -448,7 +448,7 @@ fn pi_analysis() {
         let start = Instant::now();
         let expr = build_expr();
         let bounds = expr
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("pi arithmetic should succeed");
         let duration = start.elapsed();
         let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
@@ -459,7 +459,7 @@ fn pi_analysis() {
     }
 
     // sin(n*pi) — should be ~0
-    let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-32));
+    let epsilon = XUsize::Finite(32);
 
     println!();
     println!("== sin(n * pi) — should contain 0 ==");
@@ -474,7 +474,7 @@ fn pi_analysis() {
         };
         let bounds = n_pi
             .sin()
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(epsilon)
             .expect("sin(n*pi) should succeed");
         let duration = start.elapsed();
 
@@ -492,8 +492,8 @@ fn pi_analysis() {
     println!("== High Precision Pi ==");
     println!();
 
-    for &bits in &[2048u64, 4096, 8192] {
-        let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-(bits as i64)));
+    for &bits in &[2048usize, 4096, 8192] {
+        let epsilon = XUsize::Finite(bits);
         let start = Instant::now();
         let bounds = pi()
             .refine_to_default(epsilon)

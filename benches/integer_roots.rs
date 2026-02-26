@@ -40,7 +40,7 @@ fn bench_integer_roots(c: &mut Criterion) {
 
         if verbose() {
             let bounds = balanced_sum(build_terms(&inputs))
-                .refine_to_default(eps.clone())
+                .refine_to_default(eps)
                 .expect("refine_to should succeed");
             eprintln!("[integer_roots/{bits}] width: {}", bounds.width());
         }
@@ -49,7 +49,7 @@ fn bench_integer_roots(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     balanced_sum(build_terms(&inputs))
-                        .refine_to_default(eps.clone())
+                        .refine_to_default(*eps)
                         .expect("refine_to should succeed"),
                 )
             })

@@ -83,12 +83,10 @@ fn precision_bits_for_num_terms(num_terms: usize) -> usize {
 /// # Example
 ///
 /// ```
-/// use computable::{pi, UBinary};
-/// use num_bigint::{BigInt, BigUint};
+/// use computable::{pi, XUsize};
 ///
 /// let pi_val = pi();
-/// let epsilon = UBinary::new(BigUint::from(1u32), BigInt::from(-50));
-/// let bounds = pi_val.refine_to_default(epsilon)?;
+/// let bounds = pi_val.refine_to_default(XUsize::Finite(50))?;
 /// // bounds now contains pi to ~50 bits of precision
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
@@ -322,15 +320,15 @@ pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::{UBinary, XBinary};
-    use num_bigint::BigUint;
+    use crate::binary::XBinary;
+    use crate::refinement::XUsize;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
     }
 
-    fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-        UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
+    fn epsilon_as_binary(n: usize) -> Binary {
+        Binary::new(BigInt::from(1), BigInt::from(-(n as i64)))
     }
 
     fn unwrap_finite(x: &XBinary) -> Binary {
@@ -398,9 +396,9 @@ mod tests {
     #[test]
     fn pi_computable_refines() {
         let pi_comp = pi();
-        let epsilon = ubin(1, -20); // 2^-20 precision
+        let tolerance_exp = XUsize::Finite(20); // 2^-20 precision
         let bounds = pi_comp
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(tolerance_exp)
             .expect("refine should succeed");
 
         let lower = unwrap_finite(bounds.small());
@@ -423,7 +421,7 @@ mod tests {
 
         // Check width is within epsilon
         let width = upper.sub(&lower);
-        let eps_binary = epsilon.to_binary();
+        let eps_binary = epsilon_as_binary(20);
         assert!(width <= eps_binary, "width should be <= epsilon");
     }
 
@@ -462,16 +460,16 @@ mod tests {
     #[test]
     fn pi_computable_refines_beyond_128_bits() {
         let pi_comp = pi();
-        let epsilon = ubin(1, -128); // 2^-128 precision
+        let tolerance_exp = XUsize::Finite(128); // 2^-128 precision
         let bounds = pi_comp
-            .refine_to_default(epsilon.clone())
+            .refine_to_default(tolerance_exp)
             .expect("refine to 2^-128 should succeed");
 
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 
         let width = upper.sub(&lower);
-        let eps_binary = epsilon.to_binary();
+        let eps_binary = epsilon_as_binary(128);
         assert!(
             width <= eps_binary,
             "width should be <= 2^-128, got width = {}",
