@@ -83,11 +83,7 @@ fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> 
 /// - If [lower, upper] is entirely non-negative: bounds are [lower^n, upper^n]
 /// - If [lower, upper] is entirely non-positive: bounds are [upper^n, lower^n]
 /// - If [lower, upper] spans zero: bounds are [0, max(|lower|^n, |upper|^n)]
-fn compute_even_power_bounds(
-    lower: &XBinary,
-    upper: &XBinary,
-    n: NonZeroU32,
-) -> Bounds {
+fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Bounds {
     let lower_non_negative = !is_negative(lower);
     let upper_non_positive = !is_positive(upper);
 
