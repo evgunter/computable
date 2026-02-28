@@ -2,13 +2,6 @@
 
 ## Tier 2: Hard (Unblocked, but complex correctness issues)
 
-### <a id="pow-type-bounds"></a>pow-type-bounds: Type system for invalid bounds in pow
-**File:** `src/ops/pow.rs:53`
-```rust
-// TODO: Investigate if the type system can constrain this so that invalid bounds
-```
-Type-level prevention of invalid states.
-
 ### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
 **File:** `src/refinement.rs:15`
 ```rust
