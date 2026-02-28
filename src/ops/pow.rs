@@ -44,22 +44,13 @@ impl NodeOp for PowOp {
 
         let is_even = self.exponent.get().is_multiple_of(2);
 
-        let (result_lower, result_upper) = if is_even {
+        let bounds = if is_even {
             compute_even_power_bounds(lower, upper, self.exponent)
         } else {
             compute_odd_power_bounds(lower, upper, self.exponent)
         };
 
-        // TODO: Investigate if the type system can constrain this so that invalid bounds
-        // ordering is unrepresentable. This case should be mathematically impossible since
-        // we carefully compute lower/upper based on monotonicity properties of power functions.
-        Ok(
-            Bounds::new_checked(result_lower, result_upper).unwrap_or_else(|_| {
-                unreachable!(
-                    "pow bounds ordering is invalid despite monotonicity-based computation"
-                )
-            }),
-        )
+        Ok(bounds)
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
@@ -80,10 +71,10 @@ impl NodeOp for PowOp {
 ///
 /// Since x^n is monotonically increasing for odd n, the output bounds
 /// are simply [lower^n, upper^n].
-fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> (XBinary, XBinary) {
+fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Bounds {
     let result_lower = xbinary_pow(lower, n);
     let result_upper = xbinary_pow(upper, n);
-    (result_lower, result_upper)
+    Bounds::new(result_lower, result_upper)
 }
 
 /// Computes bounds for x^n where n is even.
@@ -96,7 +87,7 @@ fn compute_even_power_bounds(
     lower: &XBinary,
     upper: &XBinary,
     n: NonZeroU32,
-) -> (XBinary, XBinary) {
+) -> Bounds {
     let lower_non_negative = !is_negative(lower);
     let upper_non_positive = !is_positive(upper);
 
@@ -104,19 +95,19 @@ fn compute_even_power_bounds(
         // [lower, upper] is entirely non-negative
         let result_lower = xbinary_pow(lower, n);
         let result_upper = xbinary_pow(upper, n);
-        (result_lower, result_upper)
+        Bounds::new(result_lower, result_upper)
     } else if upper_non_positive {
         // [lower, upper] is entirely non-positive
         // For even powers, more negative gives larger positive result
         let result_lower = xbinary_pow(upper, n);
         let result_upper = xbinary_pow(lower, n);
-        (result_lower, result_upper)
+        Bounds::new(result_lower, result_upper)
     } else {
         // Interval spans zero
         let lower_pow = xbinary_pow(lower, n);
         let upper_pow = xbinary_pow(upper, n);
         let result_upper = xbinary_max(&lower_pow, &upper_pow);
-        (XBinary::zero(), result_upper)
+        Bounds::new(XBinary::zero(), result_upper)
     }
 }
 
