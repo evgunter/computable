@@ -2,38 +2,23 @@
 
 ## Tier 2: Hard (Unblocked, but complex correctness issues)
 
-### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
-**File:** `src/refinement.rs:15`
-```rust
-//! TODO: The README describes an async/event-driven refinement model where:
-```
-Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative), [nth-root-async](#nth-root-async), [refiners-stop](#refiners-stop)
-
----
-
-## Blocked (Waiting on other items)
-
-
 ### <a id="nth-root-negative"></a>nth-root-negative: Handle negative inputs for even-degree roots
 **File:** `src/ops/nth_root.rs:15`
 ```rust
 //! TODO: Contra the README, even-degree roots of inputs that overlap with negative
 ```
-**Blocked by:** [async-refinement](#async-refinement)
 
 ### <a id="nth-root-async"></a>nth-root-async: nth_root async model dependency
 **File:** `src/ops/nth_root.rs:22`
 ```rust
 //! async/event-driven model described in the README (see TODO in refinement.rs)
 ```
-**Blocked by:** [async-refinement](#async-refinement)
 
 ### <a id="refiners-stop"></a>refiners-stop: Allow refiners to stop individually
 **File:** `src/refinement.rs:130`
 ```rust
 // TODO: allow individual refiners to stop at the max without
 ```
-**Blocked by:** [async-refinement](#async-refinement)
 
 ---
 

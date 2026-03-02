@@ -5,28 +5,32 @@
 //! - `RefinerHandle`: Handle for controlling a background refiner thread
 //! - `NodeUpdate`: Update message from a refiner to the coordinator
 //!
-//! The refinement model is round-based with early exit, per-refiner exhaustion,
-//! and demand-based skipping:
+//! The refinement model is event-driven with coordinator pacing, early exit,
+//! per-refiner exhaustion, and demand-based skipping:
 //! 1. Check if root precision meets target — if so, return immediately
 //! 2. Count active refiners — if none remain, return exhaustion error
-//! 3. Check iteration cap
-//! 4. Compute demand budget (ε / 2^⌈log₂(N)⌉) and skip refiners already below it
-//! 5. Send Step command to remaining active refiners (safety valve: if all were
-//!    skipped but root precision isn't met, step the least-precise refiners,
-//!    skipping extreme outliers whose width is negligible vs the widest)
-//! 6. After EACH response, apply the update and check precision (early exit)
-//! 7. If a refiner reports Exhausted, mark it inactive and track the reason
-//! 8. If a refiner reports Error, return the error immediately
-//! 9. Repeat
+//! 3. Send Step to all active refiners above the demand budget (ε / 2^⌈log₂(N)⌉)
+//! 4. Safety valve: if all were demand-skipped, step the widest non-dominated refiners
+//! 5. Event loop — for each incoming update:
+//!    a. Apply the update and propagate bounds upward through the graph
+//!    b. Check if root precision meets target — if so, return (early exit)
+//!    c. If the update was normal: re-dispatch a Step to the same refiner
+//!    (unless it's now below demand budget or the iteration budget is exhausted)
+//!    d. If Exhausted: mark inactive, recalculate demand budget
+//!    e. If Error: return the error immediately
+//! 6. If all outstanding Steps are consumed but active refiners remain idle,
+//!    trigger the safety valve to break the stall
+//! 7. Repeat until precision is met or the iteration limit is reached
 //!
-//! This preserves demand pacing (refiners only advance when the coordinator
-//! permits) while adding three improvements over plain lock-step:
-//! - Early exit: precision is checked after each individual update, not after
-//!   waiting for all refiners in a round
-//! - Per-refiner exhaustion: converged or state-unchanged refiners are removed
-//!   from future rounds instead of causing the entire refinement to fail
-//! - Demand-based skipping: refiners whose bounds are already narrow enough
-//!   (width ≤ ε/N) are skipped, avoiding wasted work on fast-converging operands
+//! Compared to a round-based (lock-step) model, this event-driven approach:
+//! - Processes updates individually as they arrive, rather than batching a full
+//!   round of all refiners before checking precision
+//! - Naturally load-balances: fast refiners receive more Steps because the
+//!   coordinator re-dispatches to each refiner as soon as its update arrives,
+//!   without waiting for slower refiners to complete their round
+//! - Preserves demand pacing: refiners only advance when the coordinator
+//!   permits, preventing runaway over-refinement
+//! - Preserves early exit, per-refiner exhaustion, and demand-based skipping
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -140,11 +144,11 @@ impl RefinementGraph {
         let mut outcome = None;
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
-            let mut refiners = Vec::new();
+            let mut handles = Vec::new();
             let (update_tx, update_rx) = unbounded();
 
             for node in &self.refiners {
-                refiners.push(spawn_refiner(
+                handles.push(spawn_refiner(
                     scope,
                     Arc::clone(node),
                     Arc::clone(&stop_flag),
@@ -153,18 +157,8 @@ impl RefinementGraph {
             }
             drop(update_tx);
 
-            let shutdown_refiners = |handles: Vec<RefinerHandle>, stop_signal: &Arc<StopFlag>| {
-                stop_signal.stop();
-                for refiner in &handles {
-                    // Safe to discard: the refiner may have already exited
-                    // (e.g. due to an error), and we're shutting down regardless.
-                    let _shutdown = refiner.sender.send(RefineCommand::Stop);
-                }
-            };
-
             let result = (|| {
-                let num_refiners = refiners.len();
-                let mut active = vec![true; num_refiners];
+                let mut active = vec![true; handles.len()];
                 let mut all_state_unchanged = true;
 
                 let precision_met =
@@ -173,126 +167,139 @@ impl RefinementGraph {
                         Ok(bounds_width_leq(&bounds, tol))
                     };
 
-                for _iteration in 0..MAX_REFINEMENT_ITERATIONS {
-                    // Check if precision is already met.
-                    if precision_met(&self.root, tolerance_exp)? {
-                        return self.root.get_bounds();
+                // Check if precision is already met before starting.
+                if precision_met(&self.root, tolerance_exp)? {
+                    return self.root.get_bounds();
+                }
+
+                let active_count = active.iter().filter(|&&a| a).count();
+                if active_count == 0 {
+                    return Err(ComputableError::StateUnchanged);
+                }
+
+                // Compute initial demand budget and precision hint.
+                let mut demand_budget = compute_demand_budget(tolerance_exp, active_count);
+                let mut precision_bits = match demand_budget {
+                    XUsize::Finite(n) => n,
+                    XUsize::Inf => usize::MAX,
+                };
+
+                // Initial dispatch: send Step to active refiners above demand budget.
+                let mut outstanding = dispatch_steps(
+                    &self.refiners,
+                    &handles,
+                    &active,
+                    &demand_budget,
+                    precision_bits,
+                )?;
+
+                // Safety valve: all active refiners were below demand but root
+                // precision isn't met. Step the widest non-dominated refiners.
+                if outstanding == 0 {
+                    outstanding = dispatch_safety_valve(
+                        &self.refiners,
+                        &handles,
+                        &active,
+                        precision_bits,
+                    )?;
+                }
+
+                // Event-driven loop: process one update per iteration.
+                for iteration in 0..MAX_REFINEMENT_ITERATIONS {
+                    // If no outstanding Steps, either all exhausted or all idle.
+                    if outstanding == 0 {
+                        let remaining_active = active.iter().filter(|&&a| a).count();
+                        if remaining_active == 0 {
+                            return if all_state_unchanged {
+                                Err(ComputableError::StateUnchanged)
+                            } else {
+                                Err(ComputableError::MaxRefinementIterations {
+                                    max: MAX_REFINEMENT_ITERATIONS,
+                                })
+                            };
+                        }
+                        // All active but idle — safety valve to break the stall.
+                        outstanding = dispatch_safety_valve(
+                            &self.refiners,
+                            &handles,
+                            &active,
+                            precision_bits,
+                        )?;
                     }
 
-                    // Count active refiners; if none remain, select exhaustion error.
-                    let active_count = active.iter().filter(|&&a| a).count();
-                    if active_count == 0 {
-                        return if all_state_unchanged {
-                            Err(ComputableError::StateUnchanged)
-                        } else {
-                            Err(ComputableError::MaxRefinementIterations {
-                                max: MAX_REFINEMENT_ITERATIONS,
-                            })
-                        };
-                    }
-
-                    // Compute demand budget for this round.
-                    let demand_budget = compute_demand_budget(tolerance_exp, active_count);
-                    let precision_bits = match demand_budget {
-                        XUsize::Finite(n) => n,
-                        XUsize::Inf => usize::MAX,
+                    let message = match update_rx.recv() {
+                        Ok(msg) => msg,
+                        Err(_) => return Err(ComputableError::RefinementChannelClosed),
                     };
+                    outstanding = outstanding.checked_sub(1).unwrap_or_else(|| {
+                        unreachable!("outstanding > 0 when receiving a message")
+                    });
 
-                    // Send Step to active refiners ABOVE demand budget only.
-                    let mut expected = 0_usize;
-                    for (i, refiner) in refiners.iter().enumerate() {
-                        if !active[i] {
-                            continue;
-                        }
-                        let skip = self.refiners[i]
-                            .cached_bounds()
-                            .is_some_and(|b| bounds_width_leq(&b, &demand_budget));
-                        if !skip {
-                            refiner
-                                .sender
-                                .send(RefineCommand::Step { precision_bits })
-                                .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
-                            expected = expected.checked_add(1).unwrap_or_else(|| {
-                                unreachable!("expected <= refiners.len(), cannot overflow usize")
-                            });
-                        }
-                    }
+                    match message {
+                        RefinerMessage::Update(update) => {
+                            let node_id = update.node_id;
+                            self.apply_update(update)?;
+                            if precision_met(&self.root, tolerance_exp)? {
+                                return self.root.get_bounds();
+                            }
 
-                    // Safety valve: all active refiners were below demand but root
-                    // precision isn't met. Step the least-precise refiners, skipping
-                    // extreme outliers whose width is negligible vs the widest.
-                    if expected == 0 {
-                        // Find widest active refiner width.
-                        let max_width = (0..refiners.len())
-                            .filter(|&i| active[i])
-                            .map(|i| {
-                                self.refiners[i]
+                            // Re-dispatch: send Step back to this refiner if there
+                            // is room in the iteration budget and it's still above
+                            // the demand threshold.
+                            let remaining =
+                                MAX_REFINEMENT_ITERATIONS.saturating_sub(iteration).saturating_sub(1);
+                            if remaining > outstanding
+                                && let Some(idx) =
+                                    self.refiners.iter().position(|n| n.id == node_id)
+                            {
+                                let skip = self.refiners[idx]
                                     .cached_bounds()
-                                    .map_or(UXBinary::Inf, |b| b.width().clone())
-                            })
-                            .max();
-
-                        // Step all active refiners except extreme outliers
-                        // (those whose width is negligibly small vs the widest).
-                        for (i, refiner) in refiners.iter().enumerate() {
-                            if !active[i] {
-                                continue;
-                            }
-                            let dominated = max_width.as_ref().is_some_and(|max_w| {
-                                self.refiners[i]
-                                    .cached_bounds()
-                                    .is_some_and(|b| is_width_dominated(b.width(), max_w))
-                            });
-                            if !dominated {
-                                refiner
-                                    .sender
-                                    .send(RefineCommand::Step { precision_bits })
-                                    .map_err(|_send_err| {
-                                        ComputableError::RefinementChannelClosed
-                                    })?;
-                                expected = expected.checked_add(1).unwrap_or_else(|| {
-                                    unreachable!(
-                                        "expected <= refiners.len(), cannot overflow usize"
-                                    )
-                                });
+                                    .is_some_and(|b| bounds_width_leq(&b, &demand_budget));
+                                if !skip {
+                                    handles[idx]
+                                        .sender
+                                        .send(RefineCommand::Step { precision_bits })
+                                        .map_err(|_send_err| {
+                                            ComputableError::RefinementChannelClosed
+                                        })?;
+                                    outstanding =
+                                        outstanding.checked_add(1).unwrap_or_else(|| {
+                                            unreachable!(
+                                                "outstanding <= handles.len(), cannot overflow"
+                                            )
+                                        });
+                                }
                             }
                         }
-                    }
-
-                    // Collect responses, checking precision after each update.
-                    for _ in 0..expected {
-                        let message = match update_rx.recv() {
-                            Ok(msg) => msg,
-                            Err(_) => return Err(ComputableError::RefinementChannelClosed),
-                        };
-
-                        match message {
-                            RefinerMessage::Update(update) => {
-                                self.apply_update(update)?;
-                                if precision_met(&self.root, tolerance_exp)? {
-                                    return self.root.get_bounds();
+                        RefinerMessage::Exhausted { update, reason } => {
+                            let exhausted_node_id = update.node_id;
+                            self.apply_update(update)?;
+                            // Find and mark this refiner inactive.
+                            for (i, refiner_node) in self.refiners.iter().enumerate() {
+                                if refiner_node.id == exhausted_node_id {
+                                    active[i] = false;
+                                    break;
                                 }
                             }
-                            RefinerMessage::Exhausted { update, reason } => {
-                                let exhausted_node_id = update.node_id;
-                                self.apply_update(update)?;
-                                // Find and mark this refiner inactive.
-                                for (i, refiner_node) in self.refiners.iter().enumerate() {
-                                    if refiner_node.id == exhausted_node_id {
-                                        active[i] = false;
-                                        break;
-                                    }
-                                }
-                                if !matches!(reason, ExhaustionReason::StateUnchanged) {
-                                    all_state_unchanged = false;
-                                }
-                                if precision_met(&self.root, tolerance_exp)? {
-                                    return self.root.get_bounds();
-                                }
+                            if !matches!(reason, ExhaustionReason::StateUnchanged) {
+                                all_state_unchanged = false;
                             }
-                            RefinerMessage::Error(error) => {
-                                return Err(error);
+                            if precision_met(&self.root, tolerance_exp)? {
+                                return self.root.get_bounds();
                             }
+                            // Recalculate demand budget with updated active count.
+                            let remaining_active = active.iter().filter(|&&a| a).count();
+                            if remaining_active > 0 {
+                                demand_budget =
+                                    compute_demand_budget(tolerance_exp, remaining_active);
+                                precision_bits = match demand_budget {
+                                    XUsize::Finite(n) => n,
+                                    XUsize::Inf => usize::MAX,
+                                };
+                            }
+                        }
+                        RefinerMessage::Error(error) => {
+                            return Err(error);
                         }
                     }
                 }
@@ -302,7 +309,13 @@ impl RefinementGraph {
                 })
             })();
 
-            shutdown_refiners(refiners, &stop_flag);
+            // Shutdown: stop flag + Stop command to wake refiners waiting on recv().
+            stop_flag.stop();
+            for handle in &handles {
+                // Safe to discard: the refiner may have already exited
+                // (e.g. due to an error), and we're shutting down regardless.
+                let _shutdown = handle.sender.send(RefineCommand::Stop);
+            }
             outcome = Some(result);
         });
 
@@ -431,6 +444,80 @@ fn refiner_loop(
             Ok(RefineCommand::Stop) | Err(_) => break,
         }
     }
+}
+
+/// Sends Step to all active refiners whose width exceeds `demand_budget`.
+/// Returns the number of Steps sent.
+fn dispatch_steps(
+    graph_refiners: &[Arc<Node>],
+    handles: &[RefinerHandle],
+    active: &[bool],
+    demand_budget: &XUsize,
+    precision_bits: usize,
+) -> Result<usize, ComputableError> {
+    let mut sent = 0_usize;
+    for (i, handle) in handles.iter().enumerate() {
+        if !active[i] {
+            continue;
+        }
+        let skip = graph_refiners[i]
+            .cached_bounds()
+            .is_some_and(|b| bounds_width_leq(&b, demand_budget));
+        if !skip {
+            handle
+                .sender
+                .send(RefineCommand::Step { precision_bits })
+                .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
+            sent = sent
+                .checked_add(1)
+                .unwrap_or_else(|| unreachable!("sent <= handles.len(), cannot overflow usize"));
+        }
+    }
+    Ok(sent)
+}
+
+/// Safety valve: when all active refiners are below demand budget but root
+/// precision isn't met, send Step to the widest non-dominated active refiners.
+/// Returns the number of Steps sent.
+fn dispatch_safety_valve(
+    graph_refiners: &[Arc<Node>],
+    handles: &[RefinerHandle],
+    active: &[bool],
+    precision_bits: usize,
+) -> Result<usize, ComputableError> {
+    // Find widest active refiner width.
+    let max_width = (0..handles.len())
+        .filter(|&i| active[i])
+        .map(|i| {
+            graph_refiners[i]
+                .cached_bounds()
+                .map_or(UXBinary::Inf, |b| b.width().clone())
+        })
+        .max();
+
+    // Step all active refiners except extreme outliers
+    // (those whose width is negligibly small vs the widest).
+    let mut sent = 0_usize;
+    for (i, handle) in handles.iter().enumerate() {
+        if !active[i] {
+            continue;
+        }
+        let dominated = max_width.as_ref().is_some_and(|max_w| {
+            graph_refiners[i]
+                .cached_bounds()
+                .is_some_and(|b| is_width_dominated(b.width(), max_w))
+        });
+        if !dominated {
+            handle
+                .sender
+                .send(RefineCommand::Step { precision_bits })
+                .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
+            sent = sent
+                .checked_add(1)
+                .unwrap_or_else(|| unreachable!("sent <= handles.len(), cannot overflow usize"));
+        }
+    }
+    Ok(sent)
 }
 
 /// Demand budget = epsilon / 2^ceil(log2(N)).

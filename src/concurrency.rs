@@ -14,10 +14,10 @@ impl StopFlag {
     }
 
     pub fn stop(&self) {
-        self.inner.store(true, Ordering::Relaxed);
+        self.inner.store(true, Ordering::Release);
     }
 
     pub fn is_stopped(&self) -> bool {
-        self.inner.load(Ordering::Relaxed)
+        self.inner.load(Ordering::Acquire)
     }
 }
