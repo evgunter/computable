@@ -19,7 +19,7 @@ parking_lot = "0.12"
 rand = "0.8"
 
 [dev-dependencies]
-criterion = "0.5"
+gungraun = "0.17.2"
 
 [[bench]]
 name = "complex"

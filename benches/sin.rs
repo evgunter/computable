@@ -1,65 +1,40 @@
 mod common;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, bench_id, epsilon, precision_bits, verbose};
-use computable::{Binary, Computable};
+use common::{balanced_sum, epsilon};
+use computable::{Binary, Bounds, Computable};
 
 const SAMPLE_COUNT: usize = 100;
 
-fn build_terms(inputs: &[f64]) -> Vec<Computable> {
-    inputs
-        .iter()
-        .map(|&x| Computable::constant(Binary::from_f64(x).unwrap()).sin())
-        .collect()
-}
-
-fn bench_sin(c: &mut Criterion) {
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_sin(bits: usize) -> Bounds {
     let mut rng = StdRng::seed_from_u64(7);
-    let inputs: Vec<f64> = (0..SAMPLE_COUNT)
+    let terms: Vec<Computable> = (0..SAMPLE_COUNT)
         .map(|i| {
-            if i < SAMPLE_COUNT / 3 {
-                rng.gen_range(-1.0..1.0)
+            let x = if i < SAMPLE_COUNT / 3 {
+                rng.gen_range(-1.0_f64..1.0_f64)
             } else if i < 2 * SAMPLE_COUNT / 3 {
-                rng.gen_range(-3.15..3.15)
+                rng.gen_range(-3.15_f64..3.15_f64)
             } else {
-                rng.gen_range(-100.0..100.0)
-            }
+                rng.gen_range(-100.0_f64..100.0_f64)
+            };
+            Computable::constant(Binary::from_f64(x).unwrap()).sin()
         })
         .collect();
 
-    let mut group = c.benchmark_group("sin");
-    group.sample_size(10);
-
-    for &bits in precision_bits() {
-        let eps = epsilon(bits);
-
-        if verbose() {
-            let bounds = balanced_sum(build_terms(&inputs))
-                .refine_to_default(eps)
-                .expect("refine_to should succeed");
-            eprintln!("[sin/{bits}] width: {}", bounds.width());
-        }
-
-        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
-            b.iter(|| {
-                black_box(
-                    balanced_sum(build_terms(&inputs))
-                        .refine_to_default(*eps)
-                        .expect("refine_to should succeed"),
-                )
-            })
-        });
-    }
-
-    group.finish();
+    black_box(
+        balanced_sum(terms)
+            .refine_to_default(epsilon(bits))
+            .expect("should succeed"),
+    )
 }
 
-criterion_group! {
-    name = benches;
-    config = Criterion::default();
-    targets = bench_sin
-}
-criterion_main!(benches);
+library_benchmark_group!(name = sin, benchmarks = [bench_sin]);
+
+main!(library_benchmark_groups = sin);
