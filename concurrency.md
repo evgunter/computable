@@ -36,7 +36,7 @@ Refinement is parallel: each refiner runs in its own scoped thread, and a single
                         └─────────────┘
 ```
 
-Each refiner has its own command channel (`command_tx` → `command_rx`). All refiners share a single update channel back to the coordinator (`update_tx` → `update_rx`). This is a many-to-one fan-in pattern.
+Each refiner has its own command channel (`command_tx` $\to$ `command_rx`). All refiners share a single update channel back to the coordinator (`update_tx` $\to$ `update_rx`). This is a many-to-one fan-in pattern.
 
 ## Thread Lifecycle
 
@@ -57,14 +57,14 @@ Calls `get_bounds()` on the root node and checks if the width meets the toleranc
 A refiner is *eligible* if it is active (not exhausted) and under the per-refiner step limit. If no refiners are eligible and none have outstanding (in-flight) steps, the coordinator returns an error: `StateUnchanged` if all refiners exhausted without changing state, `MaxRefinementIterations` otherwise.
 
 ### 3. Dispatch
-The coordinator computes a **demand budget** = `ε / 2^⌈log₂(N)⌉` where `ε` is the target precision and `N` is the active refiner count. Each eligible, non-outstanding refiner whose cached width exceeds the budget is sent a `Step` command.
+The coordinator computes a **demand budget** $= \varepsilon / 2^{\lceil \log_2 N \rceil}$ where $\varepsilon$ is the target precision and $N$ is the active refiner count. Each eligible, non-outstanding refiner whose cached width exceeds the budget is sent a `Step` command.
 
 If all eligible refiners are below the demand budget (demand-skipped) but the root precision isn't met, a **safety valve** fires: step the least-precise eligible refiners, skipping extreme outliers whose width is negligible compared to the widest.
 
 If nothing was dispatched and nothing is outstanding, a **stall guard** returns `MaxRefinementIterations` to prevent deadlock (this can happen when all eligible refiners are both demand-skipped and safety-valve dominated).
 
 ### 4. Response Collection
-Block on `recv()` for the first response. Drain any additional responses that arrived in the meantime via `try_recv()` — this batching avoids O(N^2) overhead when many refiners respond near-simultaneously. Then check precision for early exit.
+Block on `recv()` for the first response. Drain any additional responses that arrived in the meantime via `try_recv()` — this batching avoids $O(N^2)$ overhead when many refiners respond near-simultaneously. Then check precision for early exit.
 
 The key design choice: after collecting available responses, the loop immediately returns to the dispatch phase. If some refiners from the previous batch are still outstanding (in-flight), the coordinator does not wait for them. Instead, it re-dispatches any eligible refiners that have completed, allowing fast refiners to advance while slow ones continue computing. The `outstanding` flag per refiner prevents double-dispatch: a refiner is only sent a new `Step` after its previous response has been received.
 
@@ -81,7 +81,7 @@ When the coordinator receives an update, `apply_update` sets the updated node's 
 
 ## Stop Flag
 
-`StopFlag` wraps an `AtomicBool` with `Relaxed` ordering. It is monotonic (false → true only). Refiners check it at the top of each loop iteration, but not during `refine_step()`. This means a slow `refine_step` will run to completion even after the flag is set — the refiner exits on the next loop check. A future improvement could thread the stop flag into expensive computations for mid-step cancellation (see `kill-slow-refiners` in TODOS.md).
+`StopFlag` wraps an `AtomicBool` with `Relaxed` ordering. It is monotonic ($\text{false} \to \text{true}$ only). Refiners check it at the top of each loop iteration, but not during `refine_step()`. This means a slow `refine_step` will run to completion even after the flag is set — the refiner exits on the next loop check. A future improvement could thread the stop flag into expensive computations for mid-step cancellation (see `kill-slow-refiners` in TODOS.md).
 
 ## Concurrency Invariants
 
