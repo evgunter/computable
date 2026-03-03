@@ -921,4 +921,55 @@ mod tests {
         reader.join().expect("reader should join");
         assert_width_nonnegative(&refined);
     }
+
+    /// Demand-based skipping: when x+y has target precision 1 (width ≤ 2^(-1)),
+    /// x starts with huge bounds but converges instantly, while y starts with
+    /// narrow bounds (width < 2^(-1)) but sleeps 100ms per step. Refinement
+    /// should complete fast because y is already within the demand budget and
+    /// gets skipped every round.
+    #[test]
+    fn demand_skipping_avoids_slow_refiner_when_already_precise() {
+        use std::time::Instant;
+
+        const SLOW_STEP_MS: u64 = 1000;
+
+        // x: starts at [0, 1024] (width = 1024), converges by halving the
+        // upper bound each step (width halves each round). No sleeps, so
+        // convergence is fast but gradual — takes ~12 steps to reach width < 0.5.
+        let x = Computable::new(
+            Bounds::new(xbin(0, 0), xbin(1024, 0)),
+            |state| Ok(state.clone()),
+            interval_refine_strict,
+        );
+
+        // y: starts at [0, 1/16] (width = 2^(-4), below the demand budget of
+        // 2^(-3) for tolerance=1 with 2 refiners). Each step sleeps 100ms, so
+        // if refinement waits for y it'll be slow.
+        let y = Computable::new(
+            Bounds::new(xbin(0, 0), xbin(1, -4)),
+            |state| Ok(state.clone()),
+            move |state: Bounds| {
+                thread::sleep(Duration::from_millis(SLOW_STEP_MS));
+                interval_refine(state)
+            },
+        );
+
+        let sum = x + y;
+        let tolerance_exp = XUsize::Finite(1); // target width ≤ 0.5
+
+        let start = Instant::now();
+        let bounds = sum
+            .refine_to_default(tolerance_exp)
+            .expect("refine_to should succeed");
+        let elapsed = start.elapsed();
+
+        assert!(
+            bounds_width_leq(&bounds, &tolerance_exp),
+            "bounds should meet target precision"
+        );
+        assert!(
+            elapsed < Duration::from_millis(SLOW_STEP_MS),
+            "refinement should finish without stepping y, but took {elapsed:?}"
+        );
+    }
 }
