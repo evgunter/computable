@@ -1,32 +1,27 @@
 mod common;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, bench_id, epsilon, precision_bits, verbose};
-use computable::{Binary, Computable};
+use common::{balanced_sum, epsilon};
+use computable::{Binary, Bounds, Computable};
 
 const SAMPLE_COUNT: usize = 5_000;
 
-fn generate_inputs() -> Vec<(f64, f64, f64, f64)> {
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_complex(bits: usize) -> Bounds {
     let mut rng = StdRng::seed_from_u64(7);
-    (0..SAMPLE_COUNT)
+    let terms: Vec<Computable> = (0..SAMPLE_COUNT)
         .map(|_| {
-            (
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
-            )
-        })
-        .collect()
-}
+            let a = rng.gen_range(-10.0_f64..10.0_f64);
+            let bv = rng.gen_range(-10.0_f64..10.0_f64);
+            let cv = rng.gen_range(-10.0_f64..10.0_f64);
+            let d = rng.gen_range(-10.0_f64..10.0_f64);
 
-fn build_terms(inputs: &[(f64, f64, f64, f64)]) -> Vec<Computable> {
-    inputs
-        .iter()
-        .map(|&(a, bv, cv, d)| {
             let a_c = Computable::constant(Binary::from_f64(a).unwrap());
             let b_c = Computable::constant(Binary::from_f64(bv).unwrap());
             let c_c = Computable::constant(Binary::from_f64(cv).unwrap());
@@ -36,42 +31,15 @@ fn build_terms(inputs: &[(f64, f64, f64, f64)]) -> Vec<Computable> {
             let squared = c_c.clone() * c_c + d_c.clone() * d_c;
             a_c * b_c + squared + mixed
         })
-        .collect()
+        .collect();
+
+    black_box(
+        balanced_sum(terms)
+            .refine_to_default(epsilon(bits))
+            .expect("should succeed"),
+    )
 }
 
-fn bench_complex(c: &mut Criterion) {
-    let inputs = generate_inputs();
+library_benchmark_group!(name = complex, benchmarks = [bench_complex]);
 
-    let mut group = c.benchmark_group("complex");
-    group.sample_size(10);
-
-    for &bits in precision_bits() {
-        let eps = epsilon(bits);
-
-        if verbose() {
-            let bounds = balanced_sum(build_terms(&inputs))
-                .refine_to_default(eps)
-                .expect("refine_to should succeed");
-            eprintln!("[complex/{bits}] width: {}", bounds.width());
-        }
-
-        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
-            b.iter(|| {
-                black_box(
-                    balanced_sum(build_terms(&inputs))
-                        .refine_to_default(*eps)
-                        .expect("refine_to should succeed"),
-                )
-            })
-        });
-    }
-
-    group.finish();
-}
-
-criterion_group! {
-    name = benches;
-    config = Criterion::default();
-    targets = bench_complex
-}
-criterion_main!(benches);
+main!(library_benchmark_groups = complex);

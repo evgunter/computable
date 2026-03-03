@@ -144,19 +144,33 @@ impl RefinementGraph {
         &self,
         tolerance_exp: &XUsize,
     ) -> Result<Bounds, ComputableError> {
+        // Eagerly populate all bounds caches so we can identify exact-bounds refiners.
+        let root_bounds = self.root.get_bounds()?;
+        if bounds_width_leq(&root_bounds, tolerance_exp) {
+            return Ok(root_bounds);
+        }
+
         let mut outcome = None;
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
-            let mut refiners = Vec::new();
             let (update_tx, update_rx) = unbounded();
 
+            // Only spawn threads for refiners whose bounds aren't already exact.
+            let mut refiner_nodes = Vec::new();
+            let mut refiner_handles = Vec::new();
             for node in &self.refiners {
-                refiners.push(spawn_refiner(
-                    scope,
-                    Arc::clone(node),
-                    Arc::clone(&stop_flag),
-                    update_tx.clone(),
-                ));
+                let exact = node
+                    .cached_bounds()
+                    .is_some_and(|b| b.small() == &b.large());
+                if !exact {
+                    refiner_handles.push(spawn_refiner(
+                        scope,
+                        Arc::clone(node),
+                        Arc::clone(&stop_flag),
+                        update_tx.clone(),
+                    ));
+                    refiner_nodes.push(Arc::clone(node));
+                }
             }
             drop(update_tx);
 
@@ -170,7 +184,7 @@ impl RefinementGraph {
             };
 
             let result = (|| {
-                let num_refiners = refiners.len();
+                let num_refiners = refiner_handles.len();
                 let mut active = vec![true; num_refiners];
                 let mut all_state_unchanged = true;
                 let mut steps = vec![0usize; num_refiners];
@@ -178,7 +192,7 @@ impl RefinementGraph {
 
                 // Build node_id → refiner index mapping for routing responses.
                 let mut refiner_index: HashMap<usize, usize> = HashMap::new();
-                for (i, node) in self.refiners.iter().enumerate() {
+                for (i, node) in refiner_nodes.iter().enumerate() {
                     refiner_index.insert(node.id, i);
                 }
 
@@ -231,30 +245,23 @@ impl RefinementGraph {
                     };
                     let mut dispatched = 0usize;
 
-                    for (i, refiner) in refiners.iter().enumerate() {
-                        if !active[i] || outstanding[i] || steps[i] >= MAX_REFINEMENT_ITERATIONS
-                        {
+                    for (i, handle) in refiner_handles.iter().enumerate() {
+                        if !active[i] || outstanding[i] || steps[i] >= MAX_REFINEMENT_ITERATIONS {
                             continue;
                         }
-                        let skip = propagated
-                            .get(&self.refiners[i].id)
-                            .is_some_and(|budget| {
-                                self.refiners[i]
-                                    .cached_bounds()
-                                    .is_some_and(|b| b.width() <= budget)
-                            });
+                        let skip = propagated.get(&refiner_nodes[i].id).is_some_and(|budget| {
+                            refiner_nodes[i]
+                                .cached_bounds()
+                                .is_some_and(|b| b.width() <= budget)
+                        });
                         if !skip {
-                            refiner
+                            handle
                                 .sender
                                 .send(RefineCommand::Step { precision_bits })
-                                .map_err(|_send_err| {
-                                    ComputableError::RefinementChannelClosed
-                                })?;
+                                .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             outstanding[i] = true;
                             dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
-                                unreachable!(
-                                    "dispatched <= refiners.len(), cannot overflow usize"
-                                )
+                                unreachable!("dispatched <= refiner_handles.len(), cannot overflow usize")
                             });
                         }
                     }
@@ -267,10 +274,9 @@ impl RefinementGraph {
                     // meet their budgets, the root should have met the target
                     // — a stall in that case is a budget computation bug.
                     if dispatched == 0 && !outstanding.iter().any(|&o| o) {
-                        let any_budget_unmet = self.refiners.iter().any(|r| {
+                        let any_budget_unmet = refiner_nodes.iter().any(|r| {
                             propagated.get(&r.id).is_some_and(|budget| {
-                                r.cached_bounds()
-                                    .is_some_and(|b| b.width() > budget)
+                                r.cached_bounds().is_some_and(|b| b.width() > budget)
                             })
                         });
                         assert!(
@@ -355,7 +361,7 @@ impl RefinementGraph {
                 }
             })();
 
-            shutdown_refiners(refiners, &stop_flag);
+            shutdown_refiners(refiner_handles, &stop_flag);
             outcome = Some(result);
         });
 
@@ -586,7 +592,7 @@ mod tests {
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        Computable::constant(bin(value_int as i64, 0))
+        Computable::constant(bin(i64::try_from(value_int).expect("value fits in i64"), 0))
             .nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
@@ -802,7 +808,7 @@ mod tests {
         let tolerance_exp = XUsize::Finite(6);
         let reader = Arc::clone(&computable);
         let handle = thread::spawn(move || {
-            for _ in 0..8 {
+            for _ in 0_i32..8_i32 {
                 let bounds = reader.bounds().expect("bounds should succeed");
                 assert_width_nonnegative(&bounds);
             }
@@ -870,7 +876,7 @@ mod tests {
         let barrier = Arc::new(Barrier::new(4));
 
         let mut handles = Vec::new();
-        for _ in 0..3 {
+        for _ in 0_i32..3_i32 {
             let shared_expression = Arc::clone(&expression);
             let shared_barrier = Arc::clone(&barrier);
             handles.push(thread::spawn(move || {
@@ -928,7 +934,7 @@ mod tests {
         let barrier = Arc::new(Barrier::new(3));
 
         let mut handles = Vec::new();
-        for _ in 0..2 {
+        for _ in 0_i32..2_i32 {
             let shared_value = Arc::clone(&shared);
             let shared_barrier = Arc::clone(&barrier);
             handles.push(thread::spawn(move || {
@@ -966,7 +972,7 @@ mod tests {
             let reader_barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 reader_barrier.wait();
-                for _ in 0..32 {
+                for _ in 0_i32..32_i32 {
                     let bounds = reader_value.bounds().expect("bounds should succeed");
                     assert_width_nonnegative(&bounds);
                 }

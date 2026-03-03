@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn bisection_step_less() {
         // Prefix bounds [0, 4]: mantissa=0, exponent=2
-        let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
+        let bounds = PrefixBounds::new(BigInt::from(0_i32), BigInt::from(2_i32));
         let result = bisection_step_normalized(&bounds, |_mid| {
             // Pretend mid < target, so search upper half
             Ordering::Less
@@ -427,8 +427,8 @@ mod tests {
         // Bounds become [2, 4]
         match result {
             PrefixBisectionResult::Narrowed(new_bounds) => {
-                assert_eq!(new_bounds.mantissa, BigInt::from(1));
-                assert_eq!(new_bounds.exponent, BigInt::from(1));
+                assert_eq!(new_bounds.mantissa, BigInt::from(1_i32));
+                assert_eq!(new_bounds.exponent, BigInt::from(1_i32));
                 let finite = new_bounds.to_finite_bounds();
                 assert_eq!(finite.small(), &bin(2, 0));
                 assert_eq!(finite.large(), bin(4, 0));
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn bisection_step_greater() {
         // Prefix bounds [0, 4]: mantissa=0, exponent=2
-        let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
+        let bounds = PrefixBounds::new(BigInt::from(0_i32), BigInt::from(2_i32));
         let result = bisection_step_normalized(&bounds, |_mid| {
             // Pretend mid > target, so search lower half
             Ordering::Greater
@@ -449,8 +449,8 @@ mod tests {
         // Bounds become [0, 2]
         match result {
             PrefixBisectionResult::Narrowed(new_bounds) => {
-                assert_eq!(new_bounds.mantissa, BigInt::from(0));
-                assert_eq!(new_bounds.exponent, BigInt::from(1));
+                assert_eq!(new_bounds.mantissa, BigInt::from(0_i32));
+                assert_eq!(new_bounds.exponent, BigInt::from(1_i32));
                 let finite = new_bounds.to_finite_bounds();
                 assert_eq!(finite.small(), &bin(0, 0));
                 assert_eq!(finite.large(), bin(2, 0));
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn bisection_step_equal() {
         // Prefix bounds [0, 4]: mantissa=0, exponent=2
-        let bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
+        let bounds = PrefixBounds::new(BigInt::from(0_i32), BigInt::from(2_i32));
         let result = bisection_step_normalized(&bounds, |_mid| Ordering::Equal);
         // midpoint = (2*0 + 1) * 2^1 = 2
         match result {
@@ -479,9 +479,9 @@ mod tests {
         // We're looking for x where x^2 = 4
         // Normalized bounds [0, 4]: mantissa=0, exponent=2
         let target = bin(4, 0);
-        let mut bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(2));
+        let mut bounds = PrefixBounds::new(BigInt::from(0_i32), BigInt::from(2_i32));
 
-        for _ in 0..50 {
+        for _ in 0_i32..50_i32 {
             match bisection_step_normalized(&bounds, |mid| mid.mul(mid).cmp(&target)) {
                 PrefixBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
                 PrefixBisectionResult::Exact(mid) => {
@@ -501,11 +501,11 @@ mod tests {
         // This won't find an exact match (irrational), but should narrow the interval
         // Prefix bounds [1, 2]: mantissa=1, exponent=0
         let target = bin(2, 0);
-        let mut bounds = PrefixBounds::new(BigInt::from(1), BigInt::from(0));
+        let mut bounds = PrefixBounds::new(BigInt::from(1_i32), BigInt::from(0_i32));
         let initial_lower = bin(1, 0);
         let initial_upper = bin(2, 0);
 
-        for _ in 0..10 {
+        for _ in 0_i32..10_i32 {
             match bisection_step_normalized(&bounds, |mid| mid.mul(mid).cmp(&target)) {
                 PrefixBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
                 PrefixBisectionResult::Exact(_) => {
@@ -527,11 +527,11 @@ mod tests {
     #[test]
     fn bisection_respects_iterations() {
         // Prefix bounds [0, 1024]: mantissa=0, exponent=10
-        let mut bounds = PrefixBounds::new(BigInt::from(0), BigInt::from(10));
+        let mut bounds = PrefixBounds::new(BigInt::from(0_i32), BigInt::from(10_i32));
 
         // With 5 iterations, should halve the interval 5 times
         // Starting width: 1024, final width: 1024 / 2^5 = 32
-        for _ in 0..5 {
+        for _ in 0_i32..5_i32 {
             match bisection_step_normalized(&bounds, |_mid| Ordering::Less) {
                 PrefixBisectionResult::Narrowed(new_bounds) => bounds = new_bounds,
                 PrefixBisectionResult::Exact(_) => panic!("unexpected exact"),
@@ -540,7 +540,7 @@ mod tests {
 
         // After 5 iterations always going Above, exponent should be 10 - 5 = 5
         // Width = 2^5 = 32
-        assert_eq!(bounds.exponent, BigInt::from(5));
+        assert_eq!(bounds.exponent, BigInt::from(5_i32));
         let finite = bounds.to_finite_bounds();
         let width = finite.large() - finite.small().clone();
         assert_eq!(width, bin(32, 0));
@@ -552,14 +552,15 @@ mod tests {
 
         // Create bounds with lower = 1.5 (3 * 2^-1) and width = 2^-10
         // Express 1.5 with exponent -10: 1.5 = 3 * 2^-1 = (3 << 9) * 2^-10
-        let bounds = super::bounds_from_normalized(BigInt::from(3 << 9), BigInt::from(-10));
+        let bounds =
+            super::bounds_from_normalized(BigInt::from(3_i32 << 9_i32), BigInt::from(-10_i32));
 
         // Check that lower bound is 1.5
         assert_eq!(bounds.small(), &bin(3, -1));
 
         // Check that width is 1 * 2^(-10)
         assert_eq!(bounds.width().mantissa(), &BigUint::from(1u32));
-        assert_eq!(bounds.width().exponent(), &BigInt::from(-10));
+        assert_eq!(bounds.width().exponent(), &BigInt::from(-10_i32));
 
         // Check that upper bound is 1.5 + 2^(-10) = ((3 << 9) + 1) * 2^-10
         assert_eq!(bounds.large(), bin((3 << 9) + 1, -10));
@@ -571,14 +572,15 @@ mod tests {
 
         // Create bounds with lower = 5 and width = 2^-8
         // Express 5 with exponent -8: 5 = (5 << 8) * 2^-8
-        let bounds = super::bounds_from_normalized(BigInt::from(5 << 8), BigInt::from(-8));
+        let bounds =
+            super::bounds_from_normalized(BigInt::from(5_i32 << 8_i32), BigInt::from(-8_i32));
 
         // Check that lower bound is 5
         assert_eq!(bounds.small(), &bin(5, 0));
 
         // Check that width is 1 * 2^(-8) = 1/256
         assert_eq!(bounds.width().mantissa(), &BigUint::from(1u32));
-        assert_eq!(bounds.width().exponent(), &BigInt::from(-8));
+        assert_eq!(bounds.width().exponent(), &BigInt::from(-8_i32));
 
         // Check that upper bound is 5 + 1/256 = ((5 << 8) + 1) * 2^-8
         assert_eq!(bounds.large(), bin((5 << 8) + 1, -8));
@@ -588,7 +590,7 @@ mod tests {
     fn prefix_bounds_can_be_used_for_bisection() {
         // Create prefix bounds: lower = 1, width = 2^-10
         // Express 1 with exponent -10: 1 = (1 << 10) * 2^-10
-        let bounds = PrefixBounds::new(BigInt::from(1 << 10), BigInt::from(-10));
+        let bounds = PrefixBounds::new(BigInt::from(1_i32 << 10_i32), BigInt::from(-10_i32));
 
         // Perform one bisection step
         let target = bin(5, -2); // 1.25, which is above the midpoint
@@ -597,7 +599,7 @@ mod tests {
         // Should have narrowed the interval (exponent decreased by 1)
         match result {
             PrefixBisectionResult::Narrowed(new_bounds) => {
-                assert_eq!(new_bounds.exponent, BigInt::from(-11));
+                assert_eq!(new_bounds.exponent, BigInt::from(-11_i32));
             }
             PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
@@ -695,7 +697,7 @@ mod tests {
         assert_eq!(normalized.small(), original.small());
         assert_eq!(normalized.large(), original.large());
         assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
-        assert_eq!(normalized.width().exponent(), &BigInt::from(-3));
+        assert_eq!(normalized.width().exponent(), &BigInt::from(-3_i32));
     }
 
     #[test]
@@ -771,11 +773,11 @@ mod tests {
 
         let result_lo = match result.small() {
             XBinary::Finite(b) => b,
-            _ => panic!("expected finite lower"),
+            XBinary::NegInf | XBinary::PosInf => panic!("expected finite lower"),
         };
         let result_hi = match &result.large() {
             XBinary::Finite(b) => b.clone(),
-            _ => panic!("expected finite upper"),
+            XBinary::NegInf | XBinary::PosInf => panic!("expected finite upper"),
         };
 
         // Normalized bounds should contain original bounds
@@ -818,11 +820,11 @@ mod tests {
         // The normalized result should contain the original bounds
         let result_lo = match result.small() {
             XBinary::Finite(b) => b,
-            _ => panic!("expected finite lower"),
+            XBinary::NegInf | XBinary::PosInf => panic!("expected finite lower"),
         };
         let result_hi = match &result.large() {
             XBinary::Finite(b) => b.clone(),
-            _ => panic!("expected finite upper"),
+            XBinary::NegInf | XBinary::PosInf => panic!("expected finite upper"),
         };
 
         assert!(
@@ -850,11 +852,11 @@ mod tests {
 
         let result_lo = match result.small() {
             XBinary::Finite(b) => b,
-            _ => panic!("expected finite lower"),
+            XBinary::NegInf | XBinary::PosInf => panic!("expected finite lower"),
         };
         let result_hi = match &result.large() {
             XBinary::Finite(b) => b.clone(),
-            _ => panic!("expected finite upper"),
+            XBinary::NegInf | XBinary::PosInf => panic!("expected finite upper"),
         };
 
         assert!(

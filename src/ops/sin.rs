@@ -816,7 +816,7 @@ fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
 // Test helpers - exposed for integration tests
 #[cfg(test)]
 pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
-    taylor_sin_bounds(x, n, n * 10)
+    taylor_sin_bounds(x, n, n.checked_mul(10).expect("n * 10 does not overflow"))
 }
 
 #[cfg(test)]
@@ -1337,7 +1337,7 @@ mod tests {
         let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
         let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
         let pi_bounds = Bounds::new(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
-        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(5))
+        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(5_i32))
             .expect("sin_bounds should succeed");
 
         // Because the width >= two_pi_lo, the conservative check should trigger

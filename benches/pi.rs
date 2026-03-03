@@ -1,156 +1,143 @@
 mod common;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use num_bigint::BigInt;
 
-use common::{bench_id, bench_id_named, epsilon, precision_bits, verbose};
-use computable::{Binary, Computable, pi, pi_bounds_at_precision};
+use common::epsilon;
+use computable::{Binary, Bounds, Computable, pi, pi_bounds_at_precision};
 
-fn bench_pi_refinement(c: &mut Criterion) {
-    let mut group = c.benchmark_group("pi/refinement");
-    group.sample_size(10);
+// --- pi refinement ---
 
-    for &bits in precision_bits() {
-        let eps = epsilon(bits);
-
-        if verbose() {
-            let bounds = pi()
-                .refine_to_default(eps)
-                .expect("pi refinement should succeed");
-            eprintln!("[pi/refinement/{bits}] width: {}", bounds.width());
-        }
-
-        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
-            b.iter(|| {
-                black_box(
-                    pi().refine_to_default(*eps)
-                        .expect("pi refinement should succeed"),
-                )
-            })
-        });
-    }
-
-    group.finish();
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_pi_refinement(bits: usize) -> Bounds {
+    black_box(
+        pi().refine_to_default(epsilon(bits))
+            .expect("pi refinement should succeed"),
+    )
 }
 
-/// Note: unlike other benchmarks where the parameter is an epsilon (2^-bits),
-/// here it is passed directly to `pi_bounds_at_precision` as the number of bits
-/// of precision to compute via Machin's formula (single-shot, no iterative
-/// refinement). The values are the same sweep but the interpretation differs.
-fn bench_pi_bounds_at_precision(c: &mut Criterion) {
-    let mut group = c.benchmark_group("pi/bounds_at_precision");
-    group.sample_size(10);
+library_benchmark_group!(name = pi_refinement, benchmarks = [bench_pi_refinement]);
 
-    for &bits in precision_bits() {
-        if verbose() {
-            let (lower, upper) = pi_bounds_at_precision(bits);
-            eprintln!(
-                "[pi/bounds_at_precision/{bits}] width: {}",
-                upper.sub(&lower)
-            );
-        }
+// --- pi bounds at precision ---
 
-        group.bench_with_input(bench_id(bits), &bits, |b, &bits| {
-            b.iter(|| black_box(pi_bounds_at_precision(bits)))
-        });
-    }
-
-    group.finish();
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_pi_bounds(bits: usize) -> (Binary, Binary) {
+    black_box(pi_bounds_at_precision(bits))
 }
 
-fn bench_pi_arithmetic(c: &mut Criterion) {
-    let mut group = c.benchmark_group("pi/arithmetic");
-    group.sample_size(10);
+library_benchmark_group!(name = pi_bounds, benchmarks = [bench_pi_bounds]);
 
-    for &bits in precision_bits() {
-        let eps = epsilon(bits);
+// --- pi arithmetic ---
 
-        group.bench_with_input(bench_id_named("2pi", bits), &eps, |b, eps| {
-            b.iter(|| {
-                let two = Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)));
-                black_box(
-                    (two * pi())
-                        .refine_to_default(*eps)
-                        .expect("2pi should succeed"),
-                )
-            })
-        });
-
-        group.bench_with_input(bench_id_named("pi_half", bits), &eps, |b, eps| {
-            b.iter(|| {
-                let half = Computable::constant(Binary::new(BigInt::from(1), BigInt::from(-1)));
-                black_box(
-                    (half * pi())
-                        .refine_to_default(*eps)
-                        .expect("pi/2 should succeed"),
-                )
-            })
-        });
-
-        group.bench_with_input(bench_id_named("pi_sq", bits), &eps, |b, eps| {
-            b.iter(|| {
-                black_box(
-                    (pi() * pi())
-                        .refine_to_default(*eps)
-                        .expect("pi^2 should succeed"),
-                )
-            })
-        });
-
-        group.bench_with_input(bench_id_named("inv_pi", bits), &eps, |b, eps| {
-            b.iter(|| {
-                black_box(
-                    pi().inv()
-                        .refine_to_default(*eps)
-                        .expect("1/pi should succeed"),
-                )
-            })
-        });
-    }
-
-    group.finish();
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_two_pi(bits: usize) -> Bounds {
+    let two = Computable::constant(Binary::new(BigInt::from(2_i64), BigInt::from(0_i64)));
+    black_box(
+        (two * pi())
+            .refine_to_default(epsilon(bits))
+            .expect("2pi should succeed"),
+    )
 }
 
-fn bench_sin_pi(c: &mut Criterion) {
-    let mut group = c.benchmark_group("pi/sin_multiples");
-    group.sample_size(10);
-
-    for &bits in precision_bits() {
-        let eps = epsilon(bits);
-
-        for &multiplier in &[1u64, 2, 10, 100] {
-            group.bench_with_input(
-                bench_id_named(format!("mul_{multiplier}"), bits),
-                &eps,
-                |b, eps| {
-                    b.iter(|| {
-                        let n_pi = if multiplier == 1 {
-                            pi()
-                        } else {
-                            Computable::constant(Binary::new(
-                                BigInt::from(multiplier),
-                                BigInt::from(0),
-                            )) * pi()
-                        };
-                        black_box(
-                            n_pi.sin()
-                                .refine_to_default(*eps)
-                                .expect("sin(n*pi) should succeed"),
-                        )
-                    })
-                },
-            );
-        }
-    }
-
-    group.finish();
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_pi_half(bits: usize) -> Bounds {
+    let half = Computable::constant(Binary::new(BigInt::from(1_i64), BigInt::from(-1_i64)));
+    black_box(
+        (half * pi())
+            .refine_to_default(epsilon(bits))
+            .expect("pi/2 should succeed"),
+    )
 }
 
-criterion_group!(
-    benches,
-    bench_pi_refinement,
-    bench_pi_bounds_at_precision,
-    bench_pi_arithmetic,
-    bench_sin_pi,
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_pi_squared(bits: usize) -> Bounds {
+    black_box(
+        (pi() * pi())
+            .refine_to_default(epsilon(bits))
+            .expect("pi^2 should succeed"),
+    )
+}
+
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_inv_pi(bits: usize) -> Bounds {
+    black_box(
+        pi().inv()
+            .refine_to_default(epsilon(bits))
+            .expect("1/pi should succeed"),
+    )
+}
+
+library_benchmark_group!(
+    name = pi_arithmetic,
+    benchmarks = [bench_two_pi, bench_pi_half, bench_pi_squared, bench_inv_pi]
 );
-criterion_main!(benches);
+
+// --- sin(n*pi) ---
+
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_sin_1pi(bits: usize) -> Bounds {
+    black_box(
+        pi().sin()
+            .refine_to_default(epsilon(bits))
+            .expect("sin(pi) should succeed"),
+    )
+}
+
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_sin_2pi(bits: usize) -> Bounds {
+    let n_pi = Computable::constant(Binary::new(BigInt::from(2_i64), BigInt::from(0_i64))) * pi();
+    black_box(
+        n_pi.sin()
+            .refine_to_default(epsilon(bits))
+            .expect("sin(2*pi) should succeed"),
+    )
+}
+
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_sin_10pi(bits: usize) -> Bounds {
+    let n_pi = Computable::constant(Binary::new(BigInt::from(10_i64), BigInt::from(0_i64))) * pi();
+    black_box(
+        n_pi.sin()
+            .refine_to_default(epsilon(bits))
+            .expect("sin(10*pi) should succeed"),
+    )
+}
+
+#[library_benchmark]
+#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+fn bench_sin_100pi(bits: usize) -> Bounds {
+    let n_pi = Computable::constant(Binary::new(BigInt::from(100_i64), BigInt::from(0_i64))) * pi();
+    black_box(
+        n_pi.sin()
+            .refine_to_default(epsilon(bits))
+            .expect("sin(100*pi) should succeed"),
+    )
+}
+
+library_benchmark_group!(
+    name = sin_multiples,
+    benchmarks = [
+        bench_sin_1pi,
+        bench_sin_2pi,
+        bench_sin_10pi,
+        bench_sin_100pi
+    ]
+);
+
+main!(
+    library_benchmark_groups = pi_refinement,
+    pi_bounds,
+    pi_arithmetic,
+    sin_multiples
+);

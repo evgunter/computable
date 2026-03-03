@@ -303,7 +303,7 @@ mod tests {
     use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        Computable::constant(bin(value_int as i64, 0))
+        Computable::constant(bin(i64::try_from(value_int).expect("value fits in i64"), 0))
             .nth_root(NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
@@ -331,8 +331,8 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = bounds.large();
-        let upper = unwrap_finite(&upper);
+        let upper_xb = bounds.large();
+        let upper = unwrap_finite(&upper_xb);
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");
@@ -357,8 +357,8 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = bounds.large();
-        let upper = unwrap_finite(&upper);
+        let upper_xb = bounds.large();
+        let upper = unwrap_finite(&upper_xb);
         let expected = 2.0_f64 * 2.0_f64.sqrt();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");

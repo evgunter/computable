@@ -292,19 +292,19 @@ mod tests {
 
         // Negative finite
         let neg_finite = XBinary::Finite(bin(-5, 2));
-        let result = UXBinary::try_from_xbinary(&neg_finite);
-        assert!(result.is_err());
+        let neg_result = UXBinary::try_from_xbinary(&neg_finite);
+        assert!(neg_result.is_err());
 
         // Positive infinity
         let pos_inf = XBinary::PosInf;
-        let result = UXBinary::try_from_xbinary(&pos_inf);
-        assert!(result.is_ok());
-        assert_eq!(result.expect("should succeed"), UXBinary::Inf);
+        let inf_result = UXBinary::try_from_xbinary(&pos_inf);
+        assert!(inf_result.is_ok());
+        assert_eq!(inf_result.expect("should succeed"), UXBinary::Inf);
 
         // Negative infinity
         let neg_inf = XBinary::NegInf;
-        let result = UXBinary::try_from_xbinary(&neg_inf);
-        assert!(result.is_err());
+        let neg_inf_result = UXBinary::try_from_xbinary(&neg_inf);
+        assert!(neg_inf_result.is_err());
     }
 
     #[test]
@@ -326,12 +326,12 @@ mod tests {
         assert_eq!(width, UXBinary::Finite(ubin(1, 1)));
 
         // Equal bounds
-        let width = one.clone().abs_distance(one.clone());
-        assert_eq!(width, UXBinary::zero());
+        let width_equal = one.clone().abs_distance(one.clone());
+        assert_eq!(width_equal, UXBinary::zero());
 
         // Swapped (lower > upper) - still returns absolute value
-        let width = three.abs_distance(one);
-        assert_eq!(width, UXBinary::Finite(ubin(1, 1)));
+        let width_swapped = three.abs_distance(one);
+        assert_eq!(width_swapped, UXBinary::Finite(ubin(1, 1)));
     }
 
     #[test]

@@ -242,12 +242,12 @@ mod tests {
     fn ubinary_normalizes_even_mantissa() {
         let value = ubin(8, 0);
         assert_eq!(value.mantissa(), &BigUint::from(1u32));
-        assert_eq!(value.exponent(), &BigInt::from(3));
+        assert_eq!(value.exponent(), &BigInt::from(3_i32));
     }
 
     #[test]
     fn ubinary_zero_uses_zero_exponent() {
-        let value = UBinary::new(BigUint::zero(), BigInt::from(42));
+        let value = UBinary::new(BigUint::zero(), BigInt::from(42_i32));
         assert_eq!(value.mantissa(), &BigUint::zero());
         assert_eq!(value.exponent(), &BigInt::zero());
     }
@@ -290,19 +290,19 @@ mod tests {
         assert!(result.is_ok());
         let ubinary = result.expect("should succeed");
         assert_eq!(ubinary.mantissa(), &BigUint::from(5u32));
-        assert_eq!(ubinary.exponent(), &BigInt::from(2));
+        assert_eq!(ubinary.exponent(), &BigInt::from(2_i32));
 
         let negative = bin(-5, 2);
-        let result = UBinary::try_from_binary(&negative);
-        assert!(result.is_err());
+        let neg_result = UBinary::try_from_binary(&negative);
+        assert!(neg_result.is_err());
     }
 
     #[test]
     fn ubinary_to_binary_works() {
         let ubinary = ubin(7, 3);
         let binary = ubinary.to_binary();
-        assert_eq!(binary.mantissa(), &BigInt::from(7));
-        assert_eq!(binary.exponent(), &BigInt::from(3));
+        assert_eq!(binary.mantissa(), &BigInt::from(7_i32));
+        assert_eq!(binary.exponent(), &BigInt::from(3_i32));
     }
 
     #[test]
