@@ -3,16 +3,14 @@ mod common;
 use std::hint::black_box;
 use std::num::NonZeroU32;
 
-use gungraun::{library_benchmark, library_benchmark_group, main};
+use gungraun::{LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use common::{balanced_sum, epsilon};
 use computable::{Binary, Bounds, Computable};
 
-// Keep low: each nth_root + constant pair spawns 2 refiner threads under
-// valgrind, and valgrind defaults to ~500 max threads.
-const SAMPLE_COUNT: usize = 50_usize;
+const SAMPLE_COUNT: usize = 1_000_usize;
 
 #[library_benchmark]
 #[benches::precision(args = [1_usize, 4, 16, 64, 256])]
@@ -40,4 +38,9 @@ fn bench_integer_roots(bits: usize) -> Bounds {
 
 library_benchmark_group!(name = integer_roots, benchmarks = [bench_integer_roots]);
 
-main!(library_benchmark_groups = integer_roots);
+// Each nth_root + constant pair spawns 2 refiner threads; raise valgrind's
+// default limit of 500 to accommodate 1000 pairs.
+main!(
+    config = LibraryBenchmarkConfig::default().valgrind_args(["--max-threads=2500"]);
+    library_benchmark_groups = integer_roots
+);
