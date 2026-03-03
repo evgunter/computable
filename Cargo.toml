@@ -19,6 +19,7 @@ parking_lot = "0.12"
 rand = "0.8"
 
 [dev-dependencies]
+criterion = "0.8.2"
 gungraun = "0.17.2"
 
 [[bench]]
@@ -47,6 +48,10 @@ harness = false
 
 [[bench]]
 name = "asymmetric_convergence"
+harness = false
+
+[[bench]]
+name = "summation_criterion"
 harness = false
 
 [lints.clippy]
