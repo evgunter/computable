@@ -26,7 +26,4 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y valgrind
       - run: cargo install gungraun-runner --version 0.17.2
       - name: Run all benchmarks
-        env:
-          RUST_BACKTRACE: "1"
-          GUNGRAUN_LOG: debug
         run: ulimit -s 65536 && cargo bench

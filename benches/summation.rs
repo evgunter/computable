@@ -9,6 +9,8 @@ use rand::{Rng, SeedableRng};
 use common::{balanced_sum, epsilon};
 use computable::{Binary, Bounds, Computable};
 
+// Keep low: each constant is a BaseOp refiner that spawns a thread under
+// valgrind, and valgrind defaults to ~500 max threads.
 const SAMPLE_COUNT: usize = 1_000_usize;
 
 #[library_benchmark]
