@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, Mul, Neg, Shl, Shr, Sub};
 
 use num_traits::{Signed, Zero};
 
@@ -177,6 +177,30 @@ impl Mul for XBinary {
 
     fn mul(self, rhs: Self) -> Self::Output {
         XBinary::mul(&self, &rhs)
+    }
+}
+
+impl Shl<u32> for XBinary {
+    type Output = Self;
+
+    fn shl(self, rhs: u32) -> Self::Output {
+        match self {
+            Self::NegInf => Self::NegInf,
+            Self::PosInf => Self::PosInf,
+            Self::Finite(v) => Self::Finite(v << rhs),
+        }
+    }
+}
+
+impl Shr<u32> for XBinary {
+    type Output = Self;
+
+    fn shr(self, rhs: u32) -> Self::Output {
+        match self {
+            Self::NegInf => Self::NegInf,
+            Self::PosInf => Self::PosInf,
+            Self::Finite(v) => Self::Finite(v >> rhs),
+        }
     }
 }
 

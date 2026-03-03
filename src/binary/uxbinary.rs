@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Mul, Shl, Shr, Sub};
 
 use num_traits::Zero;
 
@@ -75,6 +75,31 @@ impl UXBinary {
         }
     }
 
+    /// Conservative floor division: returns a value ≤ self / other.
+    ///
+    /// Special cases follow interval arithmetic conventions for demand budgets:
+    /// - finite / Inf = 0 (dividing by an infinitely large value)
+    /// - Inf / finite(nonzero) = Inf
+    /// - nonzero / zero = Inf (child has zero effect, so any width is fine)
+    /// - zero / anything = zero
+    pub fn div_floor(&self, other: &Self) -> Self {
+        use UXBinary::{Finite, Inf};
+        if self.is_zero() {
+            return Self::zero();
+        }
+        match (self, other) {
+            (_, Inf) => Self::zero(),
+            (Inf, _) => Inf,
+            (Finite(n), Finite(d)) => {
+                if d.mantissa().is_zero() {
+                    Inf // nonzero / 0 → Inf
+                } else {
+                    Finite(n.div_floor(d))
+                }
+            }
+        }
+    }
+
     /// Subtracts another UXBinary from this one, saturating at zero.
     pub fn sub_saturating(&self, other: &Self) -> Self {
         use UXBinary::{Finite, Inf};
@@ -136,6 +161,28 @@ impl Mul for UXBinary {
 
     fn mul(self, rhs: Self) -> Self::Output {
         UXBinary::mul(&self, &rhs)
+    }
+}
+
+impl Shl<u32> for UXBinary {
+    type Output = Self;
+
+    fn shl(self, rhs: u32) -> Self::Output {
+        match self {
+            Self::Inf => Self::Inf,
+            Self::Finite(v) => Self::Finite(v << rhs),
+        }
+    }
+}
+
+impl Shr<u32> for UXBinary {
+    type Output = Self;
+
+    fn shr(self, rhs: u32) -> Self::Output {
+        match self {
+            Self::Inf => Self::Inf,
+            Self::Finite(v) => Self::Finite(v >> rhs),
+        }
     }
 }
 

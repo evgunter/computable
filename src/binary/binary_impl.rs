@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, Mul, Neg, Shl, Shr, Sub};
 
 use num_bigint::{BigInt, BigUint};
 use num_traits::{Float, Signed, Zero};
@@ -230,6 +230,24 @@ impl Mul for Binary {
 
     fn mul(self, rhs: Self) -> Self::Output {
         Binary::mul(&self, &rhs)
+    }
+}
+
+impl Shl<u32> for Binary {
+    type Output = Self;
+
+    #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
+    fn shl(self, rhs: u32) -> Self::Output {
+        Self::new(self.mantissa, self.exponent + BigInt::from(rhs))
+    }
+}
+
+impl Shr<u32> for Binary {
+    type Output = Self;
+
+    #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
+    fn shr(self, rhs: u32) -> Self::Output {
+        Self::new(self.mantissa, self.exponent - BigInt::from(rhs))
     }
 }
 

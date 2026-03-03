@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Mul, Shl, Shr, Sub};
 
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
@@ -87,6 +87,32 @@ impl UBinary {
         let exponent = &self.exponent + &other.exponent;
         let mantissa = &self.mantissa * &other.mantissa;
         Self::normalize(mantissa, exponent)
+    }
+
+    /// Conservative floor division: returns a value ≤ self / other.
+    ///
+    /// The result is a lower bound on the true quotient, with precision
+    /// proportional to the divisor's mantissa size.
+    ///
+    /// # Precondition
+    ///
+    /// The denominator must be nonzero.
+    pub fn div_floor(&self, other: &Self) -> Self {
+        debug_assert!(
+            !other.mantissa.is_zero(),
+            "div_floor: denominator must be nonzero"
+        );
+        if self.mantissa.is_zero() {
+            return Self::zero();
+        }
+        // a / b = (m_a * 2^e_a) / (m_b * 2^e_b) = (m_a / m_b) * 2^(e_a - e_b)
+        // Shift numerator left until quotient has enough bits for a
+        // meaningful result (at least 1 bit, i.e. quotient >= 1).
+        let extra_bits = other.mantissa.bits();
+        let shifted_num = &self.mantissa << extra_bits;
+        let quotient = shifted_num / &other.mantissa;
+        let exponent = &self.exponent - &other.exponent - BigInt::from(extra_bits);
+        Self::new(quotient, exponent)
     }
 
     /// Normalizes the representation by factoring out powers of 2 from the mantissa.
@@ -178,6 +204,24 @@ impl Mul for UBinary {
 
     fn mul(self, rhs: Self) -> Self::Output {
         UBinary::mul(&self, &rhs)
+    }
+}
+
+impl Shl<u32> for UBinary {
+    type Output = Self;
+
+    #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
+    fn shl(self, rhs: u32) -> Self::Output {
+        Self::new(self.mantissa, self.exponent + BigInt::from(rhs))
+    }
+}
+
+impl Shr<u32> for UBinary {
+    type Output = Self;
+
+    #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
+    fn shr(self, rhs: u32) -> Self::Output {
+        Self::new(self.mantissa, self.exponent - BigInt::from(rhs))
     }
 }
 
