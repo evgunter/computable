@@ -2,7 +2,7 @@ mod common;
 
 use std::hint::black_box;
 
-use gungraun::{LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -32,9 +32,4 @@ fn bench_summation(bits: usize) -> Bounds {
 
 library_benchmark_group!(name = summation, benchmarks = [bench_summation]);
 
-// Each constant spawns a refiner thread; raise valgrind's default limit
-// of 500 to accommodate 200k+ terms.
-main!(
-    config = LibraryBenchmarkConfig::default().valgrind_args(["--max-threads=210000"]);
-    library_benchmark_groups = summation
-);
+main!(library_benchmark_groups = summation);

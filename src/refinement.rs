@@ -137,19 +137,33 @@ impl RefinementGraph {
         &self,
         tolerance_exp: &XUsize,
     ) -> Result<Bounds, ComputableError> {
+        // Eagerly populate all bounds caches so we can identify exact-bounds refiners.
+        let root_bounds = self.root.get_bounds()?;
+        if bounds_width_leq(&root_bounds, tolerance_exp) {
+            return Ok(root_bounds);
+        }
+
         let mut outcome = None;
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
-            let mut refiners = Vec::new();
             let (update_tx, update_rx) = unbounded();
 
+            // Only spawn threads for refiners whose bounds aren't already exact.
+            let mut refiner_nodes = Vec::new();
+            let mut refiner_handles = Vec::new();
             for node in &self.refiners {
-                refiners.push(spawn_refiner(
-                    scope,
-                    Arc::clone(node),
-                    Arc::clone(&stop_flag),
-                    update_tx.clone(),
-                ));
+                let exact = node
+                    .cached_bounds()
+                    .is_some_and(|b| b.small() == &b.large());
+                if !exact {
+                    refiner_handles.push(spawn_refiner(
+                        scope,
+                        Arc::clone(node),
+                        Arc::clone(&stop_flag),
+                        update_tx.clone(),
+                    ));
+                    refiner_nodes.push(Arc::clone(node));
+                }
             }
             drop(update_tx);
 
@@ -163,7 +177,7 @@ impl RefinementGraph {
             };
 
             let result = (|| {
-                let num_refiners = refiners.len();
+                let num_refiners = refiner_handles.len();
                 let mut active = vec![true; num_refiners];
                 let mut all_state_unchanged = true;
 
@@ -200,15 +214,15 @@ impl RefinementGraph {
 
                     // Send Step to active refiners ABOVE demand budget only.
                     let mut expected = 0_usize;
-                    for (i, refiner) in refiners.iter().enumerate() {
+                    for (i, handle) in refiner_handles.iter().enumerate() {
                         if !active[i] {
                             continue;
                         }
-                        let skip = self.refiners[i]
+                        let skip = refiner_nodes[i]
                             .cached_bounds()
                             .is_some_and(|b| bounds_width_leq(&b, &demand_budget));
                         if !skip {
-                            refiner
+                            handle
                                 .sender
                                 .send(RefineCommand::Step { precision_bits })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
@@ -223,10 +237,10 @@ impl RefinementGraph {
                     // extreme outliers whose width is negligible vs the widest.
                     if expected == 0 {
                         // Find widest active refiner width.
-                        let max_width = (0..refiners.len())
+                        let max_width = (0..refiner_handles.len())
                             .filter(|&i| active[i])
                             .map(|i| {
-                                self.refiners[i]
+                                refiner_nodes[i]
                                     .cached_bounds()
                                     .map_or(UXBinary::Inf, |b| b.width().clone())
                             })
@@ -234,17 +248,17 @@ impl RefinementGraph {
 
                         // Step all active refiners except extreme outliers
                         // (those whose width is negligibly small vs the widest).
-                        for (i, refiner) in refiners.iter().enumerate() {
+                        for (i, handle) in refiner_handles.iter().enumerate() {
                             if !active[i] {
                                 continue;
                             }
                             let dominated = max_width.as_ref().is_some_and(|max_w| {
-                                self.refiners[i]
+                                refiner_nodes[i]
                                     .cached_bounds()
                                     .is_some_and(|b| is_width_dominated(b.width(), max_w))
                             });
                             if !dominated {
-                                refiner
+                                handle
                                     .sender
                                     .send(RefineCommand::Step { precision_bits })
                                     .map_err(|_send_err| {
@@ -277,8 +291,8 @@ impl RefinementGraph {
                                 let exhausted_node_id = update.node_id;
                                 self.apply_update(update)?;
                                 // Find and mark this refiner inactive.
-                                for (i, refiner_node) in self.refiners.iter().enumerate() {
-                                    if refiner_node.id == exhausted_node_id {
+                                for (i, node) in refiner_nodes.iter().enumerate() {
+                                    if node.id == exhausted_node_id {
                                         active[i] = false;
                                         break;
                                     }
@@ -302,7 +316,7 @@ impl RefinementGraph {
                 })
             })();
 
-            shutdown_refiners(refiners, &stop_flag);
+            shutdown_refiners(refiner_handles, &stop_flag);
             outcome = Some(result);
         });
 

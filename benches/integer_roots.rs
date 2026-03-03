@@ -3,7 +3,7 @@ mod common;
 use std::hint::black_box;
 use std::num::NonZeroU32;
 
-use gungraun::{LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -38,9 +38,4 @@ fn bench_integer_roots(bits: usize) -> Bounds {
 
 library_benchmark_group!(name = integer_roots, benchmarks = [bench_integer_roots]);
 
-// Each nth_root + constant pair spawns 2 refiner threads; raise valgrind's
-// default limit of 500 to accommodate 1000 pairs.
-main!(
-    config = LibraryBenchmarkConfig::default().valgrind_args(["--max-threads=2500"]);
-    library_benchmark_groups = integer_roots
-);
+main!(library_benchmark_groups = integer_roots);
