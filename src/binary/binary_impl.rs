@@ -287,13 +287,13 @@ mod tests {
     #[test]
     fn binary_normalizes_even_mantissa() {
         let value = bin(8, 0);
-        assert_eq!(value.mantissa(), &BigInt::from(1));
-        assert_eq!(value.exponent(), &BigInt::from(3));
+        assert_eq!(value.mantissa(), &BigInt::from(1_i32));
+        assert_eq!(value.exponent(), &BigInt::from(3_i32));
     }
 
     #[test]
     fn binary_zero_uses_zero_exponent() {
-        let value = Binary::new(BigInt::zero(), BigInt::from(42));
+        let value = Binary::new(BigInt::zero(), BigInt::from(42_i32));
         assert_eq!(value.mantissa(), &BigInt::zero());
         assert_eq!(value.exponent(), &BigInt::zero());
     }
@@ -311,11 +311,11 @@ mod tests {
 
         let huge_exp = BigInt::from(usize::MAX) + BigInt::one();
         let tiny_exp = -huge_exp.clone();
-        let huge_pos = Binary::new(BigInt::from(1), huge_exp.clone());
-        let tiny_pos = Binary::new(BigInt::from(1), tiny_exp.clone());
+        let huge_pos = Binary::new(BigInt::from(1_i32), huge_exp.clone());
+        let tiny_pos = Binary::new(BigInt::from(1_i32), tiny_exp.clone());
         assert!(huge_pos > tiny_pos);
 
-        let huge_neg = Binary::new(BigInt::from(-1), huge_exp);
+        let huge_neg = Binary::new(BigInt::from(-1_i32), huge_exp);
         assert!(huge_neg < tiny_pos);
     }
 
@@ -325,12 +325,12 @@ mod tests {
 
         let huge_exp = BigInt::from(usize::MAX) + BigInt::one();
         let tiny_exp = -huge_exp.clone();
-        let huge_pos = Binary::new(BigInt::from(1), huge_exp.clone());
-        let tiny_neg = Binary::new(BigInt::from(-1), tiny_exp.clone());
+        let huge_pos = Binary::new(BigInt::from(1_i32), huge_exp.clone());
+        let tiny_neg = Binary::new(BigInt::from(-1_i32), tiny_exp.clone());
         assert!(huge_pos > tiny_neg);
 
-        let huge_neg = Binary::new(BigInt::from(-1), huge_exp);
-        let tiny_pos = Binary::new(BigInt::from(1), tiny_exp);
+        let huge_neg = Binary::new(BigInt::from(-1_i32), huge_exp);
+        let tiny_pos = Binary::new(BigInt::from(1_i32), tiny_exp);
         assert!(huge_neg < tiny_pos);
     }
 
@@ -365,8 +365,8 @@ mod tests {
     fn binary_neg_flips_sign() {
         let pos = bin(3, 2);
         let neg = -pos;
-        assert_eq!(neg.mantissa(), &BigInt::from(-3));
-        assert_eq!(neg.exponent(), &BigInt::from(2));
+        assert_eq!(neg.mantissa(), &BigInt::from(-3_i32));
+        assert_eq!(neg.exponent(), &BigInt::from(2_i32));
     }
 
     #[test]
@@ -380,13 +380,13 @@ mod tests {
     fn binary_from_f64_converts_normal_values() {
         // 1.5 = 3 * 2^-1
         let result = Binary::from_f64(1.5).expect("should succeed");
-        assert_eq!(result.mantissa(), &BigInt::from(3));
-        assert_eq!(result.exponent(), &BigInt::from(-1));
+        assert_eq!(result.mantissa(), &BigInt::from(3_i32));
+        assert_eq!(result.exponent(), &BigInt::from(-1_i32));
 
         // -2.0 = -1 * 2^1
         let neg_result = Binary::from_f64(-2.0).expect("should succeed");
-        assert_eq!(neg_result.mantissa(), &BigInt::from(-1));
-        assert_eq!(neg_result.exponent(), &BigInt::from(1));
+        assert_eq!(neg_result.mantissa(), &BigInt::from(-1_i32));
+        assert_eq!(neg_result.exponent(), &BigInt::from(1_i32));
     }
 
     #[test]

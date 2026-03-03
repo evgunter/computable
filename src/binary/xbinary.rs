@@ -254,8 +254,8 @@ mod tests {
         let result = XBinary::from_f64(1.5).expect("should succeed");
         if let XBinary::Finite(value) = result {
             // 1.5 = 3 * 2^-1
-            assert_eq!(value.mantissa(), &BigInt::from(3));
-            assert_eq!(value.exponent(), &BigInt::from(-1));
+            assert_eq!(value.mantissa(), &BigInt::from(3_i32));
+            assert_eq!(value.exponent(), &BigInt::from(-1_i32));
         } else {
             panic!("expected finite value");
         }

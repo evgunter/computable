@@ -526,7 +526,7 @@ mod tests {
     }
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        Computable::constant(bin(value_int as i64, 0))
+        Computable::constant(bin(i64::try_from(value_int).expect("value fits in i64"), 0))
             .nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
@@ -742,7 +742,7 @@ mod tests {
         let tolerance_exp = XUsize::Finite(6);
         let reader = Arc::clone(&computable);
         let handle = thread::spawn(move || {
-            for _ in 0..8 {
+            for _ in 0_i32..8_i32 {
                 let bounds = reader.bounds().expect("bounds should succeed");
                 assert_width_nonnegative(&bounds);
             }
@@ -810,7 +810,7 @@ mod tests {
         let barrier = Arc::new(Barrier::new(4));
 
         let mut handles = Vec::new();
-        for _ in 0..3 {
+        for _ in 0_i32..3_i32 {
             let shared_expression = Arc::clone(&expression);
             let shared_barrier = Arc::clone(&barrier);
             handles.push(thread::spawn(move || {
@@ -868,7 +868,7 @@ mod tests {
         let barrier = Arc::new(Barrier::new(3));
 
         let mut handles = Vec::new();
-        for _ in 0..2 {
+        for _ in 0_i32..2_i32 {
             let shared_value = Arc::clone(&shared);
             let shared_barrier = Arc::clone(&barrier);
             handles.push(thread::spawn(move || {
@@ -906,7 +906,7 @@ mod tests {
             let reader_barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 reader_barrier.wait();
-                for _ in 0..32 {
+                for _ in 0_i32..32_i32 {
                     let bounds = reader_value.bounds().expect("bounds should succeed");
                     assert_width_nonnegative(&bounds);
                 }

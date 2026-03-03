@@ -502,7 +502,7 @@ mod tests {
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
 
-        let expected_f64 = 2.0_f64.sqrt() + 2.0;
+        let expected_f64 = 2.0_f64.sqrt() + 2.0_f64;
         let expected_binary = XBinary::from_f64(expected_f64)
             .expect("expected value should convert to extended binary");
         let expected = unwrap_finite(&expected_binary);
