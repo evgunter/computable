@@ -2,49 +2,27 @@
 
 ## Tier 1: Medium (Unblocked)
 
-### <a id="non-blocking-refinement"></a>non-blocking-refinement: Refinement blocks on slow refiners instead of continuing with fast ones
-**File:** `src/refinement.rs:441`
-```rust
-fn compute_demand_budget(tolerance_exp: &XUsize, num_active: usize) -> XUsize {
-```
-The round-based refinement model sends Step commands and then blocks waiting for all responses before starting the next round. If a fast refiner and a slow refiner are both stepped in the same round, the coordinator waits for the slow refiner even though it could be stepping the fast one again. In the test `demand_skipping_unnecessarily_steps_already_precise_refiner`, y (width 3/8, below target 1/2) is slow (1s/step) and x is fast — but the coordinator blocks on y's response instead of continuing to step x. The coordinator should not block on slow refiners when there are fast refiners it could be stepping.
+### <a id="kill-slow-refiners"></a>kill-slow-refiners: Kill outstanding refiners once precision is achieved
+**File:** `src/refinement.rs`
+The event-loop coordinator returns as soon as precision is met, but `thread::scope` still blocks on joining all spawned refiner threads. If a slow refiner has an outstanding step when the coordinator exits, `shutdown_refiners` sets the stop flag and sends Stop — but the refiner won't see it until its current `refine_step()` completes. With targeted stopping (e.g. a per-refiner stop flag checked inside expensive computations), the coordinator could signal outstanding refiners to abort their current step early, avoiding the `thread::scope` join delay.
 
 ---
 
 ## Tier 2: Hard (Unblocked, but complex correctness issues)
 
-### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
-**File:** `src/refinement.rs:15`
-```rust
-//! TODO: The README describes an async/event-driven refinement model where:
-```
-Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative), [nth-root-async](#nth-root-async), [refiners-stop](#refiners-stop)
+### <a id="node-initiated-refinement"></a>node-initiated-refinement: Allow nodes to request refinement of their inputs
+Enable a node's `refine_step` to return a recoverable error requesting that the coordinator refine a specific input before retrying. Currently the coordinator decides which refiners to step based on demand budgets; nodes cannot signal "my input bounds are too wide, refine them first." This is needed for nth_root to handle even-degree roots of inputs overlapping with negative numbers (return a recoverable error instead of (0, ∞) bounds). **Blocks:** [nth-root-negative](#nth-root-negative)
 
 ---
 
 ## Blocked (Waiting on other items)
-
 
 ### <a id="nth-root-negative"></a>nth-root-negative: Handle negative inputs for even-degree roots
 **File:** `src/ops/nth_root.rs:15`
 ```rust
 //! TODO: Contra the README, even-degree roots of inputs that overlap with negative
 ```
-**Blocked by:** [async-refinement](#async-refinement)
-
-### <a id="nth-root-async"></a>nth-root-async: nth_root async model dependency
-**File:** `src/ops/nth_root.rs:22`
-```rust
-//! async/event-driven model described in the README (see TODO in refinement.rs)
-```
-**Blocked by:** [async-refinement](#async-refinement)
-
-### <a id="refiners-stop"></a>refiners-stop: Allow refiners to stop individually
-**File:** `src/refinement.rs:130`
-```rust
-// TODO: allow individual refiners to stop at the max without
-```
-**Blocked by:** [async-refinement](#async-refinement)
+**Blocked by:** [node-initiated-refinement](#node-initiated-refinement)
 
 ---
 
