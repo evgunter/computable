@@ -10,6 +10,8 @@ use rand::{Rng, SeedableRng};
 use common::{balanced_sum, epsilon};
 use computable::{Binary, Bounds, Computable};
 
+// Keep low: each nth_root + constant pair spawns 2 refiner threads under
+// valgrind, and valgrind defaults to ~500 max threads.
 const SAMPLE_COUNT: usize = 50_usize;
 
 #[library_benchmark]
