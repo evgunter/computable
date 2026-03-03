@@ -74,7 +74,11 @@ use crate::computable::Computable;
 /// Creates a Binary representing 2^(-n), for test assertions that need
 /// epsilon as a Binary value for arithmetic.
 pub fn epsilon_as_binary(n: usize) -> Binary {
-    Binary::new(BigInt::from(1), BigInt::from(-(n as i64)))
+    let n_i64 = i64::try_from(n).expect("precision fits in i64");
+    Binary::new(
+        BigInt::from(1_i32),
+        BigInt::from(n_i64.checked_neg().expect("negation does not overflow")),
+    )
 }
 
 /// Computes the midpoint between two finite XBinary values.

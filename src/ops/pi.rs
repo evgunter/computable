@@ -339,13 +339,17 @@ mod tests {
     }
 
     fn epsilon_as_binary(n: usize) -> Binary {
-        Binary::new(BigInt::from(1), BigInt::from(-(n as i64)))
+        let n_i64 = i64::try_from(n).expect("precision fits in i64");
+        Binary::new(
+            BigInt::from(1_i32),
+            BigInt::from(n_i64.checked_neg().expect("negation does not overflow")),
+        )
     }
 
     fn unwrap_finite(x: &XBinary) -> Binary {
         match x {
             XBinary::Finite(b) => b.clone(),
-            _ => panic!("expected finite"),
+            XBinary::NegInf | XBinary::PosInf => panic!("expected finite"),
         }
     }
 
@@ -442,7 +446,13 @@ mod tests {
         let (lo, hi) = pi_bounds_at_precision(PRECISION_BITS);
         let width = hi.sub(&lo);
 
-        let threshold = bin(1, -(PRECISION_BITS as i64 - 1));
+        let precision_i64 = i64::try_from(PRECISION_BITS).expect("precision fits in i64");
+        let exp = precision_i64
+            .checked_sub(1_i64)
+            .expect("subtraction does not overflow")
+            .checked_neg()
+            .expect("negation does not overflow");
+        let threshold = bin(1, exp);
         assert!(
             width < threshold,
             "{} bits of precision should give width < 2^-{}",

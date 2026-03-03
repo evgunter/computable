@@ -127,8 +127,8 @@ mod tests {
         // 2^8 / 5 = 256 / 5 = 51 (floor)
         // Result is 51 * 2^-8
         // After normalization (51 is odd), mantissa = 51, exponent = -8
-        assert_eq!(result.mantissa(), &BigInt::from(51));
-        assert_eq!(result.exponent(), &BigInt::from(-8));
+        assert_eq!(result.mantissa(), &BigInt::from(51_i32));
+        assert_eq!(result.exponent(), &BigInt::from(-8_i32));
     }
 
     #[test]
@@ -142,10 +142,10 @@ mod tests {
         // 2^8 / 3 = 256 / 3 = 85.33...
         // Floor = 85, Ceil = 86
         // After normalization: 85 (odd), 43 * 2^1 = 86
-        assert_eq!(floor.mantissa(), &BigInt::from(85));
-        assert_eq!(floor.exponent(), &BigInt::from(-8));
-        assert_eq!(ceil.mantissa(), &BigInt::from(43));
-        assert_eq!(ceil.exponent(), &BigInt::from(-7)); // 43 * 2^-7 = 86 * 2^-8
+        assert_eq!(floor.mantissa(), &BigInt::from(85_i32));
+        assert_eq!(floor.exponent(), &BigInt::from(-8_i32));
+        assert_eq!(ceil.mantissa(), &BigInt::from(43_i32));
+        assert_eq!(ceil.exponent(), &BigInt::from(-7_i32)); // 43 * 2^-7 = 86 * 2^-8
 
         // Ceil should be > Floor since 1/3 is not exactly representable
         assert!(ceil > floor);
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn reciprocal_of_infinity_is_zero() {
-        let precision = BigInt::from(10);
+        let precision = BigInt::from(10_i32);
 
         let result = reciprocal_rounded_abs_extended(
             &XBinary::PosInf,
@@ -163,17 +163,17 @@ mod tests {
         .expect("should succeed");
         assert!(result.is_zero());
 
-        let result =
+        let result_neg_inf =
             reciprocal_rounded_abs_extended(&XBinary::NegInf, &precision, ReciprocalRounding::Ceil)
                 .expect("should succeed");
-        assert!(result.is_zero());
+        assert!(result_neg_inf.is_zero());
     }
 
     #[test]
     fn reciprocal_basic_computation() {
         // 1/2 with precision 4 should give approximately 0.5
         let value = xbin(1, 1); // 2
-        let precision = BigInt::from(4);
+        let precision = BigInt::from(4_i32);
 
         let result = reciprocal_rounded_abs_extended(&value, &precision, ReciprocalRounding::Floor)
             .expect("should succeed");
@@ -181,8 +181,8 @@ mod tests {
         // With precision 4, we compute 2^4 / 2 = 8, then the exponent is -4
         // So we get 8 * 2^-4 = 0.5
         if let XBinary::Finite(binary) = result {
-            assert_eq!(binary.mantissa(), &BigInt::from(1)); // 8 normalized to 1 * 2^3
-            assert_eq!(binary.exponent(), &BigInt::from(-1)); // -4 + 3 = -1
+            assert_eq!(binary.mantissa(), &BigInt::from(1_i32)); // 8 normalized to 1 * 2^3
+            assert_eq!(binary.exponent(), &BigInt::from(-1_i32)); // -4 + 3 = -1
         } else {
             panic!("expected finite result");
         }
@@ -192,7 +192,7 @@ mod tests {
     fn reciprocal_rounding_modes() {
         // 1/3 should give different results for floor vs ceil
         let value = xbin(3, 0); // 3
-        let precision = BigInt::from(8);
+        let precision = BigInt::from(8_i32);
 
         let floor = reciprocal_rounded_abs_extended(&value, &precision, ReciprocalRounding::Floor)
             .expect("should succeed");
@@ -208,7 +208,7 @@ mod tests {
         // Reciprocal of absolute value of -4 should be same as reciprocal of 4
         let neg_value = xbin(-1, 2); // -4
         let pos_value = xbin(1, 2); // 4
-        let precision = BigInt::from(8);
+        let precision = BigInt::from(8_i32);
 
         let neg_result =
             reciprocal_rounded_abs_extended(&neg_value, &precision, ReciprocalRounding::Floor)
@@ -224,7 +224,7 @@ mod tests {
     fn reciprocal_negative_shift_floor_is_zero() {
         // Very large value with small precision
         let value = xbin(1, 100); // 2^100
-        let precision = BigInt::from(10);
+        let precision = BigInt::from(10_i32);
 
         let result = reciprocal_rounded_abs_extended(&value, &precision, ReciprocalRounding::Floor)
             .expect("should succeed");
@@ -236,15 +236,15 @@ mod tests {
     fn reciprocal_negative_shift_ceil_is_one() {
         // Very large value with small precision
         let value = xbin(1, 100); // 2^100
-        let precision = BigInt::from(10);
+        let precision = BigInt::from(10_i32);
 
         let result = reciprocal_rounded_abs_extended(&value, &precision, ReciprocalRounding::Ceil)
             .expect("should succeed");
 
         // Should be 1 * 2^-10 (the smallest positive representable value)
         if let XBinary::Finite(binary) = result {
-            assert_eq!(binary.mantissa(), &BigInt::from(1));
-            assert_eq!(binary.exponent(), &BigInt::from(-10));
+            assert_eq!(binary.mantissa(), &BigInt::from(1_i32));
+            assert_eq!(binary.exponent(), &BigInt::from(-10_i32));
         } else {
             panic!("expected finite result");
         }
