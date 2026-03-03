@@ -552,7 +552,8 @@ mod tests {
 
         // Create bounds with lower = 1.5 (3 * 2^-1) and width = 2^-10
         // Express 1.5 with exponent -10: 1.5 = 3 * 2^-1 = (3 << 9) * 2^-10
-        let bounds = super::bounds_from_normalized(BigInt::from(3_i32 << 9_i32), BigInt::from(-10_i32));
+        let bounds =
+            super::bounds_from_normalized(BigInt::from(3_i32 << 9_i32), BigInt::from(-10_i32));
 
         // Check that lower bound is 1.5
         assert_eq!(bounds.small(), &bin(3, -1));
@@ -571,7 +572,8 @@ mod tests {
 
         // Create bounds with lower = 5 and width = 2^-8
         // Express 5 with exponent -8: 5 = (5 << 8) * 2^-8
-        let bounds = super::bounds_from_normalized(BigInt::from(5_i32 << 8_i32), BigInt::from(-8_i32));
+        let bounds =
+            super::bounds_from_normalized(BigInt::from(5_i32 << 8_i32), BigInt::from(-8_i32));
 
         // Check that lower bound is 5
         assert_eq!(bounds.small(), &bin(5, 0));
