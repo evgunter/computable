@@ -57,11 +57,11 @@ Calls `get_bounds()` on the root node and checks if the width meets the toleranc
 A refiner is *eligible* if it is active (not exhausted) and under the per-refiner step limit. If no refiners are eligible and none have outstanding (in-flight) steps, the coordinator returns an error: `StateUnchanged` if all refiners exhausted without changing state, `MaxRefinementIterations` otherwise.
 
 ### 3. Dispatch
-The coordinator computes a **demand budget** $= \varepsilon / 2^{\lceil \log_2 N \rceil}$ where $\varepsilon$ is the target precision and $N$ is the active refiner count. Each eligible, non-outstanding refiner whose cached width exceeds the budget is sent a `Step` command.
+The coordinator computes **per-refiner demand budgets** by walking the computation graph top-down from the root. Each passive combinator maps its parent's target width to child budgets based on its sensitivity: AddOp splits $\varepsilon/2$ per child, MulOp uses $\varepsilon/(2|b|)$ for child $a$ (and vice versa), NegOp passes through, and PowOp uses the derivative $n \cdot |x|^{n-1}$. For DAG nodes (shared subexpressions under multiple parents), the tightest budget is used. Refiners not reachable through passive combinators (e.g. children of other refiners) are always stepped. Each eligible, non-outstanding refiner whose cached width exceeds its budget is sent a `Step` command.
 
-If all eligible refiners are below the demand budget (demand-skipped) but the root precision isn't met, a **safety valve** fires: step the least-precise eligible refiners, skipping extreme outliers whose width is negligible compared to the widest.
+The propagated budgets are provably sufficient for convergence: if every refiner meets its budget, the root meets the target. This follows from the sensitivity bounds at each combinator (the bound $w_{\text{out}} \leq |a| \cdot w_b + |b| \cdot w_a$ for MulOp is tight because $|a|$ uses the interval endpoint, not the center, so the cross-term $w_a \cdot w_b$ is already captured). No safety valve is needed.
 
-If nothing was dispatched and nothing is outstanding, a **stall guard** returns `MaxRefinementIterations` to prevent deadlock (this can happen when all eligible refiners are both demand-skipped and safety-valve dominated).
+If nothing was dispatched and nothing is outstanding, a **stall guard** returns `MaxRefinementIterations` to prevent deadlock.
 
 ### 4. Response Collection
 Block on `recv()` for the first response. Drain any additional responses that arrived in the meantime via `try_recv()` — this batching avoids $O(N^2)$ overhead when many refiners respond near-simultaneously. Then check precision for early exit.

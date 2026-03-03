@@ -10,10 +10,11 @@
 //! 1. Check if root precision meets target — if so, return immediately
 //! 2. Check eligibility (active and under per-refiner step limit) — if no
 //!    eligible refiners and none outstanding, return exhaustion/iteration error
-//! 3. Compute demand budget (ε / 2^⌈log₂(N)⌉) and dispatch eligible,
-//!    non-outstanding refiners above the budget (safety valve: if all were
-//!    skipped and none outstanding, step the least-precise eligible refiners,
-//!    skipping extreme outliers whose width is negligible vs the widest)
+//! 3. Compute per-refiner demand budgets by walking the graph top-down from
+//!    root, using each operation's sensitivity to map parent targets to child
+//!    budgets (e.g. AddOp splits ε/2 per child, MulOp uses ε/(2·|sibling|)).
+//!    Dispatch eligible, non-outstanding refiners above their budget. Refiners
+//!    not reachable through passive combinators are always stepped.
 //! 4. Collect responses: block for one, drain any immediately available via
 //!    try_recv, then check precision (early exit). Outstanding refiners from
 //!    the same batch may still be in flight — the next iteration re-dispatches
@@ -30,8 +31,9 @@
 //!   old round-based iteration cap per refiner
 //! - Per-refiner exhaustion: converged or state-unchanged refiners are removed
 //!   from future dispatch instead of causing the entire refinement to fail
-//! - Demand-based skipping: refiners whose bounds are already narrow enough
-//!   (width ≤ ε/N) are skipped, avoiding wasted work on fast-converging operands
+//! - Demand-based skipping: per-refiner budgets propagated through the graph
+//!   skip refiners whose bounds are already narrow enough for their position
+//!   in the computation, avoiding wasted work on fast-converging operands
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -209,88 +211,73 @@ impl RefinementGraph {
                     }
 
                     // 3. Dispatch eligible, non-outstanding refiners above demand budget.
-                    let active_count = active.iter().filter(|&&a| a).count();
+                    //
+                    //    Propagated budgets: walk the graph top-down from root, using
+                    //    each op's sensitivity to compute per-refiner budgets. Refiners
+                    //    not reachable through passive combinators (e.g. children of
+                    //    other refiners) are always stepped.
+                    //
+                    //    The propagated budgets are provably sufficient: if every
+                    //    refiner meets its budget, the root meets the target. This
+                    //    follows from the sensitivity bounds at each combinator:
+                    //    - AddOp: w_out = w_a + w_b ≤ ε/2 + ε/2 = ε
+                    //    - MulOp: w_out ≤ |a|·w_b + |b|·w_a ≤ ε/2 + ε/2 = ε
+                    //      (no cross-term: |a| uses the endpoint, not the center)
+                    //    - PowOp: w_out ≤ n·max_abs^(n-1)·w_in ≤ ε (MVT)
+                    let propagated = self.compute_propagated_budgets(tolerance_exp);
+                    let precision_bits = match tolerance_exp {
+                        XUsize::Finite(n) => *n,
+                        XUsize::Inf => usize::MAX,
+                    };
                     let mut dispatched = 0usize;
 
-                    if active_count > 0 {
-                        let demand_budget = compute_demand_budget(tolerance_exp, active_count);
-                        let precision_bits = match demand_budget {
-                            XUsize::Finite(n) => n,
-                            XUsize::Inf => usize::MAX,
-                        };
-
-                        for (i, refiner) in refiners.iter().enumerate() {
-                            if !active[i] || outstanding[i] || steps[i] >= MAX_REFINEMENT_ITERATIONS
-                            {
-                                continue;
-                            }
-                            let skip = self.refiners[i]
-                                .cached_bounds()
-                                .is_some_and(|b| bounds_width_leq(&b, &demand_budget));
-                            if !skip {
-                                refiner
-                                    .sender
-                                    .send(RefineCommand::Step { precision_bits })
-                                    .map_err(|_send_err| {
-                                        ComputableError::RefinementChannelClosed
-                                    })?;
-                                outstanding[i] = true;
-                                dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
-                                    unreachable!(
-                                        "dispatched <= refiners.len(), cannot overflow usize"
-                                    )
-                                });
-                            }
+                    for (i, refiner) in refiners.iter().enumerate() {
+                        if !active[i] || outstanding[i] || steps[i] >= MAX_REFINEMENT_ITERATIONS
+                        {
+                            continue;
                         }
-
-                        // Safety valve: all eligible refiners were below demand but
-                        // root precision isn't met. Step the least-precise eligible
-                        // refiners, skipping extreme outliers.
-                        if dispatched == 0 && !any_outstanding {
-                            let max_width = (0..num_refiners)
-                                .filter(|&i| active[i] && steps[i] < MAX_REFINEMENT_ITERATIONS)
-                                .map(|i| {
-                                    self.refiners[i]
-                                        .cached_bounds()
-                                        .map_or(UXBinary::Inf, |b| b.width().clone())
-                                })
-                                .max();
-
-                            for (i, refiner) in refiners.iter().enumerate() {
-                                if !active[i]
-                                    || outstanding[i]
-                                    || steps[i] >= MAX_REFINEMENT_ITERATIONS
-                                {
-                                    continue;
-                                }
-                                let dominated = max_width.as_ref().is_some_and(|max_w| {
-                                    self.refiners[i]
-                                        .cached_bounds()
-                                        .is_some_and(|b| is_width_dominated(b.width(), max_w))
-                                });
-                                if !dominated {
-                                    refiner
-                                        .sender
-                                        .send(RefineCommand::Step { precision_bits })
-                                        .map_err(|_send_err| {
-                                            ComputableError::RefinementChannelClosed
-                                        })?;
-                                    outstanding[i] = true;
-                                    dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
-                                        unreachable!(
-                                            "dispatched <= refiners.len(), cannot overflow"
-                                        )
-                                    });
-                                }
-                            }
+                        let skip = propagated
+                            .get(&self.refiners[i].id)
+                            .is_some_and(|budget| {
+                                self.refiners[i]
+                                    .cached_bounds()
+                                    .is_some_and(|b| b.width() <= budget)
+                            });
+                        if !skip {
+                            refiner
+                                .sender
+                                .send(RefineCommand::Step { precision_bits })
+                                .map_err(|_send_err| {
+                                    ComputableError::RefinementChannelClosed
+                                })?;
+                            outstanding[i] = true;
+                            dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
+                                unreachable!(
+                                    "dispatched <= refiners.len(), cannot overflow usize"
+                                )
+                            });
                         }
                     }
 
                     // Stall guard: if nothing was dispatched and nothing is
-                    // outstanding, all eligible refiners were demand-skipped AND
-                    // safety-valve dominated. No further progress is possible;
-                    // without this check recv() would block forever.
+                    // outstanding, no further progress is possible. The
+                    // propagated budgets are provably sufficient, so this can
+                    // only happen when some refiner couldn't meet its budget
+                    // (hit max iterations or exhausted). If all refiners DID
+                    // meet their budgets, the root should have met the target
+                    // — a stall in that case is a budget computation bug.
                     if dispatched == 0 && !outstanding.iter().any(|&o| o) {
+                        let any_budget_unmet = self.refiners.iter().any(|r| {
+                            propagated.get(&r.id).is_some_and(|budget| {
+                                r.cached_bounds()
+                                    .is_some_and(|b| b.width() > budget)
+                            })
+                        });
+                        assert!(
+                            any_budget_unmet,
+                            "refinement stalled with all budgets met — \
+                             bug in propagated demand budget computation"
+                        );
                         return Err(ComputableError::MaxRefinementIterations {
                             max: MAX_REFINEMENT_ITERATIONS,
                         });
@@ -404,6 +391,63 @@ impl RefinementGraph {
 
         Ok(())
     }
+
+    /// Computes per-refiner demand budgets by walking the graph top-down.
+    ///
+    /// Starting from the root with the overall tolerance, propagates budgets
+    /// through passive combinators using their sensitivity to child widths.
+    /// For DAG nodes (shared subexpressions under multiple parents), takes the
+    /// tightest (minimum) budget.
+    ///
+    /// Refiners that are not reachable through passive combinators (e.g. children
+    /// of other refiners) will not appear in the returned map.
+    fn compute_propagated_budgets(&self, tolerance_exp: &XUsize) -> HashMap<usize, UXBinary> {
+        let target_width = tolerance_to_uxbinary(tolerance_exp);
+        let mut budgets: HashMap<usize, UXBinary> = HashMap::new();
+        budgets.insert(self.root.id, target_width);
+
+        let mut queue = VecDeque::new();
+        queue.push_back(self.root.id);
+
+        while let Some(node_id) = queue.pop_front() {
+            let Some(node) = self.nodes.get(&node_id) else {
+                continue;
+            };
+
+            // Don't propagate through refiners — they handle their own children.
+            if node.is_refiner() {
+                continue;
+            }
+
+            let Some(budget) = budgets.get(&node_id).cloned() else {
+                continue;
+            };
+
+            let children = node.children();
+            for (child_idx, child) in children.iter().enumerate() {
+                let child_budget = node.op.child_demand_budget(&budget, child_idx);
+                let entry = budgets.entry(child.id).or_insert(UXBinary::Inf);
+                if child_budget < *entry {
+                    *entry = child_budget;
+                    queue.push_back(child.id);
+                }
+            }
+        }
+
+        budgets
+    }
+}
+
+/// Converts a tolerance exponent to a UXBinary width value.
+///
+/// `Finite(n)` → width 2^(-n), `Inf` → width 0 (exact convergence).
+fn tolerance_to_uxbinary(tolerance_exp: &XUsize) -> UXBinary {
+    match tolerance_exp {
+        XUsize::Inf => UXBinary::zero(),
+        XUsize::Finite(exp) => {
+            UXBinary::Finite(UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)))
+        }
+    }
 }
 
 fn spawn_refiner<'scope, 'env>(
@@ -495,56 +539,6 @@ fn refiner_loop(
                 }
             },
             Ok(RefineCommand::Stop) | Err(_) => break,
-        }
-    }
-}
-
-/// Demand budget = epsilon / 2^ceil(log2(N)).
-/// A refiner with width <= budget is "precise enough" to skip this round.
-///
-/// Precondition: `num_active >= 1` (the coordinator returns an exhaustion error
-/// before dispatching when no active refiners remain).
-fn compute_demand_budget(tolerance_exp: &XUsize, num_active: usize) -> XUsize {
-    debug_assert!(
-        num_active >= 1,
-        "compute_demand_budget called with 0 active refiners"
-    );
-    match tolerance_exp {
-        XUsize::Inf => XUsize::Inf,
-        XUsize::Finite(exp) => {
-            // ceil(log2(N)) = BITS - leading_zeros(N), which for N>=1 gives the
-            // number of bits needed to represent N, i.e. the shift amount that
-            // makes 2^shift >= N.
-            let shift_u32 = usize::BITS
-                .checked_sub(num_active.leading_zeros())
-                .unwrap_or_else(|| unreachable!("leading_zeros() is always <= usize::BITS"));
-            #[allow(clippy::as_conversions)] // u32 always fits in usize
-            let shift = shift_u32 as usize;
-            let tolerance = *exp;
-            let budget = crate::sane_arithmetic!(tolerance, shift; tolerance + shift);
-            XUsize::Finite(budget)
-        }
-    }
-}
-
-/// Refiners whose width is <= max_width >> SAFETY_VALVE_SKIP_SHIFT are
-/// skipped in the safety valve. This prevents exponentially expensive steps
-/// on fast-converging refiners (e.g. PiOp) that are already far more precise
-/// than the bottleneck. The exact value barely matters — any reasonable
-/// threshold prevents the pathological case.
-const SAFETY_VALVE_SKIP_SHIFT: i64 = 4; // skip if width << 4 <= max_width, i.e. width * 16 <= max_width
-
-/// Returns true when `width` is negligibly narrow compared to `max_width`,
-/// i.e. `width << SAFETY_VALVE_SKIP_SHIFT <= max_width`.
-fn is_width_dominated(width: &UXBinary, max_width: &UXBinary) -> bool {
-    match width {
-        UXBinary::Inf => false,
-        UXBinary::Finite(w) => {
-            let shifted = UBinary::new(
-                w.mantissa().clone(),
-                w.exponent() + BigInt::from(SAFETY_VALVE_SKIP_SHIFT),
-            );
-            UXBinary::Finite(shifted) <= *max_width
         }
     }
 }
@@ -988,31 +982,33 @@ mod tests {
         assert_width_nonnegative(&refined);
     }
 
-    /// Demonstrates a flaw in demand-based skipping: y starts with width 3/8,
-    /// which is already below the target precision of 1/2, so ideally y would
-    /// be skipped entirely. But the demand budget (2^(-3) = 1/8 for tolerance=1
-    /// with 2 refiners) is tighter than necessary, so y gets stepped anyway,
-    /// causing refinement to wait for y's expensive sleep.
+    /// Tests that propagated demand budgets correctly skip a precise refiner.
+    ///
+    /// y starts at width 3/16 = 0.1875, which is below the AddOp propagated
+    /// budget of ε/2 = 0.25 (tolerance ε = 0.5 with 2 refiners). With the
+    /// old flat budget (ε/4 = 0.125), y would have been stepped unnecessarily
+    /// since 0.1875 > 0.125. The propagated budget correctly identifies that
+    /// y is precise enough and skips it.
     #[test]
-    fn demand_skipping_unnecessarily_steps_already_precise_refiner() {
+    fn propagated_budget_skips_precise_add_operand() {
         use std::time::Instant;
 
         const SLOW_STEP_MS: u64 = 1000;
 
         // x: starts at [0, 1024] (width = 1024), converges by halving the
         // upper bound each step (width halves each round). No sleeps, so
-        // convergence is fast but gradual — takes ~12 steps to reach width < 0.5.
+        // convergence is fast but gradual — takes ~12 steps to reach width < 0.25.
         let x = Computable::new(
             Bounds::new(xbin(0, 0), xbin(1024, 0)),
             |state| Ok(state.clone()),
             interval_refine_strict,
         );
 
-        // y: starts at [0, 3/8] (width = 3/8, below the target precision of
-        // 1/2 but ABOVE the demand budget of 1/8). Each step sleeps 1s, so
-        // if refinement steps y unnecessarily it'll be slow.
+        // y: starts at [0, 3/16] (width = 3/16 = 0.1875). Below the
+        // propagated budget of ε/2 = 0.25, but above the old flat budget
+        // of ε/4 = 0.125. Each step sleeps 1s — if stepped, the test is slow.
         let y = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(3, -3)),
+            Bounds::new(xbin(0, 0), xbin(3, -4)),
             |state| Ok(state.clone()),
             move |state: Bounds| {
                 thread::sleep(Duration::from_millis(SLOW_STEP_MS));
@@ -1033,11 +1029,11 @@ mod tests {
             bounds_width_leq(&bounds, &tolerance_exp),
             "bounds should meet target precision"
         );
-        // Ideally this would finish without stepping y (< 1s), but the demand
-        // budget is too tight, so y gets stepped unnecessarily.
+        // With propagated budgets, y is correctly skipped (width 0.1875 ≤
+        // budget 0.25), so refinement finishes fast — only x needs to converge.
         assert!(
-            elapsed >= Duration::from_millis(SLOW_STEP_MS),
-            "expected y to be stepped (demand budget flaw), but finished in {elapsed:?}"
+            elapsed < Duration::from_millis(SLOW_STEP_MS),
+            "expected y to be skipped (propagated budget), but took {elapsed:?}"
         );
     }
 

@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 
-use crate::binary::Bounds;
+use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
 
 /// Shared API for retrieving bounds with lazy computation.
@@ -129,6 +129,17 @@ pub trait NodeOp: Send + Sync {
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError>;
     fn children(&self) -> Vec<Arc<Node>>;
     fn is_refiner(&self) -> bool;
+
+    /// Computes the demand budget for a child node given a target width for
+    /// this node's output.
+    ///
+    /// Returns the maximum width the child at `child_index` can have while
+    /// still allowing this node to meet the target. The default implementation
+    /// passes through the target unchanged, which is correct for operations
+    /// that preserve width (e.g. negation).
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        target_width.clone()
+    }
 }
 
 /// Synchronization state for coordinating refinement across threads.
