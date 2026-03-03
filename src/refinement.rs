@@ -756,7 +756,6 @@ mod tests {
         handle.join().expect("reader thread should join");
     }
 
-    // NOTE: this test could be fallible, since it uses timing to measure success. perhaps it should be an integration test rather than a unit test
     #[test]
     fn refinement_parallelizes_multiple_refiners() {
         use std::sync::atomic::{AtomicUsize, Ordering};
