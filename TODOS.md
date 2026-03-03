@@ -48,6 +48,14 @@ Major architectural change. **Blocks:** [nth-root-negative](#nth-root-negative),
 
 ---
 
+## Low Priority
+
+### <a id="bench-sample-counts"></a>bench-sample-counts: Restore larger benchmark sample counts
+**Files:** `benches/integer_roots.rs`, `benches/summation.rs`
+Benchmark sample counts were reduced to stay under valgrind's default ~500 thread limit (each refiner node spawns a thread). `integer_roots` went from 1000→50, `summation` from 200k→1000. To restore them, either pass `--max-threads=N` to valgrind via gungraun's `valgrind_args` config, or restructure the benchmarks to avoid spawning all refiners simultaneously.
+
+---
+
 ## Very Low Priority
 
 ### <a id="serde-public-types"></a>serde-public-types: Add serialization for all public types
