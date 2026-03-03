@@ -922,13 +922,13 @@ mod tests {
         assert_width_nonnegative(&refined);
     }
 
-    /// Demand-based skipping: when x+y has target precision 1 (width ≤ 2^(-1)),
-    /// x starts with huge bounds but converges instantly, while y starts with
-    /// narrow bounds (width < 2^(-1)) but sleeps 100ms per step. Refinement
-    /// should complete fast because y is already within the demand budget and
-    /// gets skipped every round.
+    /// Demonstrates a flaw in demand-based skipping: y starts with width 3/8,
+    /// which is already below the target precision of 1/2, so ideally y would
+    /// be skipped entirely. But the demand budget (2^(-3) = 1/8 for tolerance=1
+    /// with 2 refiners) is tighter than necessary, so y gets stepped anyway,
+    /// causing refinement to wait for y's expensive sleep.
     #[test]
-    fn demand_skipping_avoids_slow_refiner_when_already_precise() {
+    fn demand_skipping_unnecessarily_steps_already_precise_refiner() {
         use std::time::Instant;
 
         const SLOW_STEP_MS: u64 = 1000;
@@ -942,11 +942,11 @@ mod tests {
             interval_refine_strict,
         );
 
-        // y: starts at [0, 1/16] (width = 2^(-4), below the demand budget of
-        // 2^(-3) for tolerance=1 with 2 refiners). Each step sleeps 100ms, so
-        // if refinement waits for y it'll be slow.
+        // y: starts at [0, 3/8] (width = 3/8, below the target precision of
+        // 1/2 but ABOVE the demand budget of 1/8). Each step sleeps 1s, so
+        // if refinement steps y unnecessarily it'll be slow.
         let y = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(1, -4)),
+            Bounds::new(xbin(0, 0), xbin(3, -3)),
             |state| Ok(state.clone()),
             move |state: Bounds| {
                 thread::sleep(Duration::from_millis(SLOW_STEP_MS));
@@ -967,9 +967,11 @@ mod tests {
             bounds_width_leq(&bounds, &tolerance_exp),
             "bounds should meet target precision"
         );
+        // Ideally this would finish without stepping y (< 1s), but the demand
+        // budget is too tight, so y gets stepped unnecessarily.
         assert!(
-            elapsed < Duration::from_millis(SLOW_STEP_MS),
-            "refinement should finish without stepping y, but took {elapsed:?}"
+            elapsed >= Duration::from_millis(SLOW_STEP_MS),
+            "expected y to be stepped (demand budget flaw), but finished in {elapsed:?}"
         );
     }
 }

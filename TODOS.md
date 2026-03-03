@@ -1,5 +1,16 @@
 # TODOs - Ranked by Ease of Completion
 
+## Tier 1: Medium (Unblocked)
+
+### <a id="non-blocking-refinement"></a>non-blocking-refinement: Refinement blocks on slow refiners instead of continuing with fast ones
+**File:** `src/refinement.rs:441`
+```rust
+fn compute_demand_budget(tolerance_exp: &XUsize, num_active: usize) -> XUsize {
+```
+The round-based refinement model sends Step commands and then blocks waiting for all responses before starting the next round. If a fast refiner and a slow refiner are both stepped in the same round, the coordinator waits for the slow refiner even though it could be stepping the fast one again. In the test `demand_skipping_unnecessarily_steps_already_precise_refiner`, y (width 3/8, below target 1/2) is slow (1s/step) and x is fast — but the coordinator blocks on y's response instead of continuing to step x. The coordinator should not block on slow refiners when there are fast refiners it could be stepping.
+
+---
+
 ## Tier 2: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="async-refinement"></a>async-refinement: Implement async/event-driven refinement model
