@@ -25,11 +25,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y valgrind
       - run: cargo install gungraun-runner --version 0.17.2
-      - name: Run benchmarks
-        env:
-          RUST_BACKTRACE: "1"
-        run: ulimit -s 65536 && cargo bench --bench integer_roots 2>&1 || true
       - name: Run all benchmarks
         env:
           RUST_BACKTRACE: "1"
+          GUNGRAUN_LOG: debug
         run: ulimit -s 65536 && cargo bench

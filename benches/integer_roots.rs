@@ -10,7 +10,7 @@ use rand::{Rng, SeedableRng};
 use common::{balanced_sum, epsilon};
 use computable::{Binary, Bounds, Computable};
 
-const SAMPLE_COUNT: usize = 1_000;
+const SAMPLE_COUNT: usize = 50_usize;
 
 #[library_benchmark]
 #[benches::precision(args = [1_usize, 4, 16, 64, 256])]
