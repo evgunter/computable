@@ -1,0 +1,802 @@
+[
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_plus_pi",
+    "function_name": "bench_sqrt2_plus_pi",
+    "id": "precision_0",
+    "ir": {
+      "Int": 439474
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_plus_pi",
+    "function_name": "bench_sqrt2_plus_pi",
+    "id": "precision_1",
+    "ir": {
+      "Int": 574423
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_plus_pi",
+    "function_name": "bench_sqrt2_plus_pi",
+    "id": "precision_2",
+    "ir": {
+      "Int": 1116478
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_plus_pi",
+    "function_name": "bench_sqrt2_plus_pi",
+    "id": "precision_3",
+    "ir": {
+      "Int": 3458001
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_plus_pi",
+    "function_name": "bench_sqrt2_plus_pi",
+    "id": "precision_4",
+    "ir": {
+      "Int": 12132855
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_times_pi",
+    "function_name": "bench_sqrt2_times_pi",
+    "id": "precision_0",
+    "ir": {
+      "Int": 525797
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_times_pi",
+    "function_name": "bench_sqrt2_times_pi",
+    "id": "precision_1",
+    "ir": {
+      "Int": 682808
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_times_pi",
+    "function_name": "bench_sqrt2_times_pi",
+    "id": "precision_2",
+    "ir": {
+      "Int": 1339494
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_times_pi",
+    "function_name": "bench_sqrt2_times_pi",
+    "id": "precision_3",
+    "ir": {
+      "Int": 4125176
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::mixed::bench_sqrt2_times_pi",
+    "function_name": "bench_sqrt2_times_pi",
+    "id": "precision_4",
+    "ir": {
+      "Int": 14738847
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_const3",
+    "function_name": "bench_sqrt2_plus_const3",
+    "id": "precision_0",
+    "ir": {
+      "Int": 133955
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_const3",
+    "function_name": "bench_sqrt2_plus_const3",
+    "id": "precision_1",
+    "ir": {
+      "Int": 253346
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_const3",
+    "function_name": "bench_sqrt2_plus_const3",
+    "id": "precision_2",
+    "ir": {
+      "Int": 735853
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_const3",
+    "function_name": "bench_sqrt2_plus_const3",
+    "id": "precision_3",
+    "ir": {
+      "Int": 2683629
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_const3",
+    "function_name": "bench_sqrt2_plus_const3",
+    "id": "precision_4",
+    "ir": {
+      "Int": 10557898
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_pi_plus_const1",
+    "function_name": "bench_pi_plus_const1",
+    "id": "precision_0",
+    "ir": {
+      "Int": 268833
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_pi_plus_const1",
+    "function_name": "bench_pi_plus_const1",
+    "id": "precision_1",
+    "ir": {
+      "Int": 268833
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_pi_plus_const1",
+    "function_name": "bench_pi_plus_const1",
+    "id": "precision_2",
+    "ir": {
+      "Int": 268833
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_pi_plus_const1",
+    "function_name": "bench_pi_plus_const1",
+    "id": "precision_3",
+    "ir": {
+      "Int": 324830
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_pi_plus_const1",
+    "function_name": "bench_pi_plus_const1",
+    "id": "precision_4",
+    "ir": {
+      "Int": 323701
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_cbrt3",
+    "function_name": "bench_sqrt2_plus_cbrt3",
+    "id": "precision_0",
+    "ir": {
+      "Int": 468478
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_cbrt3",
+    "function_name": "bench_sqrt2_plus_cbrt3",
+    "id": "precision_1",
+    "ir": {
+      "Int": 694295
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_cbrt3",
+    "function_name": "bench_sqrt2_plus_cbrt3",
+    "id": "precision_2",
+    "ir": {
+      "Int": 1616197
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_cbrt3",
+    "function_name": "bench_sqrt2_plus_cbrt3",
+    "id": "precision_3",
+    "ir": {
+      "Int": 5310148
+    }
+  },
+  {
+    "module_path": "asymmetric_convergence::controls::bench_sqrt2_plus_cbrt3",
+    "function_name": "bench_sqrt2_plus_cbrt3",
+    "id": "precision_4",
+    "ir": {
+      "Int": 20132170
+    }
+  },
+  {
+    "module_path": "complex::complex::bench_complex",
+    "function_name": "bench_complex",
+    "id": "precision_0",
+    "ir": {
+      "Int": 1112525159
+    }
+  },
+  {
+    "module_path": "complex::complex::bench_complex",
+    "function_name": "bench_complex",
+    "id": "precision_1",
+    "ir": {
+      "Int": 1112525159
+    }
+  },
+  {
+    "module_path": "complex::complex::bench_complex",
+    "function_name": "bench_complex",
+    "id": "precision_2",
+    "ir": {
+      "Int": 1112525159
+    }
+  },
+  {
+    "module_path": "complex::complex::bench_complex",
+    "function_name": "bench_complex",
+    "id": "precision_3",
+    "ir": {
+      "Int": 1112525159
+    }
+  },
+  {
+    "module_path": "complex::complex::bench_complex",
+    "function_name": "bench_complex",
+    "id": "precision_4",
+    "ir": {
+      "Int": 1112525159
+    }
+  },
+  {
+    "module_path": "integer_roots::integer_roots::bench_integer_roots",
+    "function_name": "bench_integer_roots",
+    "id": "precision_0",
+    "ir": {
+      "Int": 2955752788
+    }
+  },
+  {
+    "module_path": "integer_roots::integer_roots::bench_integer_roots",
+    "function_name": "bench_integer_roots",
+    "id": "precision_1",
+    "ir": {
+      "Int": 3362167865
+    }
+  },
+  {
+    "module_path": "integer_roots::integer_roots::bench_integer_roots",
+    "function_name": "bench_integer_roots",
+    "id": "precision_2",
+    "ir": {
+      "Int": 4975847295
+    }
+  },
+  {
+    "module_path": "integer_roots::integer_roots::bench_integer_roots",
+    "function_name": "bench_integer_roots",
+    "id": "precision_3",
+    "ir": {
+      "Int": 11485224846
+    }
+  },
+  {
+    "module_path": "integer_roots::integer_roots::bench_integer_roots",
+    "function_name": "bench_integer_roots",
+    "id": "precision_4",
+    "ir": {
+      "Int": 37523215068
+    }
+  },
+  {
+    "module_path": "inv::inv::bench_inv",
+    "function_name": "bench_inv",
+    "id": "precision_0",
+    "ir": {
+      "Int": 8541231
+    }
+  },
+  {
+    "module_path": "inv::inv::bench_inv",
+    "function_name": "bench_inv",
+    "id": "precision_1",
+    "ir": {
+      "Int": 8541689
+    }
+  },
+  {
+    "module_path": "inv::inv::bench_inv",
+    "function_name": "bench_inv",
+    "id": "precision_2",
+    "ir": {
+      "Int": 8542008
+    }
+  },
+  {
+    "module_path": "inv::inv::bench_inv",
+    "function_name": "bench_inv",
+    "id": "precision_3",
+    "ir": {
+      "Int": 8569834
+    }
+  },
+  {
+    "module_path": "inv::inv::bench_inv",
+    "function_name": "bench_inv",
+    "id": "precision_4",
+    "ir": {
+      "Int": 8533935
+    }
+  },
+  {
+    "module_path": "pi::pi_refinement::bench_pi_refinement",
+    "function_name": "bench_pi_refinement",
+    "id": "precision_0",
+    "ir": {
+      "Int": 248200
+    }
+  },
+  {
+    "module_path": "pi::pi_refinement::bench_pi_refinement",
+    "function_name": "bench_pi_refinement",
+    "id": "precision_1",
+    "ir": {
+      "Int": 248200
+    }
+  },
+  {
+    "module_path": "pi::pi_refinement::bench_pi_refinement",
+    "function_name": "bench_pi_refinement",
+    "id": "precision_2",
+    "ir": {
+      "Int": 248200
+    }
+  },
+  {
+    "module_path": "pi::pi_refinement::bench_pi_refinement",
+    "function_name": "bench_pi_refinement",
+    "id": "precision_3",
+    "ir": {
+      "Int": 275822
+    }
+  },
+  {
+    "module_path": "pi::pi_refinement::bench_pi_refinement",
+    "function_name": "bench_pi_refinement",
+    "id": "precision_4",
+    "ir": {
+      "Int": 275943
+    }
+  },
+  {
+    "module_path": "pi::pi_bounds::bench_pi_bounds",
+    "function_name": "bench_pi_bounds",
+    "id": "precision_0",
+    "ir": {
+      "Int": 127027
+    }
+  },
+  {
+    "module_path": "pi::pi_bounds::bench_pi_bounds",
+    "function_name": "bench_pi_bounds",
+    "id": "precision_1",
+    "ir": {
+      "Int": 127027
+    }
+  },
+  {
+    "module_path": "pi::pi_bounds::bench_pi_bounds",
+    "function_name": "bench_pi_bounds",
+    "id": "precision_2",
+    "ir": {
+      "Int": 141981
+    }
+  },
+  {
+    "module_path": "pi::pi_bounds::bench_pi_bounds",
+    "function_name": "bench_pi_bounds",
+    "id": "precision_3",
+    "ir": {
+      "Int": 427507
+    }
+  },
+  {
+    "module_path": "pi::pi_bounds::bench_pi_bounds",
+    "function_name": "bench_pi_bounds",
+    "id": "precision_4",
+    "ir": {
+      "Int": 1677345
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_two_pi",
+    "function_name": "bench_two_pi",
+    "id": "precision_0",
+    "ir": {
+      "Int": 281350
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_two_pi",
+    "function_name": "bench_two_pi",
+    "id": "precision_1",
+    "ir": {
+      "Int": 281350
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_two_pi",
+    "function_name": "bench_two_pi",
+    "id": "precision_2",
+    "ir": {
+      "Int": 281350
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_two_pi",
+    "function_name": "bench_two_pi",
+    "id": "precision_3",
+    "ir": {
+      "Int": 346964
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_two_pi",
+    "function_name": "bench_two_pi",
+    "id": "precision_4",
+    "ir": {
+      "Int": 345872
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_half",
+    "function_name": "bench_pi_half",
+    "id": "precision_0",
+    "ir": {
+      "Int": 280572
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_half",
+    "function_name": "bench_pi_half",
+    "id": "precision_1",
+    "ir": {
+      "Int": 280572
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_half",
+    "function_name": "bench_pi_half",
+    "id": "precision_2",
+    "ir": {
+      "Int": 280572
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_half",
+    "function_name": "bench_pi_half",
+    "id": "precision_3",
+    "ir": {
+      "Int": 346449
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_half",
+    "function_name": "bench_pi_half",
+    "id": "precision_4",
+    "ir": {
+      "Int": 344908
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_squared",
+    "function_name": "bench_pi_squared",
+    "id": "precision_0",
+    "ir": {
+      "Int": 519155
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_squared",
+    "function_name": "bench_pi_squared",
+    "id": "precision_1",
+    "ir": {
+      "Int": 519155
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_squared",
+    "function_name": "bench_pi_squared",
+    "id": "precision_2",
+    "ir": {
+      "Int": 519155
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_squared",
+    "function_name": "bench_pi_squared",
+    "id": "precision_3",
+    "ir": {
+      "Int": 591420
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_pi_squared",
+    "function_name": "bench_pi_squared",
+    "id": "precision_4",
+    "ir": {
+      "Int": 591346
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_inv_pi",
+    "function_name": "bench_inv_pi",
+    "id": "precision_0",
+    "ir": {
+      "Int": 282068
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_inv_pi",
+    "function_name": "bench_inv_pi",
+    "id": "precision_1",
+    "ir": {
+      "Int": 282068
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_inv_pi",
+    "function_name": "bench_inv_pi",
+    "id": "precision_2",
+    "ir": {
+      "Int": 282068
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_inv_pi",
+    "function_name": "bench_inv_pi",
+    "id": "precision_3",
+    "ir": {
+      "Int": 291714
+    }
+  },
+  {
+    "module_path": "pi::pi_arithmetic::bench_inv_pi",
+    "function_name": "bench_inv_pi",
+    "id": "precision_4",
+    "ir": {
+      "Int": 291490
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_1pi",
+    "function_name": "bench_sin_1pi",
+    "id": "precision_0",
+    "ir": {
+      "Int": 915911
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_1pi",
+    "function_name": "bench_sin_1pi",
+    "id": "precision_1",
+    "ir": {
+      "Int": 915911
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_1pi",
+    "function_name": "bench_sin_1pi",
+    "id": "precision_2",
+    "ir": {
+      "Int": 915911
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_1pi",
+    "function_name": "bench_sin_1pi",
+    "id": "precision_3",
+    "ir": {
+      "Int": 5025086
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_1pi",
+    "function_name": "bench_sin_1pi",
+    "id": "precision_4",
+    "ir": {
+      "Int": 30315295
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_2pi",
+    "function_name": "bench_sin_2pi",
+    "id": "precision_0",
+    "ir": {
+      "Int": 713144
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_2pi",
+    "function_name": "bench_sin_2pi",
+    "id": "precision_1",
+    "ir": {
+      "Int": 713144
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_2pi",
+    "function_name": "bench_sin_2pi",
+    "id": "precision_2",
+    "ir": {
+      "Int": 713144
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_2pi",
+    "function_name": "bench_sin_2pi",
+    "id": "precision_3",
+    "ir": {
+      "Int": 5039451
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_2pi",
+    "function_name": "bench_sin_2pi",
+    "id": "precision_4",
+    "ir": {
+      "Int": 305758521
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_10pi",
+    "function_name": "bench_sin_10pi",
+    "id": "precision_0",
+    "ir": {
+      "Int": 713342
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_10pi",
+    "function_name": "bench_sin_10pi",
+    "id": "precision_1",
+    "ir": {
+      "Int": 713342
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_10pi",
+    "function_name": "bench_sin_10pi",
+    "id": "precision_2",
+    "ir": {
+      "Int": 713342
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_10pi",
+    "function_name": "bench_sin_10pi",
+    "id": "precision_3",
+    "ir": {
+      "Int": 2261775
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_10pi",
+    "function_name": "bench_sin_10pi",
+    "id": "precision_4",
+    "ir": {
+      "Int": 310591849
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_100pi",
+    "function_name": "bench_sin_100pi",
+    "id": "precision_0",
+    "ir": {
+      "Int": 718118
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_100pi",
+    "function_name": "bench_sin_100pi",
+    "id": "precision_1",
+    "ir": {
+      "Int": 718118
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_100pi",
+    "function_name": "bench_sin_100pi",
+    "id": "precision_2",
+    "ir": {
+      "Int": 718118
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_100pi",
+    "function_name": "bench_sin_100pi",
+    "id": "precision_3",
+    "ir": {
+      "Int": 2265617
+    }
+  },
+  {
+    "module_path": "pi::sin_multiples::bench_sin_100pi",
+    "function_name": "bench_sin_100pi",
+    "id": "precision_4",
+    "ir": {
+      "Int": 7579082
+    }
+  },
+  {
+    "module_path": "sin::sin::bench_sin",
+    "function_name": "bench_sin",
+    "id": "precision_0",
+    "ir": {
+      "Int": 61969004
+    }
+  },
+  {
+    "module_path": "sin::sin::bench_sin",
+    "function_name": "bench_sin",
+    "id": "precision_1",
+    "ir": {
+      "Int": 62098624
+    }
+  },
+  {
+    "module_path": "sin::sin::bench_sin",
+    "function_name": "bench_sin",
+    "id": "precision_2",
+    "ir": {
+      "Int": 62317683
+    }
+  },
+  {
+    "module_path": "sin::sin::bench_sin",
+    "function_name": "bench_sin",
+    "id": "precision_3",
+    "ir": {
+      "Int": 480542325
+    }
+  },
+  {
+    "module_path": "sin::sin::bench_sin",
+    "function_name": "bench_sin",
+    "id": "precision_4",
+    "ir": {
+      "Int": 32858628516
+    }
+  },
+  {
+    "module_path": "summation::summation::bench_summation",
+    "function_name": "bench_summation",
+    "id": "precision_0",
+    "ir": {
+      "Int": 4620291079
+    }
+  },
+  {
+    "module_path": "summation::summation::bench_summation",
+    "function_name": "bench_summation",
+    "id": "precision_1",
+    "ir": {
+      "Int": 4620291079
+    }
+  },
+  {
+    "module_path": "summation::summation::bench_summation",
+    "function_name": "bench_summation",
+    "id": "precision_2",
+    "ir": {
+      "Int": 4620291079
+    }
+  },
+  {
+    "module_path": "summation::summation::bench_summation",
+    "function_name": "bench_summation",
+    "id": "precision_3",
+    "ir": {
+      "Int": 4620291079
+    }
+  },
+  {
+    "module_path": "summation::summation::bench_summation",
+    "function_name": "bench_summation",
+    "id": "precision_4",
+    "ir": {
+      "Int": 4620291079
+    }
+  }
+]
