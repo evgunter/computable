@@ -86,15 +86,32 @@ impl NodeOp for SinOp {
         true
     }
 
-    /// TODO: SinOp's demand budget needs careful analysis. The pi child's
-    /// budget depends on the input magnitude (large inputs wrap many times,
-    /// requiring higher pi precision for accurate range reduction). The input
-    /// child's budget depends on the derivative cos(x), which is bounded by 1
-    /// but the effective sensitivity through range reduction can be larger.
-    /// For now, return zero (never skip children) to avoid convergence
-    /// failures from prematurely demand-skipping pi or the input.
-    fn child_demand_budget(&self, _target_width: &UXBinary, _child_index: usize) -> UXBinary {
-        UXBinary::zero()
+    /// child 0 (input): |d(sin)/dθ| ≤ 1, so input budget = target.
+    /// child 1 (pi): range reduction subtracts ~k copies of 2π where
+    /// k ≈ max_abs(input)/(2π). Pi's error is amplified by 2k, so
+    /// pi budget = target / (2k) ≈ target · π / max_abs(input).
+    /// We use pi's own cached lower bound as a conservative estimate of π.
+    fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary {
+        if child_index == 0 {
+            // Input child: sin has derivative bounded by 1.
+            return target_width.clone();
+        }
+        // Pi child: budget = target · pi_lower / max_abs(input).
+        let input_max_abs = match self.inner.cached_bounds() {
+            Some(b) => {
+                let (lo, hi) = b.abs();
+                std::cmp::max(lo, hi)
+            }
+            None => return UXBinary::zero(),
+        };
+        let pi_lower = match self.pi_node.cached_bounds() {
+            Some(b) => {
+                let (lo, _hi) = b.abs();
+                lo
+            }
+            None => return UXBinary::zero(),
+        };
+        target_width.mul(&pi_lower).div_floor(&input_max_abs)
     }
 }
 
