@@ -64,7 +64,7 @@ jobs:
           cd /tmp/bench-data
           git add results/
           git commit -m "Benchmark: ${SHA:0:8}"
-          git push origin benchmark-data
+          git push origin HEAD:benchmark-data
 
       - name: Compare against baseline
         if: github.event_name == 'pull_request'
