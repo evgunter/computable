@@ -14,9 +14,11 @@ use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 5_000;
 
+// No precision sweep: all inputs are exact constants and arithmetic preserves
+// exactness, so refinement is a no-op regardless of the requested tolerance.
 bench_group! {
     name: complex,
-    fn bench_complex(bits) -> Bounds {
+    fn bench_complex() -> Bounds {
         let mut rng = StdRng::seed_from_u64(7);
         let terms: Vec<Computable> = (0..SAMPLE_COUNT)
             .map(|_| {
@@ -38,7 +40,7 @@ bench_group! {
 
         black_box(
             balanced_sum(terms)
-                .refine_to_default(epsilon(bits))
+                .refine_to_default(epsilon(1))
                 .expect("should succeed"),
         )
     }

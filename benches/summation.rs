@@ -14,9 +14,11 @@ use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 200_000_usize;
 
+// No precision sweep: all inputs are exact constants and addition preserves
+// exactness, so refinement is a no-op regardless of the requested tolerance.
 bench_group! {
     name: summation,
-    fn bench_summation(bits) -> Bounds {
+    fn bench_summation() -> Bounds {
         let mut rng = StdRng::seed_from_u64(7);
         let base = f64::from(2_i32.pow(30));
         let mut terms = Vec::with_capacity(SAMPLE_COUNT + 1_usize);
@@ -28,7 +30,7 @@ bench_group! {
 
         black_box(
             balanced_sum(terms)
-                .refine_to_default(epsilon(bits))
+                .refine_to_default(epsilon(1))
                 .expect("should succeed"),
         )
     }
