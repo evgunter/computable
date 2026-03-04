@@ -24,7 +24,20 @@ def display_name(entry):
 
 
 def extract_ir(entry):
-    """Extract instruction count (Ir) from a benchmark entry."""
+    """Extract instruction count (Ir) from a benchmark entry.
+
+    Handles both the compact format (top-level 'ir' field) and the full
+    gungraun schema (nested profiles[].summaries.total.summary.Callgrind.Ir).
+    """
+    # Compact format: ir is pre-extracted at top level
+    ir_val = entry.get("ir")
+    if ir_val is not None:
+        if isinstance(ir_val, dict) and "Int" in ir_val:
+            return ir_val["Int"]
+        if isinstance(ir_val, int):
+            return ir_val
+
+    # Full schema format
     for profile in entry.get("profiles", []):
         if profile.get("tool") != "Callgrind":
             continue
