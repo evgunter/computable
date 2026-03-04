@@ -63,10 +63,45 @@ pub fn balanced_sum(mut values: Vec<Computable>) -> Computable {
 
 /// Declares a benchmark group that works with both gungraun (valgrind) and criterion.
 ///
-/// Each function receives `bits: usize` and is benchmarked across the standard
-/// precision sweep. Under gungraun the functions get `#[library_benchmark]`
-/// attributes; under criterion they are called inside a `Criterion` group.
+/// Two forms:
+/// - **Precision sweep**: each function receives `bits: usize` and is benchmarked
+///   across `[1, 4, 16, 64, 256]` bits of precision.
+/// - **No sweep**: parameterless functions run once (for benchmarks where the
+///   computation is exact and precision doesn't affect workload).
 macro_rules! bench_group {
+    // No-sweep variant: parameterless functions, run once.
+    (
+        name: $group:ident,
+        $(
+            fn $fn_name:ident() $(-> $ret:ty)? $body:block
+        )+
+    ) => {
+        $(
+            #[cfg(not(feature = "criterion-bench"))]
+            #[gungraun::library_benchmark]
+            fn $fn_name() $(-> $ret)? $body
+        )+
+
+        #[cfg(not(feature = "criterion-bench"))]
+        library_benchmark_group!(
+            name = $group,
+            benchmarks = [$($fn_name),+]
+        );
+
+        #[cfg(feature = "criterion-bench")]
+        fn $group(c: &mut ::criterion::Criterion) {
+            let mut group = c.benchmark_group(stringify!($group));
+            $(
+                group.bench_function(
+                    stringify!($fn_name),
+                    |b| { b.iter(|| $body); },
+                );
+            )+
+            group.finish();
+        }
+    };
+
+    // Precision-sweep variant: functions take `bits` and run across the sweep.
     (
         name: $group:ident,
         $(
