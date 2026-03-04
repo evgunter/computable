@@ -202,9 +202,7 @@ impl RefinementGraph {
                         Ok(bounds_width_leq(&bounds, tol))
                     };
 
-                let mut propagated = self.compute_propagated_budgets(tolerance_exp);
-                let mut budget_generation = 0usize;
-                let mut bounds_generation = 0usize;
+                let propagated = self.compute_propagated_budgets(tolerance_exp);
 
                 loop {
                     // 1. Check if precision is already met.
@@ -231,9 +229,7 @@ impl RefinementGraph {
                     // 3. Dispatch eligible, non-outstanding refiners above demand budget.
                     //
                     //    Propagated budgets: walk the graph top-down from root, using
-                    //    each op's sensitivity to compute per-refiner budgets. Refiners
-                    //    not reachable through passive combinators (e.g. children of
-                    //    other refiners) are always stepped.
+                    //    each op's sensitivity to compute per-refiner budgets.
                     //
                     //    The propagated budgets are provably sufficient: if every
                     //    refiner meets its budget, the root meets the target. This
@@ -242,10 +238,14 @@ impl RefinementGraph {
                     //    - MulOp: w_out ≤ |a|·w_b + |b|·w_a ≤ ε/2 + ε/2 = ε
                     //      (no cross-term: |a| uses the endpoint, not the center)
                     //    - PowOp: w_out ≤ n·max_abs^(n-1)·w_in ≤ ε (MVT)
-                    if bounds_generation != budget_generation {
-                        propagated = self.compute_propagated_budgets(tolerance_exp);
-                        budget_generation = bounds_generation;
-                    }
+                    //
+                    //    Budgets are computed once before the loop and reused.
+                    //    This is safe because bounds only tighten during
+                    //    refinement: for sensitivity-based budgets like MulOp's
+                    //    child_budget = ε/(2·|sibling|), tighter sibling bounds
+                    //    → smaller |sibling|_max → looser child budget. So the
+                    //    initial budgets (computed with the widest bounds) are
+                    //    the most conservative and remain provably sufficient.
                     let precision_bits = match tolerance_exp {
                         XUsize::Finite(n) => *n,
                         XUsize::Inf => usize::MAX,
@@ -355,14 +355,12 @@ impl RefinementGraph {
                         };
                         let (idx, exhaustion) = apply_response(first)?;
                         record_completion!(idx, exhaustion);
-                        bounds_generation = bounds_generation.wrapping_add(1);
                     }
 
                     // Drain any immediately available responses.
                     while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion) = apply_response(msg)?;
                         record_completion!(idx, exhaustion);
-                        bounds_generation = bounds_generation.wrapping_add(1);
                     }
 
                     // Check precision after processing this batch (early exit).
@@ -430,11 +428,6 @@ impl RefinementGraph {
             let Some(node) = self.nodes.get(&node_id) else {
                 continue;
             };
-
-            // Don't propagate through refiners — they handle their own children.
-            if node.is_refiner() {
-                continue;
-            }
 
             let Some(budget) = budgets.get(&node_id).cloned() else {
                 continue;
