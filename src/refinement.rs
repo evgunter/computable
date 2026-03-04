@@ -305,13 +305,18 @@ impl RefinementGraph {
                         });
                     }
 
-                    // 4. Receive responses and update state.
+                    // 4. Collect ALL outstanding responses before re-dispatching.
                     //
-                    //    Block for one response, drain any immediately available
-                    //    via try_recv, then check precision for early exit. The
-                    //    try_recv batches responses that arrived while we were
-                    //    processing, avoiding O(N²) overhead when many refiners
-                    //    respond near-simultaneously.
+                    //    Waiting for every dispatched refiner prevents wasteful
+                    //    re-dispatches of fast refiners whose compute_bounds
+                    //    depends on slow refiners that haven't responded yet.
+                    //    (Under serialized execution like valgrind, one-at-a-time
+                    //    collection causes SinOp to accumulate Taylor terms with
+                    //    stale inner bounds, each step more expensive than the
+                    //    last.)  Checking precision after each response preserves
+                    //    early-exit: when apply_update propagation makes the root
+                    //    precise enough, we return before processing stale
+                    //    responses from the same wave.
 
                     // Process a response: apply the update and return the refiner
                     // index + exhaustion info so the caller can update bookkeeping
@@ -337,7 +342,7 @@ impl RefinementGraph {
 
                     // Inline helper: update bookkeeping after a response.
                     // Not a closure to avoid holding a mutable borrow on
-                    // `outstanding` across the straggler collection loop.
+                    // `outstanding` across the collection loop.
                     macro_rules! record_completion {
                         ($idx:expr, $exhaustion:expr) => {{
                             let idx = $idx;
@@ -354,26 +359,11 @@ impl RefinementGraph {
                         }};
                     }
 
-                    // Block for the first response.
-                    {
-                        let first = match update_rx.recv() {
+                    while outstanding.iter().any(|&o| o) {
+                        let msg = match update_rx.recv() {
                             Ok(msg) => msg,
                             Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
-                        let (idx, exhaustion) = apply_response(first)?;
-                        record_completion!(idx, exhaustion);
-                        // Check precision after each response: apply_update
-                        // propagates bounds up through parents, which can meet
-                        // the target before all responses are in. Checking here
-                        // avoids overwriting tight propagated bounds with a
-                        // stale refiner response from the same batch.
-                        if precision_met(&self.root, tolerance_exp)? {
-                            return self.root.get_bounds();
-                        }
-                    }
-
-                    // Drain any immediately available responses.
-                    while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion) = apply_response(msg)?;
                         record_completion!(idx, exhaustion);
                         if precision_met(&self.root, tolerance_exp)? {
