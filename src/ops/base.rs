@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::binary::Bounds;
+use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, BoundsAccess, Node, NodeOp};
 
@@ -31,5 +31,9 @@ impl NodeOp for BaseOp {
 
     fn is_refiner(&self) -> bool {
         true
+    }
+
+    fn child_demand_budget(&self, _target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        unreachable!("BaseOp has no children")
     }
 }

@@ -11,7 +11,9 @@ use num_bigint::BigInt;
 use num_traits::Signed;
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, Bounds, ReciprocalRounding, XBinary, reciprocal_rounded_abs_extended};
+use crate::binary::{
+    Binary, Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
+};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::sane;
@@ -139,6 +141,20 @@ impl NodeOp for InvOp {
 
     fn is_refiner(&self) -> bool {
         true
+    }
+
+    /// Sensitivity of 1/x: derivative = -1/x², so max |derivative| over
+    /// [a,b] is 1/min_abs² (worst case at the value closest to zero).
+    /// Child budget = target × min_abs².
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        let min_abs = match self.inner.cached_bounds() {
+            Some(b) => {
+                let (lo, hi) = b.abs();
+                std::cmp::min(lo, hi)
+            }
+            None => return target_width.clone(),
+        };
+        target_width.mul(&min_abs).mul(&min_abs)
     }
 }
 

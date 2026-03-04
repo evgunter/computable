@@ -157,6 +157,32 @@ impl NodeOp for NthRootOp {
     fn is_refiner(&self) -> bool {
         true
     }
+
+    /// Sensitivity of x^(1/n): derivative = (1/n) · x^((1-n)/n).
+    /// Max |derivative| at smallest input x = a: (1/n) · a^((1-n)/n).
+    /// Child budget = target · n · a^((n-1)/n).
+    ///
+    /// We approximate a^((n-1)/n) ≈ a, which is conservative (budget too
+    /// loose) for a ≥ 1 and slightly tight for a < 1. This avoids needing
+    /// to compute an nth root inside the budget function.
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        use crate::binary::UBinary;
+        use num_bigint::BigUint;
+
+        let n = self.degree.get();
+        if n == 1 {
+            return target_width.clone();
+        }
+        let min_abs = match self.inner.cached_bounds() {
+            Some(b) => {
+                let (lo, hi) = b.abs();
+                std::cmp::min(lo, hi)
+            }
+            None => return target_width.clone(),
+        };
+        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), BigInt::zero()));
+        target_width.mul(&n_ux).mul(&min_abs)
+    }
 }
 
 /// Computes initial conservative bounds for the n-th root.

@@ -30,6 +30,11 @@ impl NodeOp for NegOp {
     fn is_refiner(&self) -> bool {
         false
     }
+
+    /// Negation preserves width exactly.
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        target_width.clone()
+    }
 }
 
 /// Addition operation.
@@ -120,7 +125,7 @@ impl NodeOp for MulOp {
                 let (lo, hi) = b.abs();
                 std::cmp::max(lo, hi)
             }
-            None => return UXBinary::zero(), // unknown bounds → tightest budget
+            None => return target_width.clone(), // unknown bounds → conservative pass-through
         };
         (target_width.clone() >> 1u32).div_floor(&sibling_max_abs)
     }

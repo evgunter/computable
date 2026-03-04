@@ -81,7 +81,7 @@ impl NodeOp for PowOp {
                 let (lo, hi) = b.abs();
                 std::cmp::max(lo, hi)
             }
-            None => return UXBinary::zero(),
+            None => return target_width.clone(),
         };
         // Compute max_abs^(n-1) via exponentiation by squaring.
         let power = uxbinary_pow(&max_abs, n - 1);
@@ -92,7 +92,7 @@ impl NodeOp for PowOp {
 }
 
 /// Computes base^exp for UXBinary via exponentiation by squaring.
-fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
+pub(crate) fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
     if exp == 0 {
         return UXBinary::Finite(UBinary::new(BigUint::from(1u32), BigInt::zero()));
     }

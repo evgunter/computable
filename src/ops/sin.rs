@@ -25,6 +25,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
+use crate::binary::UXBinary;
 use crate::binary::{
     Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, XBinary, reciprocal_of_biguint,
 };
@@ -83,6 +84,17 @@ impl NodeOp for SinOp {
 
     fn is_refiner(&self) -> bool {
         true
+    }
+
+    /// TODO: SinOp's demand budget needs careful analysis. The pi child's
+    /// budget depends on the input magnitude (large inputs wrap many times,
+    /// requiring higher pi precision for accurate range reduction). The input
+    /// child's budget depends on the derivative cos(x), which is bounded by 1
+    /// but the effective sensitivity through range reduction can be larger.
+    /// For now, pass through the target unchanged (conservative: never skips
+    /// children, same as no propagated budget).
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        target_width.clone()
     }
 }
 

@@ -134,12 +134,10 @@ pub trait NodeOp: Send + Sync {
     /// this node's output.
     ///
     /// Returns the maximum width the child at `child_index` can have while
-    /// still allowing this node to meet the target. The default implementation
-    /// passes through the target unchanged, which is correct for operations
-    /// that preserve width (e.g. negation).
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
-        target_width.clone()
-    }
+    /// still allowing this node to meet the target. Every non-leaf NodeOp
+    /// must implement this — there is no default, so forgetting to implement
+    /// it for a new operation is a compile error.
+    fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary;
 }
 
 /// Synchronization state for coordinating refinement across threads.
