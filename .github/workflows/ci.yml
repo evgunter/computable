@@ -58,6 +58,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin benchmark-data
           git worktree add /tmp/bench-data origin/benchmark-data
+          mkdir -p /tmp/bench-data/results
           cp bench_results.json "/tmp/bench-data/results/${SHA}.json"
           cp bench_results.json /tmp/bench-data/results/latest.json
           cd /tmp/bench-data
