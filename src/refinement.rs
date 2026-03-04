@@ -261,7 +261,9 @@ impl RefinementGraph {
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             outstanding[i] = true;
                             dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
-                                unreachable!("dispatched <= refiner_handles.len(), cannot overflow usize")
+                                unreachable!(
+                                    "dispatched <= refiner_handles.len(), cannot overflow usize"
+                                )
                             });
                         }
                     }
