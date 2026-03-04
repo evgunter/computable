@@ -202,6 +202,10 @@ impl RefinementGraph {
                         Ok(bounds_width_leq(&bounds, tol))
                     };
 
+                let mut propagated = self.compute_propagated_budgets(tolerance_exp);
+                let mut budget_generation = 0usize;
+                let mut bounds_generation = 0usize;
+
                 loop {
                     // 1. Check if precision is already met.
                     if precision_met(&self.root, tolerance_exp)? {
@@ -238,7 +242,10 @@ impl RefinementGraph {
                     //    - MulOp: w_out ≤ |a|·w_b + |b|·w_a ≤ ε/2 + ε/2 = ε
                     //      (no cross-term: |a| uses the endpoint, not the center)
                     //    - PowOp: w_out ≤ n·max_abs^(n-1)·w_in ≤ ε (MVT)
-                    let propagated = self.compute_propagated_budgets(tolerance_exp);
+                    if bounds_generation != budget_generation {
+                        propagated = self.compute_propagated_budgets(tolerance_exp);
+                        budget_generation = bounds_generation;
+                    }
                     let precision_bits = match tolerance_exp {
                         XUsize::Finite(n) => *n,
                         XUsize::Inf => usize::MAX,
@@ -348,12 +355,14 @@ impl RefinementGraph {
                         };
                         let (idx, exhaustion) = apply_response(first)?;
                         record_completion!(idx, exhaustion);
+                        bounds_generation = bounds_generation.wrapping_add(1);
                     }
 
                     // Drain any immediately available responses.
                     while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion) = apply_response(msg)?;
                         record_completion!(idx, exhaustion);
+                        bounds_generation = bounds_generation.wrapping_add(1);
                     }
 
                     // Check precision after processing this batch (early exit).
