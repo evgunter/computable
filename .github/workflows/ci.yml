@@ -19,11 +19,60 @@ jobs:
 
   bench:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y valgrind
       - run: cargo install gungraun-runner --version 0.17.2
-      - name: Run all benchmarks
-        run: ulimit -s 65536 && cargo bench
+
+      - name: Restore benchmark baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: target/gungraun
+          key: gungraun-baseline-${{ github.sha }}
+          restore-keys: gungraun-baseline-
+
+      - name: Run benchmarks
+        run: |
+          ulimit -s 65536
+          cargo bench --bench summation --bench complex --bench integer_roots \
+            --bench inv --bench sin --bench pi --bench asymmetric_convergence \
+            -- --output-format=json 2>bench_stderr.log | jq -s '.' > bench_results.json
+
+      - name: Save benchmark baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: target/gungraun
+          key: gungraun-baseline-${{ github.sha }}
+
+      - name: Store benchmark history
+        if: github.ref == 'refs/heads/main'
+        run: |
+          SHA="${{ github.sha }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin benchmark-data
+          git worktree add /tmp/bench-data origin/benchmark-data
+          mkdir -p /tmp/bench-data/results
+          cp bench_results.json "/tmp/bench-data/results/${SHA}.json"
+          cp bench_results.json /tmp/bench-data/results/latest.json
+          cd /tmp/bench-data
+          git add results/
+          git commit -m "Benchmark: ${SHA:0:8}"
+          git push origin benchmark-data
+
+      - name: Compare against baseline
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin benchmark-data
+          git show origin/benchmark-data:results/latest.json > baseline.json 2>/dev/null || exit 0
+          python3 .github/scripts/compare_benchmarks.py baseline.json bench_results.json \
+            --pr ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }}

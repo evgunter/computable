@@ -824,46 +824,43 @@ mod tests {
         handle.join().expect("reader thread should join");
     }
 
-    // NOTE: this test could be fallible, since it uses timing to measure success. perhaps it should be an integration test rather than a unit test
     #[test]
     fn refinement_parallelizes_multiple_refiners() {
-        use std::time::Instant;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
-        const SLEEP_MS: u64 = 10;
-        let sleep_duration = Duration::from_millis(SLEEP_MS);
+        let concurrent_count = Arc::new(AtomicUsize::new(0));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
 
-        let slow_refiner = || {
+        let slow_refiner = |concurrent: Arc<AtomicUsize>, max_conc: Arc<AtomicUsize>| {
             Computable::new(
                 0usize,
                 |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
-                |state| {
-                    thread::sleep(Duration::from_millis(SLEEP_MS));
+                move |state| {
+                    let prev = concurrent.fetch_add(1, Ordering::SeqCst);
+                    max_conc.fetch_max(prev + 1, Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(10));
+                    concurrent.fetch_sub(1, Ordering::SeqCst);
                     Ok(state + 1)
                 },
             )
         };
 
-        let expr = slow_refiner() + slow_refiner() + slow_refiner() + slow_refiner();
+        let expr = slow_refiner(Arc::clone(&concurrent_count), Arc::clone(&max_concurrent))
+            + slow_refiner(Arc::clone(&concurrent_count), Arc::clone(&max_concurrent))
+            + slow_refiner(Arc::clone(&concurrent_count), Arc::clone(&max_concurrent))
+            + slow_refiner(Arc::clone(&concurrent_count), Arc::clone(&max_concurrent));
         let tolerance_exp = XUsize::Finite(6);
 
-        let start = Instant::now();
         let result = expr.refine_to::<1>(tolerance_exp);
-        let elapsed = start.elapsed();
 
         assert!(matches!(
             result,
             Err(ComputableError::MaxRefinementIterations { max: 1 })
         ));
-        // Use Duration comparison instead of as_millis() truncation
-        // to avoid off-by-one issues when elapsed is e.g. 10.5ms
         assert!(
-            elapsed >= sleep_duration,
-            "refinement must not have actually run, elapsed {elapsed:?}"
-        );
-        assert!(
-            elapsed < 2 * sleep_duration,
-            "expected parallel refinement under {}ms, elapsed {elapsed:?}",
-            2 * SLEEP_MS
+            max_concurrent.load(Ordering::SeqCst) >= 4,
+            "expected all 4 refiners to run concurrently, max observed: {}",
+            max_concurrent.load(Ordering::SeqCst)
         );
     }
 
