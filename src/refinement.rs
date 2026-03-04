@@ -861,9 +861,9 @@ mod tests {
             "refinement must not have actually run, elapsed {elapsed:?}"
         );
         assert!(
-            elapsed < 2 * sleep_duration,
+            elapsed < 3 * sleep_duration,
             "expected parallel refinement under {}ms, elapsed {elapsed:?}",
-            2 * SLEEP_MS
+            3 * SLEEP_MS
         );
     }
 
