@@ -202,7 +202,14 @@ impl RefinementGraph {
                         Ok(bounds_width_leq(&bounds, tol))
                     };
 
-                let propagated = self.compute_propagated_budgets(tolerance_exp);
+                let propagated_map = self.compute_propagated_budgets(tolerance_exp);
+                // Convert HashMap to Vec for O(1) indexed lookup in the
+                // dispatch loop. Refiners not in the map get no budget
+                // (always dispatched).
+                let refiner_budgets: Vec<Option<UXBinary>> = refiner_nodes
+                    .iter()
+                    .map(|node| propagated_map.get(&node.id).cloned())
+                    .collect();
 
                 loop {
                     // 1. Check if precision is already met.
@@ -256,7 +263,7 @@ impl RefinementGraph {
                         if !active[i] || outstanding[i] || steps[i] >= MAX_REFINEMENT_ITERATIONS {
                             continue;
                         }
-                        let skip = propagated.get(&refiner_nodes[i].id).is_some_and(|budget| {
+                        let skip = refiner_budgets[i].as_ref().is_some_and(|budget| {
                             refiner_nodes[i]
                                 .cached_bounds()
                                 .is_some_and(|b| b.width() <= budget)
@@ -283,8 +290,8 @@ impl RefinementGraph {
                     // meet their budgets, the root should have met the target
                     // — a stall in that case is a budget computation bug.
                     if dispatched == 0 && !outstanding.iter().any(|&o| o) {
-                        let any_budget_unmet = refiner_nodes.iter().any(|r| {
-                            propagated.get(&r.id).is_some_and(|budget| {
+                        let any_budget_unmet = refiner_nodes.iter().enumerate().any(|(i, r)| {
+                            refiner_budgets[i].as_ref().is_some_and(|budget| {
                                 r.cached_bounds().is_some_and(|b| b.width() > budget)
                             })
                         });
@@ -355,17 +362,23 @@ impl RefinementGraph {
                         };
                         let (idx, exhaustion) = apply_response(first)?;
                         record_completion!(idx, exhaustion);
+                        // Check precision after each response: apply_update
+                        // propagates bounds up through parents, which can meet
+                        // the target before all responses are in. Checking here
+                        // avoids overwriting tight propagated bounds with a
+                        // stale refiner response from the same batch.
+                        if precision_met(&self.root, tolerance_exp)? {
+                            return self.root.get_bounds();
+                        }
                     }
 
                     // Drain any immediately available responses.
                     while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion) = apply_response(msg)?;
                         record_completion!(idx, exhaustion);
-                    }
-
-                    // Check precision after processing this batch (early exit).
-                    if precision_met(&self.root, tolerance_exp)? {
-                        return self.root.get_bounds();
+                        if precision_met(&self.root, tolerance_exp)? {
+                            return self.root.get_bounds();
+                        }
                     }
                 }
             })();
