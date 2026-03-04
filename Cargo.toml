@@ -10,6 +10,9 @@ keywords = ["computable", "exact-arithmetic", "interval", "real-numbers"]
 categories = ["mathematics", "science"]
 autobenches = false
 
+[features]
+criterion-bench = []
+
 [dependencies]
 crossbeam-channel = "0.5"
 num-bigint = "0.4"
@@ -48,10 +51,6 @@ harness = false
 
 [[bench]]
 name = "asymmetric_convergence"
-harness = false
-
-[[bench]]
-name = "summation_criterion"
 harness = false
 
 [lints.clippy]
