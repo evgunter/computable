@@ -91,11 +91,10 @@ impl NodeOp for SinOp {
     /// requiring higher pi precision for accurate range reduction). The input
     /// child's budget depends on the derivative cos(x), which is bounded by 1
     /// but the effective sensitivity through range reduction can be larger.
-    /// For now, pass through the target unchanged — this is looser than the
-    /// old flat budget (which divided by refiner count), so children may be
-    /// skipped too eagerly.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
-        target_width.clone()
+    /// For now, return zero (never skip children) to avoid convergence
+    /// failures from prematurely demand-skipping pi or the input.
+    fn child_demand_budget(&self, _target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        UXBinary::zero()
     }
 }
 
