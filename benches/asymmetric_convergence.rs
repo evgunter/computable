@@ -14,14 +14,17 @@
 
 mod common;
 
+#[cfg(not(feature = "criterion-bench"))]
+use gungraun::*;
 use std::hint::black_box;
 use std::num::NonZeroU32;
 
-use gungraun::{library_benchmark, library_benchmark_group, main};
 use num_bigint::BigInt;
 
-use common::epsilon;
-use computable::{Binary, Bounds, Computable, pi};
+use common::{bench_group, bench_main, epsilon};
+#[cfg(not(feature = "criterion-bench"))]
+use computable::Bounds;
+use computable::{Binary, Computable, pi};
 
 fn sqrt_2() -> Computable {
     Computable::constant(Binary::new(BigInt::from(2_i64), BigInt::from(0_i64)))
@@ -39,70 +42,49 @@ fn constant(value: i64) -> Computable {
 
 // --- mixed (asymmetric) ---
 
-#[library_benchmark]
-#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
-fn bench_sqrt2_plus_pi(bits: usize) -> Bounds {
-    black_box(
-        (sqrt_2() + pi())
-            .refine_to_default(epsilon(bits))
-            .expect("should succeed"),
-    )
+bench_group! {
+    name: mixed,
+    fn bench_sqrt2_plus_pi(bits) -> Bounds {
+        black_box(
+            (sqrt_2() + pi())
+                .refine_to_default(epsilon(bits))
+                .expect("should succeed"),
+        )
+    }
+    fn bench_sqrt2_times_pi(bits) -> Bounds {
+        black_box(
+            (sqrt_2() * pi())
+                .refine_to_default(epsilon(bits))
+                .expect("should succeed"),
+        )
+    }
 }
-
-#[library_benchmark]
-#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
-fn bench_sqrt2_times_pi(bits: usize) -> Bounds {
-    black_box(
-        (sqrt_2() * pi())
-            .refine_to_default(epsilon(bits))
-            .expect("should succeed"),
-    )
-}
-
-library_benchmark_group!(
-    name = mixed,
-    benchmarks = [bench_sqrt2_plus_pi, bench_sqrt2_times_pi]
-);
 
 // --- controls ---
 
-#[library_benchmark]
-#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
-fn bench_sqrt2_plus_const3(bits: usize) -> Bounds {
-    black_box(
-        (sqrt_2() + constant(3_i64))
-            .refine_to_default(epsilon(bits))
-            .expect("should succeed"),
-    )
+bench_group! {
+    name: controls,
+    fn bench_sqrt2_plus_const3(bits) -> Bounds {
+        black_box(
+            (sqrt_2() + constant(3_i64))
+                .refine_to_default(epsilon(bits))
+                .expect("should succeed"),
+        )
+    }
+    fn bench_pi_plus_const1(bits) -> Bounds {
+        black_box(
+            (pi() + constant(1_i64))
+                .refine_to_default(epsilon(bits))
+                .expect("should succeed"),
+        )
+    }
+    fn bench_sqrt2_plus_cbrt3(bits) -> Bounds {
+        black_box(
+            (sqrt_2() + cbrt_3())
+                .refine_to_default(epsilon(bits))
+                .expect("should succeed"),
+        )
+    }
 }
 
-#[library_benchmark]
-#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
-fn bench_pi_plus_const1(bits: usize) -> Bounds {
-    black_box(
-        (pi() + constant(1_i64))
-            .refine_to_default(epsilon(bits))
-            .expect("should succeed"),
-    )
-}
-
-#[library_benchmark]
-#[benches::precision(args = [1_usize, 4, 16, 64, 256])]
-fn bench_sqrt2_plus_cbrt3(bits: usize) -> Bounds {
-    black_box(
-        (sqrt_2() + cbrt_3())
-            .refine_to_default(epsilon(bits))
-            .expect("should succeed"),
-    )
-}
-
-library_benchmark_group!(
-    name = controls,
-    benchmarks = [
-        bench_sqrt2_plus_const3,
-        bench_pi_plus_const1,
-        bench_sqrt2_plus_cbrt3
-    ]
-);
-
-main!(library_benchmark_groups = mixed, controls);
+bench_main!(mixed, controls);

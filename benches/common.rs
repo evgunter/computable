@@ -60,3 +60,75 @@ pub fn balanced_sum(mut values: Vec<Computable>) -> Computable {
         .pop()
         .expect("values should contain at least one element")
 }
+
+/// Declares a benchmark group that works with both gungraun (valgrind) and criterion.
+///
+/// Each function receives `bits: usize` and is benchmarked across the standard
+/// precision sweep. Under gungraun the functions get `#[library_benchmark]`
+/// attributes; under criterion they are called inside a `Criterion` group.
+macro_rules! bench_group {
+    (
+        name: $group:ident,
+        $(
+            fn $fn_name:ident($bits:ident) $(-> $ret:ty)? $body:block
+        )+
+    ) => {
+        $(
+            #[cfg(not(feature = "criterion-bench"))]
+            #[gungraun::library_benchmark]
+            #[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+            fn $fn_name($bits: usize) $(-> $ret)? $body
+        )+
+
+        #[cfg(not(feature = "criterion-bench"))]
+        library_benchmark_group!(
+            name = $group,
+            benchmarks = [$($fn_name),+]
+        );
+
+        #[cfg(feature = "criterion-bench")]
+        fn $group(c: &mut ::criterion::Criterion) {
+            let mut group = c.benchmark_group(stringify!($group));
+            $(
+                for &$bits in common::precision_bits() {
+                    group.bench_function(
+                        &format!("{}/bits={}", stringify!($fn_name), $bits),
+                        |b| { b.iter(|| $body); },
+                    );
+                }
+            )+
+            group.finish();
+        }
+    };
+}
+pub(crate) use bench_group;
+
+/// Declares the benchmark `main` for both gungraun and criterion.
+macro_rules! bench_main {
+    // With valgrind_args (ignored under criterion).
+    ($($group:ident),+ ; valgrind_args: [$($arg:literal),* $(,)?]) => {
+        #[cfg(not(feature = "criterion-bench"))]
+        main!(
+            config = LibraryBenchmarkConfig::default()
+                .valgrind_args([$($arg),*]);
+            library_benchmark_groups = $($group),+
+        );
+
+        #[cfg(feature = "criterion-bench")]
+        ::criterion::criterion_group!(benches, $($group),+);
+        #[cfg(feature = "criterion-bench")]
+        ::criterion::criterion_main!(benches);
+    };
+
+    // Without valgrind_args.
+    ($($group:ident),+ $(,)?) => {
+        #[cfg(not(feature = "criterion-bench"))]
+        main!(library_benchmark_groups = $($group),+);
+
+        #[cfg(feature = "criterion-bench")]
+        ::criterion::criterion_group!(benches, $($group),+);
+        #[cfg(feature = "criterion-bench")]
+        ::criterion::criterion_main!(benches);
+    };
+}
+pub(crate) use bench_main;
