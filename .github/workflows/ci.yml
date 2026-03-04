@@ -41,7 +41,16 @@ jobs:
           ulimit -s 65536
           cargo bench --bench summation --bench complex --bench integer_roots \
             --bench inv --bench sin --bench pi --bench asymmetric_convergence \
-            -- --output-format=json 2>bench_stderr.log | jq -s '.' > bench_results.json
+            -- --output-format=json 2>bench_stderr.log | jq -s '
+              [ .[] | {
+                module_path, function_name, id,
+                ir: (
+                  .profiles[]?
+                  | select(.tool == "Callgrind")
+                  | .summaries.total.summary.Callgrind.Ir.metrics
+                  | if .Both then .Both[0] elif .Left then .Left else null end
+                )
+              } ]' > bench_results.json
 
       - name: Save benchmark baseline
         if: github.ref == 'refs/heads/main'
