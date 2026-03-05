@@ -249,7 +249,7 @@ impl From<&Bounds> for Prefix {
 
         // Handle infinite cases
         match (lower, upper) {
-            (XBinary::NegInf, XBinary::PosInf) => return Self::unbounded(),
+            (XBinary::NegInf, XBinary::PosInf) => Self::unbounded(),
             (XBinary::NegInf, XBinary::Finite(hi)) => {
                 let pos_exp = if hi.mantissa().is_positive() {
                     magnitude_exponent(hi)
@@ -263,10 +263,10 @@ impl From<&Bounds> for Prefix {
                         width_exponent: XExponent::PosInf,
                     };
                 };
-                return Self::ZeroCrossing {
+                Self::ZeroCrossing {
                     neg_exponent: XExponent::PosInf,
                     pos_exponent: pos_exp,
-                };
+                }
             }
             (XBinary::Finite(lo), XBinary::PosInf) => {
                 let neg_exp = if lo.mantissa().is_negative() {
@@ -280,28 +280,28 @@ impl From<&Bounds> for Prefix {
                         width_exponent: XExponent::PosInf,
                     };
                 };
-                return Self::ZeroCrossing {
+                Self::ZeroCrossing {
                     neg_exponent: neg_exp,
                     pos_exponent: XExponent::PosInf,
-                };
+                }
             }
             (XBinary::NegInf, XBinary::NegInf) | (XBinary::PosInf, XBinary::PosInf) => {
                 // Degenerate: shouldn't happen in well-formed bounds.
                 crate::detected_computable_with_infinite_value!(
                     "both bounds are the same infinity"
                 );
-                return Self::unbounded();
+                Self::unbounded()
             }
             (XBinary::PosInf, _) | (_, XBinary::NegInf) => {
                 // Invalid: lower > upper. Shouldn't happen.
                 crate::detected_computable_with_infinite_value!(
                     "invalid bounds ordering with infinities"
                 );
-                return Self::unbounded();
+                Self::unbounded()
             }
             (XBinary::Finite(lo), XBinary::Finite(hi)) => {
                 // Both finite — handle below
-                return finite_bounds_to_prefix(lo, hi);
+                finite_bounds_to_prefix(lo, hi)
             }
         }
     }
