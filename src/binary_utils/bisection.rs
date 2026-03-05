@@ -10,9 +10,7 @@
 //! - [`PrefixBounds`]: Bounds in prefix form (mantissa, exponent)
 //! - [`PrefixBisectionResult`]: Result of a prefix bisection step
 //! - [`bisection_step_normalized`]: Performs bisection on prefix bounds
-//! - [`bounds_from_normalized`]: Converts prefix form to `FiniteBounds`
-//! - [`normalize_bounds`]: Converts arbitrary bounds to prefix form
-//! - [`normalize_finite_to_bounds`]: Converts finite bounds to `Bounds` via prefix normalization
+//! - [`normalize_bounds`]: Converts arbitrary finite bounds to prefix form
 //!
 //! # Prefix Bounds Strategy
 //!
@@ -63,7 +61,7 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use std::cmp::Ordering;
 
-use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
+use crate::binary::{Binary, FiniteBounds};
 
 /// Prefix bounds for bisection where lower = mantissa * 2^exponent and width = 2^exponent.
 ///
@@ -157,38 +155,10 @@ pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
     FiniteBounds::new(lower.clone(), upper.clone()).midpoint()
 }
 
-/// Creates normalized bounds suitable for midpoint-based bisection.
+/// Creates normalized bounds from a mantissa and exponent.
 ///
-/// If the lower bound and width can be written as a pair of binary numbers
-/// with integer mantissa and the same exponent, and the mantissa of the width is 1,
-/// then binary search will choose the shortest representation in the interval automatically.
-/// This means that binary search is guaranteed to find an exact answer if it exists.
-/// (this condition is equivalent to having the bounds be represented as just a binary prefix)
-///
-/// # Arguments
-///
-/// * `mantissa` - The mantissa of the lower bound (should be an integer)
-/// * `exponent` - The shared exponent for both the lower bound and width
-///
-/// # Returns
-///
-/// [`FiniteBounds`] with lower = `mantissa * 2^exponent` and width = `1 * 2^exponent`.
-///
-/// # Example
-///
-/// ```
-/// use computable::binary_utils::bisection::bounds_from_normalized;
-/// use num_bigint::BigInt;
-///
-/// // Create bounds with lower = 3 * 2^(-1) = 1.5 and width = 1 * 2^(-1) = 0.5
-/// // This gives the interval [1.5, 2.0]
-/// let bounds = bounds_from_normalized(BigInt::from(3), BigInt::from(-1));
-///
-/// // The width should be 1 * 2^(-1)
-/// assert_eq!(*bounds.width().mantissa(), 1u32.into());
-/// assert_eq!(*bounds.width().exponent(), BigInt::from(-1));
-/// ```
-pub fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBounds {
+/// Returns `FiniteBounds` with lower = `mantissa * 2^exponent` and width = `1 * 2^exponent`.
+fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBounds {
     use crate::binary::UBinary;
     use num_bigint::BigUint;
 
@@ -273,126 +243,6 @@ pub fn normalize_bounds(
     Ok(bounds_from_normalized(lower_mantissa, target_exp))
 }
 
-/// Precision threshold (total mantissa bits of both endpoints) above which
-/// normalization to prefix form is applied. Below this threshold, bounds are
-/// returned as-is to avoid the ~4x width expansion that normalization entails.
-///
-/// 64 bits is chosen because:
-/// - It's large enough to avoid normalizing coarse early-refinement bounds
-/// - It's small enough to prevent significant precision bloat in long refinements
-const NORMALIZATION_PRECISION_THRESHOLD: usize = 64;
-
-/// Normalizes zero-crossing bounds by independently rounding each endpoint.
-///
-/// Prefix-form normalization cannot handle intervals that span zero, because
-/// `[m×2^e, (m+1)×2^e]` with m=-1 gives upper=0 and m=0 gives lower=0.
-///
-/// Instead, this function picks a target exponent (same formula as [`normalize_bounds`])
-/// and rounds the lower bound toward −∞ and the upper bound toward +∞. The resulting
-/// mantissas are small (a few bits each), preventing the precision bloat that would
-/// otherwise accumulate across refinement steps.
-///
-/// The interval may expand by up to ~4× but soundness is preserved: the normalized
-/// bounds always contain the original interval.
-fn normalize_zero_crossing_bounds(
-    bounds: &FiniteBounds,
-) -> Result<FiniteBounds, crate::error::ComputableError> {
-    use num_traits::Signed;
-
-    let lower = bounds.small();
-    let upper = &bounds.hi();
-    let width_ubinary = bounds.width();
-
-    let width_bits = width_ubinary.mantissa().bits();
-    // Same target exponent as normalize_bounds: ensures 2^target_exp > width.
-    // The +1 provides margin for rounding both endpoints.
-    let target_exp = width_ubinary.exponent() + BigInt::from(width_bits) + BigInt::one();
-
-    // Floor the lower bound toward −∞
-    let lo_shift = lower.exponent() - &target_exp;
-    let lo_mantissa = if lo_shift.is_zero() {
-        lower.mantissa().clone()
-    } else if lo_shift.is_positive() {
-        let n = lo_shift
-            .magnitude()
-            .to_usize()
-            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
-        lower.mantissa() << n
-    } else {
-        // BigInt >> rounds toward −∞ (arithmetic right shift)
-        let n = lo_shift
-            .magnitude()
-            .to_usize()
-            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
-        lower.mantissa() >> n
-    };
-
-    // Ceil the upper bound toward +∞
-    // ceil(m / 2^k) = −floor(−m / 2^k) = −((−m) >> k)
-    let hi_shift = upper.exponent() - &target_exp;
-    let hi_mantissa = if hi_shift.is_zero() {
-        upper.mantissa().clone()
-    } else if hi_shift.is_positive() {
-        let n = hi_shift
-            .magnitude()
-            .to_usize()
-            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
-        upper.mantissa() << n
-    } else {
-        let n = hi_shift
-            .magnitude()
-            .to_usize()
-            .ok_or(crate::error::ComputableError::InfiniteBounds)?;
-        -((-upper.mantissa()) >> n)
-    };
-
-    let lo = Binary::new(lo_mantissa, target_exp.clone());
-    let hi = Binary::new(hi_mantissa, target_exp);
-    Ok(FiniteBounds::new(lo, hi))
-}
-
-/// Normalizes finite bounds to `Bounds`, handling edge cases where prefix form isn't possible.
-///
-/// Prefix-form intervals `[m×2^e, (m+1)×2^e]` cannot represent:
-/// - **Zero-width intervals**: normalization would expand them to width 2^e
-///
-/// Zero-crossing intervals are handled by [`normalize_zero_crossing_bounds`], which
-/// independently rounds each endpoint to a coarser exponent.
-///
-/// Normalization is skipped when the total mantissa precision is
-/// below [`NORMALIZATION_PRECISION_THRESHOLD`] to avoid unnecessary interval
-/// expansion during early refinement steps.
-pub fn normalize_finite_to_bounds(
-    bounds: &FiniteBounds,
-) -> Result<Bounds, crate::error::ComputableError> {
-    use num_traits::Signed;
-
-    let lower_bits = crate::sane::bits_as_usize(bounds.small().mantissa().magnitude().bits());
-    let upper_bits = crate::sane::bits_as_usize(bounds.large().mantissa().magnitude().bits());
-    let total_precision = crate::sane_arithmetic!(lower_bits, upper_bits; lower_bits + upper_bits);
-
-    let needs_normalization =
-        total_precision > NORMALIZATION_PRECISION_THRESHOLD && !bounds.width().mantissa().is_zero();
-
-    if needs_normalization {
-        let crosses_zero =
-            bounds.small().mantissa().is_negative() && bounds.large().mantissa().is_positive();
-        let normalized = if crosses_zero {
-            normalize_zero_crossing_bounds(bounds)?
-        } else {
-            normalize_bounds(bounds)?
-        };
-        Ok(Bounds::from_lower_and_width(
-            XBinary::Finite(normalized.small().clone()),
-            UXBinary::Finite(normalized.width().clone()),
-        ))
-    } else {
-        Ok(Bounds::from_lower_and_width(
-            XBinary::Finite(bounds.small().clone()),
-            UXBinary::Finite(bounds.width().clone()),
-        ))
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -733,143 +583,4 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Tests for normalize_finite_to_bounds
-    // =========================================================================
-
-    #[test]
-    fn normalize_finite_to_bounds_skips_low_precision() {
-        // Bounds with small mantissas (total bits well below the 64-bit threshold)
-        // should be returned unchanged.
-        let original = FiniteBounds::new(bin(3, 0), bin(5, 0)); // 2 + 3 = 5 bits total
-        let result = normalize_finite_to_bounds(&original).expect("should succeed");
-
-        // Result should exactly match the original bounds
-        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
-        assert_eq!(result.large(), XBinary::Finite(original.hi()));
-    }
-
-    #[test]
-    fn normalize_finite_to_bounds_skips_zero_width() {
-        // Zero-width (point) intervals should be returned unchanged regardless of
-        // precision, because normalization would expand them.
-        let point = bin(1, -100); // very high precision but zero width
-        let original = FiniteBounds::point(point.clone());
-        let result = normalize_finite_to_bounds(&original).expect("should succeed");
-
-        assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
-        assert_eq!(result.large(), XBinary::Finite(original.hi()));
-    }
-
-    #[test]
-    fn normalize_finite_to_bounds_normalizes_zero_crossing() {
-        // Zero-crossing intervals with high precision should be normalized
-        // (not via prefix form, but by independently rounding each endpoint).
-        let lo = bin(-((1i64 << 40) + 1), -40); // negative, ~41 bits
-        let hi = bin((1i64 << 40) + 1, -40); // positive, ~41 bits
-        let original = FiniteBounds::new(lo, hi);
-
-        let result = normalize_finite_to_bounds(&original).expect("should succeed");
-
-        let result_lo = match result.small() {
-            XBinary::Finite(b) => b,
-            XBinary::NegInf | XBinary::PosInf => panic!("expected finite lower"),
-        };
-        let result_hi = match &result.large() {
-            XBinary::Finite(b) => b.clone(),
-            XBinary::NegInf | XBinary::PosInf => panic!("expected finite upper"),
-        };
-
-        // Normalized bounds should contain original bounds
-        assert!(
-            result_lo <= original.small(),
-            "normalized lower {} should be <= original lower {}",
-            result_lo,
-            original.small()
-        );
-        assert!(
-            result_hi >= original.hi(),
-            "normalized upper {} should be >= original upper {}",
-            result_hi,
-            original.hi()
-        );
-
-        // Mantissa bits should be much smaller than the original ~41 bits per endpoint
-        assert!(
-            result_lo.mantissa().magnitude().bits() < 10,
-            "normalized lower mantissa should be small, got {} bits",
-            result_lo.mantissa().magnitude().bits()
-        );
-        assert!(
-            result_hi.mantissa().magnitude().bits() < 10,
-            "normalized upper mantissa should be small, got {} bits",
-            result_hi.mantissa().magnitude().bits()
-        );
-    }
-
-    #[test]
-    fn normalize_finite_to_bounds_normalizes_high_precision() {
-        // High-precision positive bounds should be normalized.
-        // Create bounds with ~40 bits per endpoint (80 total, > 64 threshold).
-        let lo = bin((1i64 << 39) + 1, -50); // ~40 bits mantissa
-        let hi = bin((1i64 << 39) + 3, -50); // ~40 bits mantissa
-        let original = FiniteBounds::new(lo, hi);
-
-        let result = normalize_finite_to_bounds(&original).expect("should succeed");
-
-        // The normalized result should contain the original bounds
-        let result_lo = match result.small() {
-            XBinary::Finite(b) => b,
-            XBinary::NegInf | XBinary::PosInf => panic!("expected finite lower"),
-        };
-        let result_hi = match &result.large() {
-            XBinary::Finite(b) => b.clone(),
-            XBinary::NegInf | XBinary::PosInf => panic!("expected finite upper"),
-        };
-
-        assert!(
-            result_lo <= original.small(),
-            "normalized lower {} should be <= original lower {}",
-            result_lo,
-            original.small()
-        );
-        assert!(
-            result_hi >= original.hi(),
-            "normalized upper {} should be >= original upper {}",
-            result_hi,
-            original.hi()
-        );
-    }
-
-    #[test]
-    fn normalize_finite_to_bounds_normalizes_high_precision_negative() {
-        // High-precision negative bounds should also be normalized.
-        let lo = bin(-((1i64 << 39) + 3), -50);
-        let hi = bin(-((1i64 << 39) + 1), -50);
-        let original = FiniteBounds::new(lo, hi);
-
-        let result = normalize_finite_to_bounds(&original).expect("should succeed");
-
-        let result_lo = match result.small() {
-            XBinary::Finite(b) => b,
-            XBinary::NegInf | XBinary::PosInf => panic!("expected finite lower"),
-        };
-        let result_hi = match &result.large() {
-            XBinary::Finite(b) => b.clone(),
-            XBinary::NegInf | XBinary::PosInf => panic!("expected finite upper"),
-        };
-
-        assert!(
-            result_lo <= original.small(),
-            "normalized lower {} should be <= original lower {}",
-            result_lo,
-            original.small()
-        );
-        assert!(
-            result_hi >= original.hi(),
-            "normalized upper {} should be >= original upper {}",
-            result_hi,
-            original.hi()
-        );
-    }
 }
