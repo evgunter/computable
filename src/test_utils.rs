@@ -68,7 +68,8 @@ pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
     }
 }
 
-use crate::binary::{Bounds, FiniteBounds};
+use crate::binary::Bounds;
+use crate::finite_interval::FiniteInterval;
 use crate::computable::Computable;
 use crate::prefix::Prefix;
 use crate::refinement::{XUsize, prefix_width_leq};
@@ -90,7 +91,7 @@ pub fn epsilon_as_binary(n: usize) -> Binary {
 pub fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
     let lower_finite = unwrap_finite(lower);
     let upper_finite = unwrap_finite(upper);
-    FiniteBounds::new(lower_finite, upper_finite).midpoint()
+    FiniteInterval::new(lower_finite, upper_finite).midpoint()
 }
 
 /// Refines bounds by collapsing them to their midpoint.

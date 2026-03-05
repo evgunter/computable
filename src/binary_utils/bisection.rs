@@ -61,7 +61,8 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use std::cmp::Ordering;
 
-use crate::binary::{Binary, FiniteBounds};
+use crate::binary::Binary;
+use crate::finite_interval::FiniteInterval;
 
 /// Prefix bounds for bisection where lower = mantissa * 2^exponent and width = 2^exponent.
 ///
@@ -84,8 +85,8 @@ impl PrefixBounds {
         Self { mantissa, exponent }
     }
 
-    /// Converts to `FiniteBounds`.
-    pub fn to_finite_bounds(&self) -> FiniteBounds {
+    /// Converts to `FiniteInterval`.
+    pub(crate) fn to_finite_bounds(&self) -> FiniteInterval {
         bounds_from_normalized(self.mantissa.clone(), self.exponent.clone())
     }
 
@@ -107,7 +108,7 @@ pub enum PrefixBisectionResult {
 /// Performs a single bisection step on normalized bounds.
 ///
 /// This operates directly on the normalized representation, updating mantissa and exponent
-/// without needing to convert to/from `FiniteBounds`.
+/// without needing to convert to/from `FiniteInterval`.
 ///
 /// # Arguments
 ///
@@ -152,19 +153,20 @@ where
 ///
 /// The midpoint is calculated as (lower + upper) / 2.
 pub fn midpoint(lower: &Binary, upper: &Binary) -> Binary {
-    FiniteBounds::new(lower.clone(), upper.clone()).midpoint()
+    let sum = lower.add(upper);
+    Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
 }
 
 /// Creates normalized bounds from a mantissa and exponent.
 ///
-/// Returns `FiniteBounds` with lower = `mantissa * 2^exponent` and width = `1 * 2^exponent`.
-fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBounds {
+/// Returns `FiniteInterval` with lower = `mantissa * 2^exponent` and width = `1 * 2^exponent`.
+fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteInterval {
     use crate::binary::UBinary;
     use num_bigint::BigUint;
 
     let lower = Binary::new(mantissa, exponent.clone());
     let width = UBinary::new(BigUint::one(), exponent);
-    FiniteBounds::from_lower_and_width(lower, width)
+    FiniteInterval::from_lower_and_width(lower, width)
 }
 
 /// Converts arbitrary finite bounds to normalized form.
@@ -181,16 +183,16 @@ fn bounds_from_normalized(mantissa: BigInt, exponent: BigInt) -> FiniteBounds {
 ///
 /// # Returns
 ///
-/// [`Result`] containing [`FiniteBounds`] in normalized form that contains the input bounds,
+/// [`Result`] containing [`FiniteInterval`] in normalized form that contains the input bounds,
 /// or a [`ComputableError::InfiniteBounds`] if the exponent shift is too large.
 ///
 /// # Errors
 ///
 /// Returns [`ComputableError::InfiniteBounds`] if the exponent shift required for normalization
 /// is too large to represent (doesn't fit in `usize`).
-pub fn normalize_bounds(
-    bounds: &FiniteBounds,
-) -> Result<FiniteBounds, crate::error::ComputableError> {
+pub(crate) fn normalize_bounds(
+    bounds: &FiniteInterval,
+) -> Result<FiniteInterval, crate::error::ComputableError> {
     use num_traits::Signed;
 
     let lower = bounds.small();
@@ -280,7 +282,7 @@ mod tests {
                 assert_eq!(new_bounds.exponent, BigInt::from(1_i32));
                 let finite = new_bounds.to_finite_bounds();
                 assert_eq!(finite.small(), &bin(2, 0));
-                assert_eq!(finite.large(), bin(4, 0));
+                assert_eq!(finite.hi(), bin(4, 0));
             }
             PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
@@ -302,7 +304,7 @@ mod tests {
                 assert_eq!(new_bounds.exponent, BigInt::from(1_i32));
                 let finite = new_bounds.to_finite_bounds();
                 assert_eq!(finite.small(), &bin(0, 0));
-                assert_eq!(finite.large(), bin(2, 0));
+                assert_eq!(finite.hi(), bin(2, 0));
             }
             PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
@@ -366,11 +368,11 @@ mod tests {
         // Interval should have narrowed
         let finite = bounds.to_finite_bounds();
         assert!(finite.small() > &initial_lower);
-        assert!(finite.large() < initial_upper);
+        assert!(finite.hi() < initial_upper);
 
         // Bounds should still contain sqrt(2) ≈ 1.414
         let sqrt_2_approx = bin(1414, -10); // Rough approximation
-        assert!(finite.small() <= &sqrt_2_approx || finite.large() >= sqrt_2_approx);
+        assert!(finite.small() <= &sqrt_2_approx || finite.hi() >= sqrt_2_approx);
     }
 
     #[test]
@@ -391,7 +393,7 @@ mod tests {
         // Width = 2^5 = 32
         assert_eq!(bounds.exponent, BigInt::from(5_i32));
         let finite = bounds.to_finite_bounds();
-        let width = finite.large() - finite.small().clone();
+        let width = finite.hi() - finite.small().clone();
         assert_eq!(width, bin(32, 0));
     }
 
@@ -412,7 +414,7 @@ mod tests {
         assert_eq!(bounds.width().exponent(), &BigInt::from(-10_i32));
 
         // Check that upper bound is 1.5 + 2^(-10) = ((3 << 9) + 1) * 2^-10
-        assert_eq!(bounds.large(), bin((3 << 9) + 1, -10));
+        assert_eq!(bounds.hi(), bin((3 << 9) + 1, -10));
     }
 
     #[test]
@@ -432,7 +434,7 @@ mod tests {
         assert_eq!(bounds.width().exponent(), &BigInt::from(-8_i32));
 
         // Check that upper bound is 5 + 1/256 = ((5 << 8) + 1) * 2^-8
-        assert_eq!(bounds.large(), bin((5 << 8) + 1, -8));
+        assert_eq!(bounds.hi(), bin((5 << 8) + 1, -8));
     }
 
     #[test]
@@ -459,12 +461,12 @@ mod tests {
         use num_bigint::BigUint;
 
         // Simple case: [1, 2]
-        let original = FiniteBounds::new(bin(1, 0), bin(2, 0));
+        let original = FiniteInterval::new(bin(1, 0), bin(2, 0));
         let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
-        assert!(normalized.large() >= original.large());
+        assert!(normalized.hi() >= original.hi());
 
         // Normalized bounds should have unit width mantissa
         assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
@@ -475,12 +477,12 @@ mod tests {
         use num_bigint::BigUint;
 
         // Fractional bounds: [0.25, 0.75] = [1 * 2^-2, 3 * 2^-2]
-        let original = FiniteBounds::new(bin(1, -2), bin(3, -2));
+        let original = FiniteInterval::new(bin(1, -2), bin(3, -2));
         let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
-        assert!(normalized.large() >= original.large());
+        assert!(normalized.hi() >= original.hi());
 
         // Normalized bounds should have unit width mantissa
         assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
@@ -491,12 +493,12 @@ mod tests {
         use num_bigint::BigUint;
 
         // Bounds with different exponents: [5 * 2^0, 11 * 2^-1] = [5, 5.5]
-        let original = FiniteBounds::new(bin(5, 0), bin(11, -1));
+        let original = FiniteInterval::new(bin(5, 0), bin(11, -1));
         let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
-        assert!(normalized.large() >= original.large());
+        assert!(normalized.hi() >= original.hi());
 
         // Normalized bounds should have unit width mantissa
         assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
@@ -507,12 +509,12 @@ mod tests {
         use num_bigint::BigUint;
 
         // Bounds with large mantissas: [123 * 2^-5, 125 * 2^-5]
-        let original = FiniteBounds::new(bin(123, -5), bin(125, -5));
+        let original = FiniteInterval::new(bin(123, -5), bin(125, -5));
         let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
-        assert!(normalized.large() >= original.large());
+        assert!(normalized.hi() >= original.hi());
 
         // Normalized bounds should have unit width mantissa
         assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
@@ -523,12 +525,12 @@ mod tests {
         use num_bigint::BigUint;
 
         // Negative bounds: [-3, -1]
-        let original = FiniteBounds::new(bin(-3, 0), bin(-1, 0));
+        let original = FiniteInterval::new(bin(-3, 0), bin(-1, 0));
         let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Normalized bounds should contain original bounds
         assert!(normalized.small() <= original.small());
-        assert!(normalized.large() >= original.large());
+        assert!(normalized.hi() >= original.hi());
 
         // Normalized bounds should have unit width mantissa
         assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
@@ -539,12 +541,12 @@ mod tests {
         use num_bigint::BigUint;
 
         // Already normalized: [5 * 2^-3, 6 * 2^-3] with width = 1 * 2^-3
-        let original = FiniteBounds::new(bin(5, -3), bin(6, -3));
+        let original = FiniteInterval::new(bin(5, -3), bin(6, -3));
         let normalized = normalize_bounds(&original).expect("normalization failed");
 
         // Should be exactly equal for already-normalized bounds
         assert_eq!(normalized.small(), original.small());
-        assert_eq!(normalized.large(), original.large());
+        assert_eq!(normalized.hi(), original.hi());
         assert_eq!(normalized.width().mantissa(), &BigUint::from(1u32));
         assert_eq!(normalized.width().exponent(), &BigInt::from(-3_i32));
     }
@@ -555,10 +557,10 @@ mod tests {
 
         // Test with various bounds
         let test_cases = vec![
-            FiniteBounds::new(bin(1, 0), bin(4, 0)),       // [1, 4]
-            FiniteBounds::new(bin(123, -5), bin(125, -5)), // fractional
-            FiniteBounds::new(bin(-10, 0), bin(-5, 0)),    // negative
-            FiniteBounds::new(bin(7, -2), bin(9, -2)),     // mixed
+            FiniteInterval::new(bin(1, 0), bin(4, 0)),       // [1, 4]
+            FiniteInterval::new(bin(123, -5), bin(125, -5)), // fractional
+            FiniteInterval::new(bin(-10, 0), bin(-5, 0)),    // negative
+            FiniteInterval::new(bin(7, -2), bin(9, -2)),     // mixed
         ];
 
         for original in test_cases {
@@ -574,8 +576,8 @@ mod tests {
                 original
             );
             assert_eq!(
-                normalized_once.large(),
-                normalized_twice.large(),
+                normalized_once.hi(),
+                normalized_twice.hi(),
                 "Idempotency failed for upper bound of {:?}",
                 original
             );

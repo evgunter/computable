@@ -15,12 +15,10 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::One;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, XBinary,
-    reciprocal_of_biguint,
+    Binary, Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_of_biguint,
 };
 use crate::computable::Computable;
 use crate::error::ComputableError;
@@ -313,29 +311,24 @@ fn divide_one_by_bigint(
     }
 }
 
-/// Returns pi as a FiniteBounds interval with specified precision.
-pub fn pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
+/// Returns pi as a FiniteInterval with specified precision.
+#[cfg(test)]
+pub(crate) fn pi_interval_at_precision(precision_bits: usize) -> crate::finite_interval::FiniteInterval {
+    use crate::finite_interval::FiniteInterval;
     let (lo, hi) = pi_bounds_at_precision(precision_bits);
-    FiniteBounds::new(lo, hi)
+    FiniteInterval::new(lo, hi)
 }
 
-/// Returns 2*pi as a FiniteBounds interval with specified precision.
-pub fn two_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
+/// Returns 2*pi as a FiniteInterval with specified precision.
+#[cfg(test)]
+pub(crate) fn two_pi_interval_at_precision(precision_bits: usize) -> crate::finite_interval::FiniteInterval {
+    use crate::binary::UBinary;
     use num_bigint::BigUint;
 
     let pi_interval = pi_interval_at_precision(precision_bits);
     // 2*pi: multiply by 2
     let two = UBinary::new(BigUint::from(1u32), BigInt::from(1_i32)); // 2^1 = 2
     pi_interval.scale_positive(&two)
-}
-
-/// Returns pi/2 as a FiniteBounds interval with specified precision.
-pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
-    let (pi_lo, pi_hi) = pi_bounds_at_precision(precision_bits);
-    // pi/2: divide by 2 (decrement exponent by 1)
-    let half_pi_lo = Binary::new(pi_lo.mantissa().clone(), pi_lo.exponent() - BigInt::one());
-    let half_pi_hi = Binary::new(pi_hi.mantissa().clone(), pi_hi.exponent() - BigInt::one());
-    FiniteBounds::new(half_pi_lo, half_pi_hi)
 }
 
 #[cfg(test)]

@@ -31,7 +31,8 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
+use crate::binary::{Binary, Bounds, UXBinary, XBinary};
+use crate::finite_interval::FiniteInterval;
 use crate::binary_utils::bisection::{
     PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint, normalize_bounds,
 };
@@ -186,7 +187,7 @@ impl NodeOp for NthRootOp {
 fn bounds_from_bisection_state(s: &BisectionState) -> Bounds {
     let finite_bounds = {
         let bounds = if let Some(exact) = &s.exact_value {
-            FiniteBounds::point(exact.clone())
+            FiniteInterval::point(exact.clone())
         } else {
             s.bounds.to_finite_bounds()
         };
@@ -258,7 +259,7 @@ fn initialize_nth_root_bisection_state(
 
     // Normalize bounds once at initialization to ensure bisection automatically
     // selects shortest representations at each step
-    let initial_bounds = FiniteBounds::new(bisection_lower, bisection_upper);
+    let initial_bounds = FiniteInterval::new(bisection_lower, bisection_upper);
     let normalized = normalize_bounds(&initial_bounds)?;
 
     // Extract mantissa and exponent from normalized bounds.

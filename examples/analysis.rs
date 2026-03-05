@@ -17,9 +17,7 @@ mod common;
 use std::num::NonZeroU32;
 use std::time::Instant;
 
-use computable::{
-    Binary, Bounds, Computable, FiniteBounds, Prefix, XBinary, XUsize, pi, pi_bounds_at_precision,
-};
+use computable::{Binary, Bounds, Computable, Prefix, XBinary, XUsize, pi, pi_bounds_at_precision};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use rand::rngs::StdRng;
@@ -31,13 +29,28 @@ use common::balanced_sum;
 // Helpers (example-specific; balanced_sum comes from benches/common.rs)
 // ---------------------------------------------------------------------------
 
-fn try_finite_bounds(prefix: &Prefix) -> Option<FiniteBounds> {
+/// Returns the lower and upper finite bounds plus midpoint, if both are finite.
+fn try_finite_bounds(prefix: &Prefix) -> Option<FiniteBoundsView> {
     let bounds = Bounds::from(prefix);
     match (bounds.small(), bounds.large()) {
         (XBinary::Finite(lower), XBinary::Finite(upper)) => {
-            Some(FiniteBounds::new(lower.clone(), upper))
+            let sum = lower.add(&upper);
+            let midpoint =
+                Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::from(1_i32));
+            Some(FiniteBoundsView { midpoint })
         }
         _ => None,
+    }
+}
+
+/// A view of finite bounds with a precomputed midpoint.
+struct FiniteBoundsView {
+    midpoint: Binary,
+}
+
+impl FiniteBoundsView {
+    fn midpoint(&self) -> Binary {
+        self.midpoint.clone()
     }
 }
 
