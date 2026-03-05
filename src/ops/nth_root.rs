@@ -175,6 +175,10 @@ impl NodeOp for NthRootOp {
         let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), BigInt::zero()));
         target_width.mul(&n_ux).mul(&min_abs)
     }
+
+    fn budget_depends_on_bounds(&self) -> bool {
+        self.degree.get() > 1
+    }
 }
 
 /// Extracts bounds from an initialized bisection state.

@@ -89,6 +89,10 @@ impl NodeOp for PowOp {
         let denominator = n_ux.mul(&power);
         target_width.div_floor(&denominator)
     }
+
+    fn budget_depends_on_bounds(&self) -> bool {
+        self.exponent.get() > 1
+    }
 }
 
 /// Computes base^exp for UXBinary via exponentiation by squaring.

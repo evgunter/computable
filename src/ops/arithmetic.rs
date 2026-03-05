@@ -129,6 +129,10 @@ impl NodeOp for MulOp {
         };
         (target_width.clone() >> 1u32).div_floor(&sibling_max_abs)
     }
+
+    fn budget_depends_on_bounds(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
