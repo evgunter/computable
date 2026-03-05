@@ -277,12 +277,10 @@ impl RefinementGraph {
                 };
 
                 loop {
-                    // 1. Check if precision is already met.
-                    if precision_met(&self.root, tolerance_exp)? {
-                        return self.root.get_bounds();
-                    }
-
-                    // 2. Check if there's any remaining work (eligible or outstanding).
+                    // 1. Check if there's any remaining work (eligible or outstanding).
+                    //    (Precision is checked after each response in the collection
+                    //    phase, and before the loop via the pre-spawn check at the
+                    //    top of refine_to. No need to re-check here.)
                     let any_eligible = (0..num_refiners)
                         .any(|i| active[i] && steps[i] < MAX_REFINEMENT_ITERATIONS);
                     let any_outstanding = outstanding.iter().any(|&o| o);
