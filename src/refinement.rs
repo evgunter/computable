@@ -254,6 +254,7 @@ impl RefinementGraph {
                 // Avoids scanning all N refiners each iteration — only
                 // check refiners whose needs_redispatch was recently set.
                 let mut dispatch_queue: VecDeque<usize> = (0..num_refiners).collect();
+                let mut in_queue = vec![true; num_refiners];
 
                 // Build node_id → refiner index mapping for routing responses.
                 let mut refiner_index: HashMap<usize, usize> = HashMap::new();
@@ -344,6 +345,7 @@ impl RefinementGraph {
                     let mut dispatched = 0usize;
 
                     while let Some(i) = dispatch_queue.pop_front() {
+                        in_queue[i] = false;
                         if !active[i]
                             || outstanding[i]
                             || steps[i] >= MAX_REFINEMENT_ITERATIONS
@@ -392,7 +394,10 @@ impl RefinementGraph {
                                     });
                                 if above_budget {
                                     needs_redispatch[i] = true;
-                                    dispatch_queue.push_back(i);
+                                    if !in_queue[i] {
+                                        dispatch_queue.push_back(i);
+                                        in_queue[i] = true;
+                                    }
                                     any_forced = true;
                                 }
                             }
@@ -457,28 +462,30 @@ impl RefinementGraph {
                                     all_state_unchanged = false;
                                 }
                             }
-                            // Queue refiners that need re-dispatch.
+                            // Enqueue refiners that need re-dispatch, avoiding
+                            // duplicates via in_queue guard.
                             // Leaf responding refiner: always re-dispatch.
                             // Non-leaf others: inputs may have changed via propagation.
                             // Leaf others: independent, skip.
                             if is_leaf_refiner[idx] {
                                 needs_redispatch[idx] = true;
-                                dispatch_queue.push_back(idx);
-                            } else if needs_redispatch[idx] {
+                                if !in_queue[idx] {
+                                    dispatch_queue.push_back(idx);
+                                    in_queue[idx] = true;
+                                }
+                            } else if needs_redispatch[idx] && !in_queue[idx] {
                                 // Non-leaf refiner was already marked by a
                                 // previous response but was outstanding when
                                 // the queue was drained. Re-enqueue now.
                                 dispatch_queue.push_back(idx);
+                                in_queue[idx] = true;
                             }
                             for j in 0..num_refiners {
                                 if j != idx && !is_leaf_refiner[j] {
-                                    if !needs_redispatch[j] {
-                                        needs_redispatch[j] = true;
+                                    needs_redispatch[j] = true;
+                                    if !in_queue[j] {
                                         dispatch_queue.push_back(j);
-                                    } else if !outstanding[j] {
-                                        // Already marked but not outstanding
-                                        // and not in queue — re-enqueue.
-                                        dispatch_queue.push_back(j);
+                                        in_queue[j] = true;
                                     }
                                 }
                             }
