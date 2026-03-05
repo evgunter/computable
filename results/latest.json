@@ -12,7 +12,7 @@
     "function_name": "bench_sqrt2_plus_pi",
     "id": "precision_1",
     "ir": {
-      "Int": 561613
+      "Int": 561694
     }
   },
   {
@@ -20,7 +20,7 @@
     "function_name": "bench_sqrt2_plus_pi",
     "id": "precision_2",
     "ir": {
-      "Int": 1054607
+      "Int": 1054381
     }
   },
   {
@@ -28,7 +28,7 @@
     "function_name": "bench_sqrt2_plus_pi",
     "id": "precision_3",
     "ir": {
-      "Int": 3204707
+      "Int": 3225894
     }
   },
   {
@@ -36,7 +36,7 @@
     "function_name": "bench_sqrt2_plus_pi",
     "id": "precision_4",
     "ir": {
-      "Int": 11420541
+      "Int": 11420546
     }
   },
   {
@@ -44,7 +44,7 @@
     "function_name": "bench_sqrt2_times_pi",
     "id": "precision_0",
     "ir": {
-      "Int": 649199
+      "Int": 649284
     }
   },
   {
@@ -52,7 +52,7 @@
     "function_name": "bench_sqrt2_times_pi",
     "id": "precision_1",
     "ir": {
-      "Int": 915643
+      "Int": 915564
     }
   },
   {
@@ -60,7 +60,7 @@
     "function_name": "bench_sqrt2_times_pi",
     "id": "precision_2",
     "ir": {
-      "Int": 2011572
+      "Int": 2011836
     }
   },
   {
@@ -68,7 +68,7 @@
     "function_name": "bench_sqrt2_times_pi",
     "id": "precision_3",
     "ir": {
-      "Int": 6720995
+      "Int": 6721397
     }
   },
   {
@@ -76,7 +76,7 @@
     "function_name": "bench_sqrt2_times_pi",
     "id": "precision_4",
     "ir": {
-      "Int": 25469979
+      "Int": 25464675
     }
   },
   {
@@ -84,7 +84,7 @@
     "function_name": "bench_sqrt2_plus_const3",
     "id": "precision_0",
     "ir": {
-      "Int": 136687
+      "Int": 136674
     }
   },
   {
@@ -100,7 +100,7 @@
     "function_name": "bench_sqrt2_plus_const3",
     "id": "precision_2",
     "ir": {
-      "Int": 651421
+      "Int": 651471
     }
   },
   {
@@ -108,7 +108,7 @@
     "function_name": "bench_sqrt2_plus_const3",
     "id": "precision_3",
     "ir": {
-      "Int": 2317428
+      "Int": 2317410
     }
   },
   {
@@ -116,7 +116,7 @@
     "function_name": "bench_sqrt2_plus_const3",
     "id": "precision_4",
     "ir": {
-      "Int": 9054871
+      "Int": 9054643
     }
   },
   {
@@ -148,7 +148,7 @@
     "function_name": "bench_pi_plus_const1",
     "id": "precision_3",
     "ir": {
-      "Int": 342989
+      "Int": 342984
     }
   },
   {
@@ -164,7 +164,7 @@
     "function_name": "bench_sqrt2_plus_cbrt3",
     "id": "precision_0",
     "ir": {
-      "Int": 372695
+      "Int": 372699
     }
   },
   {
@@ -172,7 +172,7 @@
     "function_name": "bench_sqrt2_plus_cbrt3",
     "id": "precision_1",
     "ir": {
-      "Int": 580422
+      "Int": 580132
     }
   },
   {
@@ -180,7 +180,7 @@
     "function_name": "bench_sqrt2_plus_cbrt3",
     "id": "precision_2",
     "ir": {
-      "Int": 1421268
+      "Int": 1420962
     }
   },
   {
@@ -188,7 +188,7 @@
     "function_name": "bench_sqrt2_plus_cbrt3",
     "id": "precision_3",
     "ir": {
-      "Int": 4815159
+      "Int": 4815176
     }
   },
   {
@@ -196,7 +196,7 @@
     "function_name": "bench_sqrt2_plus_cbrt3",
     "id": "precision_4",
     "ir": {
-      "Int": 18413759
+      "Int": 18413715
     }
   },
   {
@@ -212,7 +212,7 @@
     "function_name": "bench_integer_roots",
     "id": "precision_0",
     "ir": {
-      "Int": 3004772294
+      "Int": 3005024435
     }
   },
   {
@@ -220,7 +220,7 @@
     "function_name": "bench_integer_roots",
     "id": "precision_1",
     "ir": {
-      "Int": 3428736747
+      "Int": 3428285162
     }
   },
   {
@@ -228,7 +228,7 @@
     "function_name": "bench_integer_roots",
     "id": "precision_2",
     "ir": {
-      "Int": 5118482915
+      "Int": 5118423452
     }
   },
   {
@@ -236,7 +236,7 @@
     "function_name": "bench_integer_roots",
     "id": "precision_3",
     "ir": {
-      "Int": 11926715867
+      "Int": 11928713371
     }
   },
   {
@@ -244,7 +244,7 @@
     "function_name": "bench_integer_roots",
     "id": "precision_4",
     "ir": {
-      "Int": 39160833993
+      "Int": 39159208856
     }
   },
   {
@@ -252,7 +252,7 @@
     "function_name": "bench_inv",
     "id": "precision_0",
     "ir": {
-      "Int": 10483505
+      "Int": 10486489
     }
   },
   {
@@ -260,7 +260,7 @@
     "function_name": "bench_inv",
     "id": "precision_1",
     "ir": {
-      "Int": 10484906
+      "Int": 10484781
     }
   },
   {
@@ -268,7 +268,7 @@
     "function_name": "bench_inv",
     "id": "precision_2",
     "ir": {
-      "Int": 10436289
+      "Int": 10486686
     }
   },
   {
@@ -276,7 +276,7 @@
     "function_name": "bench_inv",
     "id": "precision_3",
     "ir": {
-      "Int": 20609587
+      "Int": 20618497
     }
   },
   {
@@ -284,7 +284,7 @@
     "function_name": "bench_inv",
     "id": "precision_4",
     "ir": {
-      "Int": 20823414
+      "Int": 20857972
     }
   },
   {
@@ -396,7 +396,7 @@
     "function_name": "bench_two_pi",
     "id": "precision_3",
     "ir": {
-      "Int": 414440
+      "Int": 414427
     }
   },
   {
@@ -476,7 +476,7 @@
     "function_name": "bench_pi_squared",
     "id": "precision_3",
     "ir": {
-      "Int": 717538
+      "Int": 717533
     }
   },
   {
@@ -596,7 +596,7 @@
     "function_name": "bench_sin_2pi",
     "id": "precision_3",
     "ir": {
-      "Int": 5621450
+      "Int": 2293819
     }
   },
   {
@@ -604,7 +604,7 @@
     "function_name": "bench_sin_2pi",
     "id": "precision_4",
     "ir": {
-      "Int": 7272519
+      "Int": 7272511
     }
   },
   {
@@ -644,7 +644,7 @@
     "function_name": "bench_sin_10pi",
     "id": "precision_4",
     "ir": {
-      "Int": 7479996
+      "Int": 7479959
     }
   },
   {
@@ -676,7 +676,7 @@
     "function_name": "bench_sin_100pi",
     "id": "precision_3",
     "ir": {
-      "Int": 2330355
+      "Int": 2330928
     }
   },
   {
@@ -684,7 +684,7 @@
     "function_name": "bench_sin_100pi",
     "id": "precision_4",
     "ir": {
-      "Int": 7590168
+      "Int": 7590225
     }
   },
   {
@@ -692,7 +692,7 @@
     "function_name": "bench_sin",
     "id": "precision_0",
     "ir": {
-      "Int": 76813318
+      "Int": 76821635
     }
   },
   {
@@ -700,7 +700,7 @@
     "function_name": "bench_sin",
     "id": "precision_1",
     "ir": {
-      "Int": 86666712
+      "Int": 86676254
     }
   },
   {
@@ -708,7 +708,7 @@
     "function_name": "bench_sin",
     "id": "precision_2",
     "ir": {
-      "Int": 69447493
+      "Int": 69451310
     }
   },
   {
@@ -716,7 +716,7 @@
     "function_name": "bench_sin",
     "id": "precision_3",
     "ir": {
-      "Int": 381322341
+      "Int": 381294848
     }
   },
   {
@@ -724,7 +724,7 @@
     "function_name": "bench_sin",
     "id": "precision_4",
     "ir": {
-      "Int": 30425845508
+      "Int": 30428503387
     }
   },
   {
