@@ -19,9 +19,9 @@ use num_traits::One;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, reciprocal_of_biguint,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, XBinary,
+    reciprocal_of_biguint,
 };
-use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -129,9 +129,14 @@ impl NodeOp for PiOp {
         let num_terms = *self.num_terms.read();
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
-        // Normalize to prefix form to prevent precision accumulation
-        let finite = FiniteBounds::new(pi_lo, pi_hi);
-        normalize_finite_to_bounds(&finite)
+        // Normalization happens at cache boundaries (Node::get_bounds / apply_update)
+        Ok(Bounds::from_lower_and_width(
+            XBinary::Finite(pi_lo.clone()),
+            UXBinary::Finite(
+                crate::binary::UBinary::try_from_binary(&pi_hi.sub(&pi_lo))
+                    .unwrap_or_else(|_| crate::binary::UBinary::zero()),
+            ),
+        ))
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {

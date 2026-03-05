@@ -12,9 +12,8 @@
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
-use crate::binary::{Binary, Bounds, FiniteBounds, UBinary, UXBinary, XBinary};
+use crate::binary::{Binary, Bounds, UBinary, UXBinary, XBinary};
 use crate::binary_utils::bisection::PrefixBounds;
-use crate::error::ComputableError;
 
 /// Exponent extended with ±infinity, used for width/magnitude bounds.
 ///

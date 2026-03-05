@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 
-use crate::binary::{Bounds, UXBinary};
+use crate::binary::{Bounds, FiniteBounds, UXBinary, XBinary};
+use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 
 /// Shared API for retrieving bounds with lazy computation.
@@ -218,11 +219,13 @@ impl Node {
 
     /// Returns cached bounds, computing and caching if needed.
     /// Combinators are infallible, so bounds are lazily computed on demand.
+    /// Bounds are normalized to prefix-compatible form before caching.
     pub fn get_bounds(&self) -> Result<Bounds, ComputableError> {
         if let Some(bounds) = self.cached_bounds() {
             return Ok(bounds);
         }
         let bounds = self.compute_bounds()?;
+        let bounds = normalize_bounds_extended(&bounds)?;
         self.set_bounds(bounds.clone());
         Ok(bounds)
     }
@@ -255,5 +258,20 @@ impl Node {
 impl BoundsAccess for Node {
     fn get_bounds(&self) -> Result<Bounds, ComputableError> {
         Node::get_bounds(self)
+    }
+}
+
+/// Normalizes bounds to prefix-compatible form, handling infinite bounds.
+///
+/// - Infinite bounds (any endpoint is ±∞): returned as-is (no normalization possible)
+/// - Finite bounds: delegated to [`normalize_finite_to_bounds`] which handles
+///   zero-crossing, precision thresholding, and prefix normalization
+pub(crate) fn normalize_bounds_extended(bounds: &Bounds) -> Result<Bounds, ComputableError> {
+    match (bounds.small(), &bounds.large()) {
+        (XBinary::Finite(lo), XBinary::Finite(hi)) => {
+            let finite = FiniteBounds::new(lo.clone(), hi.clone());
+            normalize_finite_to_bounds(&finite)
+        }
+        _ => Ok(bounds.clone()),
     }
 }

@@ -47,7 +47,7 @@ use crate::binary::Bounds;
 use crate::binary::{UBinary, UXBinary, XBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
-use crate::node::Node;
+use crate::node::{Node, normalize_bounds_extended};
 
 /// A `usize` extended with positive infinity, analogous to `UXBinary`.
 ///
@@ -512,7 +512,8 @@ impl RefinementGraph {
                     .nodes
                     .get(parent_id)
                     .ok_or(ComputableError::RefinementChannelClosed)?;
-                let next_bounds = parent.compute_bounds()?;
+                let raw_bounds = parent.compute_bounds()?;
+                let next_bounds = normalize_bounds_extended(&raw_bounds)?;
                 if parent.cached_bounds().as_ref() != Some(&next_bounds) {
                     parent.set_bounds(next_bounds);
                     queue.push_back(*parent_id);

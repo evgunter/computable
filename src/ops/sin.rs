@@ -25,11 +25,10 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::UXBinary;
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, XBinary, reciprocal_of_biguint,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, XBinary,
+    reciprocal_of_biguint,
 };
-use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -259,9 +258,14 @@ fn sin_bounds(
         result_hi
     };
 
-    // Normalize to prefix form to prevent precision accumulation
-    let finite = FiniteBounds::new(clamped_lo, clamped_hi);
-    normalize_finite_to_bounds(&finite)
+    // Normalization happens at cache boundaries (Node::get_bounds / apply_update)
+    let width = clamped_hi.sub(&clamped_lo);
+    Ok(Bounds::from_lower_and_width(
+        XBinary::Finite(clamped_lo),
+        UXBinary::Finite(
+            UBinary::try_from_binary(&width).unwrap_or_else(|_| UBinary::zero()),
+        ),
+    ))
 }
 
 //=============================================================================
