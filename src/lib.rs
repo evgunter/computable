@@ -72,6 +72,7 @@ mod computable;
 mod error;
 mod node;
 mod ops;
+mod prefix;
 mod refinement;
 mod sane;
 
@@ -86,5 +87,6 @@ pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT
 pub use error::ComputableError;
 pub use ops::{pi, pi_bounds_at_precision};
 pub use ordered_pair::{Interval, IntervalError};
+pub use prefix::{Prefix, XExponent};
 pub use refinement::XUsize;
 pub use sane::{MAX_COMPUTATION_BITS, Sane};
