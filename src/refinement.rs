@@ -231,14 +231,13 @@ impl RefinementGraph {
                         Ok(bounds_width_leq(&bounds, tol))
                     };
 
-                let propagated_map = self.compute_propagated_budgets(tolerance_exp);
-                // Convert HashMap to Vec for O(1) indexed lookup in the
-                // dispatch loop. Refiners not in the map get no budget
-                // (always dispatched).
-                let refiner_budgets: Vec<Option<UXBinary>> = refiner_nodes
-                    .iter()
-                    .map(|node| propagated_map.get(&node.id).cloned())
-                    .collect();
+                let mut refiner_budgets: Vec<Option<UXBinary>> = {
+                    let map = self.compute_propagated_budgets(tolerance_exp);
+                    refiner_nodes
+                        .iter()
+                        .map(|node| map.get(&node.id).cloned())
+                        .collect()
+                };
 
                 loop {
                     // 1. Check if precision is already met.
@@ -275,13 +274,20 @@ impl RefinementGraph {
                     //      (no cross-term: |a| uses the endpoint, not the center)
                     //    - PowOp: w_out ≤ n·max_abs^(n-1)·w_in ≤ ε (MVT)
                     //
-                    //    Budgets are computed once before the loop and reused.
-                    //    This is safe because bounds only tighten during
-                    //    refinement: for sensitivity-based budgets like MulOp's
-                    //    child_budget = ε/(2·|sibling|), tighter sibling bounds
-                    //    → smaller |sibling|_max → looser child budget. So the
-                    //    initial budgets (computed with the widest bounds) are
-                    //    the most conservative and remain provably sufficient.
+                    //    Budgets are refreshed at wave boundaries (when nothing
+                    //    is outstanding) so that sensitivity-based budgets
+                    //    like MulOp's child_budget = ε/(2·|sibling|) loosen
+                    //    as sibling bounds tighten, allowing refiners to stop
+                    //    earlier. The initial budgets are the most conservative
+                    //    (widest bounds → tightest budgets) and remain provably
+                    //    sufficient throughout, so the refresh only helps —
+                    //    it never makes budgets tighter than initial.
+                    if !any_outstanding {
+                        let map = self.compute_propagated_budgets(tolerance_exp);
+                        for (i, node) in refiner_nodes.iter().enumerate() {
+                            refiner_budgets[i] = map.get(&node.id).cloned();
+                        }
+                    }
                     let precision_bits = match tolerance_exp {
                         XUsize::Finite(n) => *n,
                         XUsize::Inf => usize::MAX,
@@ -316,13 +322,34 @@ impl RefinementGraph {
                         }
                     }
 
-                    // Stall guard: if nothing was dispatched and nothing is
-                    // outstanding, no further progress is possible. This can
-                    // happen when some refiner couldn't meet its budget (hit
-                    // max iterations or exhausted), or when all are waiting
-                    // for input changes that won't come (needs_redispatch
-                    // blocked them but nothing outstanding to unblock).
+                    // Stall recovery: if nothing was dispatched and nothing
+                    // is outstanding, check if any active above-budget refiner
+                    // is blocked only by needs_redispatch. If so, force-enable
+                    // it (its dependencies have all responded or been skipped,
+                    // so there's nothing to wait for). If no such refiner
+                    // exists, it's a true stall.
                     if dispatched == 0 && !outstanding.iter().any(|&o| o) {
+                        let mut any_forced = false;
+                        for i in 0..num_refiners {
+                            if active[i]
+                                && !needs_redispatch[i]
+                                && steps[i] < MAX_REFINEMENT_ITERATIONS
+                            {
+                                let above_budget =
+                                    !refiner_budgets[i].as_ref().is_some_and(|budget| {
+                                        refiner_nodes[i]
+                                            .cached_bounds()
+                                            .is_some_and(|b| b.width() <= budget)
+                                    });
+                                if above_budget {
+                                    needs_redispatch[i] = true;
+                                    any_forced = true;
+                                }
+                            }
+                        }
+                        if any_forced {
+                            continue; // retry dispatch with forced refiners
+                        }
                         return Err(ComputableError::MaxRefinementIterations {
                             max: MAX_REFINEMENT_ITERATIONS,
                         });
