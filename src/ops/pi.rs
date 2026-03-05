@@ -19,7 +19,7 @@ use num_traits::One;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, reciprocal_of_biguint,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, reciprocal_of_biguint,
 };
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
@@ -158,6 +158,10 @@ impl NodeOp for PiOp {
 
     fn is_refiner(&self) -> bool {
         true
+    }
+
+    fn child_demand_budget(&self, _target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        unreachable!("PiOp has no children")
     }
 }
 

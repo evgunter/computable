@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::binary::Bounds;
+use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 
@@ -29,6 +29,11 @@ impl NodeOp for NegOp {
 
     fn is_refiner(&self) -> bool {
         false
+    }
+
+    /// Negation preserves width exactly.
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        target_width.clone()
     }
 }
 
@@ -57,6 +62,11 @@ impl NodeOp for AddOp {
 
     fn is_refiner(&self) -> bool {
         false
+    }
+
+    /// w_out = w_left + w_right, so each child gets half the target.
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        target_width.clone() >> 1u32
     }
 }
 
@@ -100,6 +110,24 @@ impl NodeOp for MulOp {
 
     fn is_refiner(&self) -> bool {
         false
+    }
+
+    /// w_out ≈ |a| · w_b + |b| · w_a.
+    /// Child a gets target / (2·max_abs(b)), child b gets target / (2·max_abs(a)).
+    fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary {
+        let sibling = if child_index == 0 {
+            &self.right
+        } else {
+            &self.left
+        };
+        let sibling_max_abs = match sibling.cached_bounds() {
+            Some(b) => {
+                let (lo, hi) = b.abs();
+                std::cmp::max(lo, hi)
+            }
+            None => return target_width.clone(), // unknown bounds → conservative pass-through
+        };
+        (target_width.clone() >> 1u32).div_floor(&sibling_max_abs)
     }
 }
 

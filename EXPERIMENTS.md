@@ -1,0 +1,191 @@
+# Performance Regression Experiments
+
+## Problem
+CI benchmarks show regressions vs main (round-based model):
+- `bench_sin`: +97% to +235% (precision 0-4)
+- `bench_inv`: +120% (precision 3-4)
+- `bench_sqrt2_times_pi`: +19% to +49%
+- `bench_sin_1pi` (precision_4): +3977% (!!)
+
+Improved: `bench_sqrt2_plus_cbrt3` (-8% to -15%), `bench_integer_roots` (~-1.5%)
+
+## Key Architectural Difference: Old (main) vs New (branch)
+
+**Old (round-based):**
+1. Compute flat budget: `ε / 2^⌈log₂(N)⌉` — O(1) bit shift
+2. Dispatch all active refiners above budget
+3. Block & collect ALL responses, checking precision after each
+4. Safety valve: if all below budget but root not met, step widest
+5. Repeat for next round
+
+**New (event-loop):**
+1. Compute propagated budgets: BFS through graph with UXBinary ops — O(graph_size)
+2. Dispatch eligible, non-outstanding refiners above budget
+3. Block for ONE response, drain immediately available
+4. Loop back → recompute budgets → dispatch → collect → ...
+
+## Root Causes Identified
+
+### Cause 1: Budget recomputation overhead — O(R×M) per refinement
+- Old: O(M) flat budget computations (1 per round, M rounds, O(1) each)
+- New: O(R×M) propagated budget computations (1 per response, R refiners × M steps)
+- For inv benchmark: 100 refiners × ~3 steps = ~300 BFS walks vs 3 bit-shifts
+- Each BFS walk: ~200 nodes × UXBinary ops
+- Explains inv (+120%) and sin recomputations at high refiner counts
+
+### Cause 2: Sub-refiners never get budgets (always stepped)
+- `compute_propagated_budgets` stopped at refiner boundaries (`is_refiner()`)
+- Sub-refiners (e.g., PiOp children of SinOp) were NOT in the budget map
+- Dispatch code: `propagated.get(id).is_some_and(...)` returns false → always dispatch
+- In old model: ALL refiners got flat budget and could be skipped
+- PiOp converges exponentially; each extra step doubles term count (quadratic cost)
+- 100 PiOps stepped ~85 times instead of ~2 = catastrophic cost explosion
+- **This is the dominant cause of sin (+97-235%) and sin_Npi (+3977%)**
+
+### Cause 3: Stale-input re-dispatch
+Under valgrind's serialized threads, the event loop processes responses one at
+a time. If a fast refiner (SinOp) completes before a slow one (PiOp), the
+coordinator re-dispatches SinOp with stale PiOp bounds. Each re-dispatch
+increments `num_terms` and recomputes sin with stale wide inner bounds —
+quadratic cost growth. The old round model waits for all responses, avoiding
+this pathology.
+
+## Experiments
+
+### Experiment 1: Cache propagated budgets via generation counter (commit b147404)
+Track `bounds_generation`/`budget_generation`, only recompute when they diverge.
+**Result: No improvement.** Budgets still recomputed every iteration because every
+response changes bounds (generation always diverges immediately).
+
+### Experiment 2: Recompute only between dispatch waves
+Only recompute when `budgets_stale && !any_outstanding`.
+**Result: Helps inv and large-refiner-count benchmarks.** But doesn't help
+2-refiner cases (sqrt2*pi) where each wave has only 1 response, so
+recomputation happens every wave anyway.
+
+### Experiment 3: Compute budgets once, never recompute
+Compute propagated budgets once before the loop, reuse throughout.
+**Safe because:** bounds only tighten → for sensitivity-based budgets like
+MulOp's `ε/(2·|sibling|)`, tighter sibling bounds → smaller `|sibling|_max`
+→ looser child budget. So initial budgets (widest bounds) are the most
+conservative and remain provably sufficient throughout.
+**Result: Eliminates all budget recomputation overhead.**
+
+### Fix for Cause 2: Propagate budgets through refiners
+Removed the `if node.is_refiner() { continue; }` guard in
+`compute_propagated_budgets`. Now the BFS walks through ALL nodes,
+including refiners, using their `child_demand_budget` to propagate to children.
+Sub-refiners (like PiOp) get proper budgets and can be skipped when precise enough.
+
+### Experiment 4: Per-response precision checking + Vec budget lookup
+**Problem found in Experiment 3 CI:** sin_10pi precision_4 went from +87% to
++4249%. Root cause: event-loop batches responses (block + drain), then checks
+precision. When PiOp propagation gives SinOp tight bounds but SinOp's stale
+response is also in the batch, the stale response OVERWRITES the tight bounds.
+Old model checked precision after EACH response, allowing early exit.
+
+**Fix:** Check precision_met after each apply_response, matching old model.
+Also convert propagated budget HashMap → Vec<Option<UXBinary>> indexed by
+refiner position for O(1) budget lookup (saves ~100 instructions per refiner
+per loop iteration under valgrind).
+
+### Experiment 5: Collect all outstanding before re-dispatch
+Wait for every dispatched refiner before dispatching the next wave.
+**Result:** Fixed sin_10pi (+4249% → -0.13%) and sin_2pi. But regressed
+integer_roots (+8.5%) and lost the event-loop's non-blocking benefit for
+independent refiners.
+
+### Experiment 6: needs_redispatch guard (width comparison)
+Track each refiner's previous response width. Only re-dispatch if bounds
+improved (self-improving) or another refiner set the flag.
+**Result:** Fixed sin_10pi when it worked, but fragile — SinOp's width
+decreased by epsilon each step (more Taylor terms slightly tighten truncation
+error), which counted as "self-improved." Sensitive to valgrind scheduling
+order (different binary → different thread interleaving → sometimes works,
+sometimes doesn't).
+
+#### Width discontinuity discovered
+While debugging width comparison failures, found that NthRootOp had a
+two-phase `compute_bounds`: before first `refine_step`, returned conservative
+bounds from `compute_initial_bounds`; after, returned bisection-based bounds.
+The first `refine_step` could produce WIDER bounds (e.g. width 3 → 8 for
+sqrt(4)) because the bisection's normalized prefix-form interval is wider
+than the conservative estimate. Fixed by eagerly initializing bisection
+state in `compute_bounds` (removed `compute_initial_bounds` and helpers,
+-111 lines net).
+
+### Experiment 7: Graph-structural leaf-refiner check (current)
+Replace width comparison with a one-time graph walk at setup. For each
+refiner, check if its `compute_bounds` subtree contains any other refiners:
+- **Leaf refiners** (NthRootOp, InvOp): no refiners in subtree. Self-improving
+  — each `refine_step` changes internal state producing tighter bounds. Always
+  re-dispatch.
+- **Non-leaf refiners** (SinOp): has PiOp children in subtree. `compute_bounds`
+  reads other refiners' bounds. Only re-dispatch when another refiner responds
+  (via `needs_redispatch` flag set in `record_completion`).
+
+This is deterministic and robust — no sensitivity to epsilon width changes
+or valgrind scheduling order. Preserves event-loop benefit: leaf refiners
+advance freely, non-leaf refiners wait for meaningful input changes.
+
+**CI Result:** All sin_Npi regressions eliminated. sin_10pi p4: -0.14%.
+sin_100pi p4: -0.59%. Robust across binary changes (unlike width comparison).
+
+## Valgrind vs Wall-Clock Divergence
+
+Valgrind serializes threads, which hides the event-loop's parallelism benefits
+and amplifies its pathologies. Local criterion (wall-clock) comparison shows
+very different results from CI (Ir):
+
+| Benchmark | CI (Ir) Δ | Wall-clock Δ | Notes |
+|-----------|-----------|--------------|-------|
+| sqrt2×pi (p4) | -5% | **-94%** | Parallelism invisible to valgrind |
+| integer_roots (p1) | +5% | **-52%** | Same |
+| inv (p3) | +137% | +103% | Both regressed, Ir overstates |
+| sin_10pi (p4) | -0.14% | +34% | Stale-input effect is worse in wall-clock |
+| sin (p3) | -22% | **-61%** | Both improved, wall-clock more so |
+| sin (p4) | -7% | **-32%** | Same |
+
+The event-loop architecture provides large wall-clock improvements for
+expressions with asymmetric convergence (sqrt2×pi, integer_roots) that the
+Ir metric cannot capture.
+
+## Final CI Results (leaf-refiner check, latest)
+
+| Benchmark | Original regression | Final Ir Δ | Status |
+|-----------|-------------------|------------|--------|
+| bench_sin (p3) | +105% | **-22%** | Fixed |
+| bench_sin (p4) | +235% | **-7%** | Fixed |
+| bench_sin_1pi (p4) | +3977% | **-26%** | Fixed |
+| bench_sin_10pi (p4) | +87% | **-0.14%** | Fixed |
+| bench_sin_100pi (p4) | +86% | **-0.59%** | Fixed |
+| bench_sin_2pi (p3) | +59% | **-56%** | Fixed |
+| bench_sin_2pi (p4) | +86% | **-0.22%** | Fixed |
+| bench_sqrt2_times_pi (p3-4) | +42-49% | **-5 to -6%** | Fixed |
+| bench_sqrt2_plus_cbrt3 | -8-15% | **-9 to -22%** | Improved |
+| bench_sqrt2_plus_const3 (p2-4) | +0-5% | **-13 to -15%** | Improved |
+| bench_sqrt2_plus_pi (p3-4) | +3-5% | **-6 to -8%** | Improved |
+| bench_complex | ~0% | **-8%** | Improved |
+| bench_inv (p3-4) | +120% | +137% | Ir regressed (wall-clock +64-103%) |
+| bench_inv (p0-2) | +15% | +19% | Small Ir regression |
+| bench_sin (p0-1) | +97-174% | +15-26% | Partially fixed |
+| bench_integer_roots | -1.5% | ~0% | Neutral in Ir (wall-clock -16 to -52%) |
+| Various small (pi_half etc.) | — | +5-16% | Event-loop fixed overhead |
+
+## Remaining Ir Regressions
+
+### bench_inv +137%
+100 InvOp refiners in a balanced sum. The event-loop's per-response overhead
+(loop iteration, dispatch check over all refiners, budget comparison, channel
+ops) dominates for this many-refiner case. The old model's tight collection
+loop has much less per-response overhead. This is structural to the event-loop
+architecture. Wall-clock regression is smaller (+64-103%) due to parallelism.
+
+### bench_sin low precision +15-26%
+At low precision (bits=1,4), the total work is tiny and the event-loop's
+fixed per-iteration overhead is proportionally large. At higher precision
+where actual computation dominates, sin shows -7 to -22% improvement.
+
+### Small constant overhead (+5-16%)
+Benchmarks with few refiners and low precision show +5-16% from the event-loop's
+per-iteration overhead. This is the fixed cost of the architecture.

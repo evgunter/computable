@@ -172,6 +172,15 @@ impl FiniteBounds {
     }
 }
 
+impl Bounds {
+    /// Returns the absolute value (magnitude) of each bound as a pair.
+    ///
+    /// For bounds [lower, upper], returns (|lower|, |upper|).
+    pub fn abs(&self) -> (UXBinary, UXBinary) {
+        (self.small().magnitude(), self.large().magnitude())
+    }
+}
+
 impl Unsigned for BigUint {}
 
 impl AbsDistance<BigInt, BigUint> for BigInt {
