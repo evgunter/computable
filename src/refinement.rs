@@ -189,6 +189,7 @@ impl RefinementGraph {
                 let mut all_state_unchanged = true;
                 let mut steps = vec![0usize; num_refiners];
                 let mut outstanding = vec![false; num_refiners];
+                let mut eligible_count = num_refiners;
                 // Determine two properties per refiner:
                 //
                 // is_leaf_refiner: subtree contains no other refiners.
@@ -281,8 +282,7 @@ impl RefinementGraph {
                     //    (Precision is checked after each response in the collection
                     //    phase, and before the loop via the pre-spawn check at the
                     //    top of refine_to. No need to re-check here.)
-                    let any_eligible = (0..num_refiners)
-                        .any(|i| active[i] && steps[i] < MAX_REFINEMENT_ITERATIONS);
+                    let any_eligible = eligible_count > 0;
                     let any_outstanding = outstanding.iter().any(|&o| o);
 
                     if !any_eligible && !any_outstanding {
@@ -454,11 +454,16 @@ impl RefinementGraph {
                             steps[idx] = steps[idx].checked_add(1).unwrap_or_else(|| {
                                 unreachable!("steps <= MAX_REFINEMENT_ITERATIONS, cannot overflow")
                             });
+                            // Track eligibility: refiner becomes ineligible
+                            // when it exhausts or hits the step limit.
                             if let Some(reason) = $exhaustion {
                                 active[idx] = false;
+                                eligible_count = eligible_count.saturating_sub(1);
                                 if !matches!(reason, ExhaustionReason::StateUnchanged) {
                                     all_state_unchanged = false;
                                 }
+                            } else if steps[idx] >= MAX_REFINEMENT_ITERATIONS {
+                                eligible_count = eligible_count.saturating_sub(1);
                             }
                             // Enqueue refiners that need re-dispatch, avoiding
                             // duplicates via in_queue guard.
