@@ -35,7 +35,7 @@
 //!   skip refiners whose bounds are already narrow enough for their position
 //!   in the computation, avoiding wasted work on fast-converging operands
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::thread;
 
@@ -189,14 +189,35 @@ impl RefinementGraph {
                 let mut all_state_unchanged = true;
                 let mut steps = vec![0usize; num_refiners];
                 let mut outstanding = vec![false; num_refiners];
+                // Determine which refiners are "leaf" — their compute_bounds
+                // subtree contains no other refiners. Leaf refiners are
+                // self-improving (each refine_step changes internal state
+                // that produces tighter bounds) and can always be
+                // re-dispatched. Non-leaf refiners read other refiners'
+                // bounds and should only be re-dispatched when those
+                // inputs have actually changed.
+                let refiner_id_set: HashSet<usize> = refiner_nodes.iter().map(|n| n.id).collect();
+                let is_leaf_refiner: Vec<bool> = refiner_nodes
+                    .iter()
+                    .map(|node| {
+                        // Walk this refiner's subtree (excluding itself).
+                        let mut stack: Vec<Arc<Node>> = node.children();
+                        while let Some(child) = stack.pop() {
+                            if refiner_id_set.contains(&child.id) {
+                                return false;
+                            }
+                            stack.extend(child.children());
+                        }
+                        true
+                    })
+                    .collect();
+
                 // Track whether each refiner should be re-dispatched.
-                // True initially (first dispatch), when another refiner
-                // responds (inputs may have changed), or when the refiner's
-                // own step improved its bounds. Prevents wasteful
-                // re-dispatches when a refiner's compute_bounds would read
-                // the same stale inputs as last time.
+                // True initially (first dispatch) and when another refiner
+                // responds (inputs may have changed via propagation). Leaf
+                // refiners are always re-dispatched since they don't depend
+                // on other refiners' bounds.
                 let mut needs_redispatch = vec![true; num_refiners];
-                let mut last_response_width: Vec<Option<UXBinary>> = vec![None; num_refiners];
 
                 // Build node_id → refiner index mapping for routing responses.
                 let mut refiner_index: HashMap<usize, usize> = HashMap::new();
@@ -361,28 +382,16 @@ impl RefinementGraph {
                             }
                             // Other refiners' inputs may have changed via
                             // apply_update propagation → mark for re-dispatch.
+                            // Leaf refiners always get re-dispatched (they're
+                            // self-improving and don't read other refiners).
                             for j in 0..num_refiners {
                                 if j != idx {
                                     needs_redispatch[j] = true;
                                 }
                             }
-                            // The responding refiner: re-dispatch only if its
-                            // own bounds improved from the previous response
-                            // (self-improving refiner like bisection). If not,
-                            // leave needs_redispatch as-is — it may already be
-                            // true from another refiner's response in this batch.
-                            let current_width = refiner_nodes[idx]
-                                .cached_bounds()
-                                .map(|b| b.width().clone());
-                            let self_improved = match (&current_width, &last_response_width[idx]) {
-                                (Some(curr), Some(prev)) => curr < prev,
-                                (Some(_), None) => true, // first response
-                                _ => false,
-                            };
-                            if self_improved {
+                            if is_leaf_refiner[idx] {
                                 needs_redispatch[idx] = true;
                             }
-                            last_response_width[idx] = current_width;
                         }};
                     }
 
