@@ -318,7 +318,14 @@ impl RefinementGraph {
                     //    Only refresh if the graph has bounds-dependent ops
                     //    (MulOp, PowOp, etc.). For pure AddOp/NegOp trees,
                     //    budgets are static functions of the tolerance.
-                    if any_budget_dynamic && !any_outstanding {
+                    // Only refresh if there are active non-leaf refiners
+                    // with dynamic budgets. Leaf refiners always
+                    // self-redispatch, so budget loosening doesn't change
+                    // their dispatch behavior.
+                    let needs_refresh = !any_outstanding
+                        && (0..num_refiners)
+                            .any(|i| active[i] && !budget_is_static[i] && !is_leaf_refiner[i]);
+                    if needs_refresh {
                         let map = self.compute_propagated_budgets(tolerance_exp);
                         for (i, node) in refiner_nodes.iter().enumerate() {
                             if !budget_is_static[i] {
