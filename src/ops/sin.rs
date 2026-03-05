@@ -113,6 +113,10 @@ impl NodeOp for SinOp {
         };
         target_width.mul(&pi_lower).div_floor(&input_max_abs)
     }
+
+    fn budget_depends_on_bounds(&self) -> bool {
+        true
+    }
 }
 
 //=============================================================================

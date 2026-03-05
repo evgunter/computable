@@ -189,18 +189,22 @@ impl RefinementGraph {
                 let mut all_state_unchanged = true;
                 let mut steps = vec![0usize; num_refiners];
                 let mut outstanding = vec![false; num_refiners];
-                // Determine which refiners are "leaf" — their compute_bounds
-                // subtree contains no other refiners. Leaf refiners are
-                // self-improving (each refine_step changes internal state
-                // that produces tighter bounds) and can always be
-                // re-dispatched. Non-leaf refiners read other refiners'
-                // bounds and should only be re-dispatched when those
-                // inputs have actually changed.
+                // Determine two properties per refiner:
+                //
+                // is_leaf_refiner: subtree contains no other refiners.
+                //   Leaf refiners are self-improving and can always be
+                //   re-dispatched. Non-leaf refiners should only be
+                //   re-dispatched when another refiner responds (inputs
+                //   may have changed via apply_update propagation).
+                //
+                // budget_is_static: the path from root to this refiner
+                //   passes only through ops with static budgets (AddOp,
+                //   NegOp). Static budgets don't change as bounds tighten,
+                //   so they never need refreshing at wave boundaries.
                 let refiner_id_set: HashSet<usize> = refiner_nodes.iter().map(|n| n.id).collect();
                 let is_leaf_refiner: Vec<bool> = refiner_nodes
                     .iter()
                     .map(|node| {
-                        // Walk this refiner's subtree (excluding itself).
                         let mut stack: Vec<Arc<Node>> = node.children();
                         while let Some(child) = stack.pop() {
                             if refiner_id_set.contains(&child.id) {
@@ -211,6 +215,34 @@ impl RefinementGraph {
                         true
                     })
                     .collect();
+                // Walk root-to-refiner paths to check if any op along the
+                // way has bounds-dependent budgets. We do this by walking
+                // the BFS used for budget propagation and tracking whether
+                // any ancestor had budget_depends_on_bounds.
+                let budget_is_static: Vec<bool> = {
+                    let mut node_is_static: HashMap<usize, bool> = HashMap::new();
+                    node_is_static.insert(self.root.id, true);
+                    let mut queue = VecDeque::new();
+                    queue.push_back(self.root.id);
+                    while let Some(node_id) = queue.pop_front() {
+                        let Some(node) = self.nodes.get(&node_id) else {
+                            continue;
+                        };
+                        let parent_static = node_is_static.get(&node_id).copied().unwrap_or(true);
+                        let child_static = parent_static && !node.op.budget_depends_on_bounds();
+                        for child in node.children() {
+                            let entry = node_is_static.entry(child.id).or_insert(true);
+                            // If ANY path is non-static, mark non-static.
+                            *entry = *entry && child_static;
+                            queue.push_back(child.id);
+                        }
+                    }
+                    refiner_nodes
+                        .iter()
+                        .map(|node| node_is_static.get(&node.id).copied().unwrap_or(true))
+                        .collect()
+                };
+                let any_budget_dynamic = budget_is_static.iter().any(|&s| !s);
 
                 // Track whether each refiner should be re-dispatched.
                 // True initially (first dispatch) and when another refiner
@@ -282,10 +314,16 @@ impl RefinementGraph {
                     //    (widest bounds → tightest budgets) and remain provably
                     //    sufficient throughout, so the refresh only helps —
                     //    it never makes budgets tighter than initial.
-                    if !any_outstanding {
+                    //
+                    //    Only refresh if the graph has bounds-dependent ops
+                    //    (MulOp, PowOp, etc.). For pure AddOp/NegOp trees,
+                    //    budgets are static functions of the tolerance.
+                    if any_budget_dynamic && !any_outstanding {
                         let map = self.compute_propagated_budgets(tolerance_exp);
                         for (i, node) in refiner_nodes.iter().enumerate() {
-                            refiner_budgets[i] = map.get(&node.id).cloned();
+                            if !budget_is_static[i] {
+                                refiner_budgets[i] = map.get(&node.id).cloned();
+                            }
                         }
                     }
                     let precision_bits = match tolerance_exp {
@@ -407,12 +445,14 @@ impl RefinementGraph {
                                     all_state_unchanged = false;
                                 }
                             }
-                            // Other refiners' inputs may have changed via
+                            // Non-leaf refiners' inputs may have changed via
                             // apply_update propagation → mark for re-dispatch.
-                            // Leaf refiners always get re-dispatched (they're
-                            // self-improving and don't read other refiners).
+                            // Leaf refiners are independent (their compute_bounds
+                            // reads only their own subtree, which apply_update
+                            // propagation from other refiners can't reach), so
+                            // they don't need marking.
                             for j in 0..num_refiners {
-                                if j != idx {
+                                if j != idx && !is_leaf_refiner[j] {
                                     needs_redispatch[j] = true;
                                 }
                             }

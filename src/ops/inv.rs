@@ -156,6 +156,10 @@ impl NodeOp for InvOp {
         };
         target_width.mul(&min_abs).mul(&min_abs)
     }
+
+    fn budget_depends_on_bounds(&self) -> bool {
+        true
+    }
 }
 
 /// Try to initialize Newton state from the current inner bounds.

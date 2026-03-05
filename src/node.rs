@@ -138,6 +138,16 @@ pub trait NodeOp: Send + Sync {
     /// must implement this — there is no default, so forgetting to implement
     /// it for a new operation is a compile error.
     fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary;
+
+    /// Whether this op's `child_demand_budget` depends on cached bounds.
+    ///
+    /// Returns `true` for ops like MulOp (budget depends on sibling's
+    /// max_abs) and `false` for ops like AddOp (budget is just target/2).
+    /// The coordinator uses this to skip budget recomputation for subtrees
+    /// where budgets can't change as bounds tighten.
+    fn budget_depends_on_bounds(&self) -> bool {
+        false
+    }
 }
 
 /// Synchronization state for coordinating refinement across threads.
