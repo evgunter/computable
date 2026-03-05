@@ -341,27 +341,8 @@ pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::XBinary;
     use crate::refinement::XUsize;
-
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
-    }
-
-    fn epsilon_as_binary(n: usize) -> Binary {
-        let n_i64 = i64::try_from(n).expect("precision fits in i64");
-        Binary::new(
-            BigInt::from(1_i32),
-            BigInt::from(n_i64.checked_neg().expect("negation does not overflow")),
-        )
-    }
-
-    fn unwrap_finite(x: &XBinary) -> Binary {
-        match x {
-            XBinary::Finite(b) => b.clone(),
-            XBinary::NegInf | XBinary::PosInf => panic!("expected finite"),
-        }
-    }
+    use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
 
     /// Returns the f64 approximation of pi as a Binary.
     ///
