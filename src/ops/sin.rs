@@ -854,26 +854,10 @@ mod tests {
     use super::*;
     use crate::computable::Computable;
     use crate::refinement::{XUsize, prefix_width_leq};
-    use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite, xbin};
-
-    fn assert_bounds_compatible_with_expected(
-        prefix: &crate::prefix::Prefix,
-        expected: &Binary,
-        tolerance_exp: &XUsize,
-    ) {
-        let bounds = Bounds::from(prefix);
-        let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
-
-        assert!(lower <= *expected && *expected <= upper);
-        assert!(prefix_width_leq(prefix, tolerance_exp));
-    }
-
-    /// Convert a Prefix to Bounds for test assertions.
-    fn to_bounds(prefix: &crate::prefix::Prefix) -> Bounds {
-        Bounds::from(prefix)
-    }
+    use crate::test_utils::{
+        assert_bounds_compatible_with_expected, bin, interval_midpoint_computable, to_bounds,
+        unwrap_finite, xbin,
+    };
 
     #[test]
     fn sin_of_zero() {

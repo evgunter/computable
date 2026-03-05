@@ -729,7 +729,7 @@ mod tests {
     use crate::error::ComputableError;
     use crate::test_utils::{
         bin, interval_midpoint_computable, interval_noop_computable, interval_refine,
-        midpoint_between, unwrap_finite, xbin,
+        midpoint_between, to_bounds, unwrap_finite, xbin,
     };
     use num_traits::Zero;
     use std::sync::{Arc, Barrier};
@@ -758,11 +758,6 @@ mod tests {
     fn assert_width_nonnegative(prefix: &Prefix) {
         let bounds = Bounds::from(prefix);
         assert!(*bounds.width() >= UXBinary::zero());
-    }
-
-    /// Convert Prefix to Bounds for test assertions.
-    fn to_bounds(prefix: &Prefix) -> Bounds {
-        Bounds::from(prefix)
     }
 
     // --- tests for different results of refinement (mostly errors) ---

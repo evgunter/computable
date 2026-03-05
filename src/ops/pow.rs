@@ -166,31 +166,13 @@ fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) ->
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{Binary, Bounds, XBinary};
+    use crate::binary::Bounds;
     use crate::computable::Computable;
-    use crate::prefix::Prefix;
     use crate::refinement::XUsize;
-    use crate::test_utils::{bin, interval_noop_computable, unwrap_finite, xbin};
-
-    fn assert_bounds_contain_expected(prefix: &Prefix, expected: &Binary, _tolerance_exp: &XUsize) {
-        let bounds = Bounds::from(prefix);
-        let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
-
-        assert!(
-            lower <= *expected && *expected <= upper,
-            "Expected {} to be in bounds [{}, {}]",
-            expected,
-            lower,
-            upper
-        );
-    }
-
-    fn assert_exact(prefix: &Prefix, expected: &Binary) {
-        let bounds = Bounds::from(prefix);
-        assert_eq!(unwrap_finite(bounds.small()), *expected);
-        assert_eq!(unwrap_finite(&bounds.large()), *expected);
-    }
+    use crate::test_utils::{
+        assert_bounds_contain, assert_bounds_compatible_with_expected, assert_exact, bin,
+        interval_noop_computable, xbin,
+    };
 
     #[test]
     fn pow_constant_squared() {
@@ -226,23 +208,6 @@ mod tests {
         let cubed = neg_two.pow(3);
         let prefix = cubed.bounds().expect("bounds should succeed");
         assert_exact(&prefix, &bin(-8, 0));
-    }
-
-    /// Assert that the Prefix-derived bounds contain the expected interval.
-    fn assert_bounds_contain(prefix: &Prefix, expected_lower: &XBinary, expected_upper: &XBinary) {
-        let bounds = Bounds::from(prefix);
-        assert!(
-            bounds.small() <= expected_lower,
-            "lower bound {:?} should be <= expected {:?}",
-            bounds.small(),
-            expected_lower
-        );
-        assert!(
-            &bounds.large() >= expected_upper,
-            "upper bound {:?} should be >= expected {:?}",
-            bounds.large(),
-            expected_upper
-        );
     }
 
     #[test]
@@ -330,7 +295,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let expected = bin(13, 0);
-        assert_bounds_contain_expected(&prefix, &expected, &tolerance_exp);
+        assert_bounds_compatible_with_expected(&prefix, &expected, &tolerance_exp);
     }
 
     #[test]
@@ -346,7 +311,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let expected = bin(2, 0);
-        assert_bounds_contain_expected(&prefix, &expected, &tolerance_exp);
+        assert_bounds_compatible_with_expected(&prefix, &expected, &tolerance_exp);
     }
 
     #[test]

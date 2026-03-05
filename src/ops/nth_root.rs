@@ -288,36 +288,14 @@ fn initialize_nth_root_bisection_state(
 mod tests {
     use super::*;
     use crate::computable::Computable;
-    use crate::prefix::Prefix;
-    use crate::refinement::{XUsize, prefix_width_leq};
-    use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
+    use crate::refinement::XUsize;
+    use crate::test_utils::{
+        assert_bounds_compatible_with_expected, bin, interval_noop_computable, unwrap_finite,
+    };
 
     /// Helper to create NonZeroU32 from a literal in tests.
     fn nz(n: u32) -> NonZeroU32 {
         NonZeroU32::new(n).expect("test degree must be non-zero")
-    }
-
-    fn assert_bounds_compatible_with_expected(
-        prefix: &Prefix,
-        expected: &Binary,
-        tolerance_exp: &XUsize,
-    ) {
-        let bounds = Bounds::from(prefix);
-        let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
-
-        assert!(
-            lower <= *expected && *expected <= upper,
-            "Expected {} to be in bounds [{}, {}]",
-            expected,
-            lower,
-            upper
-        );
-        assert!(
-            prefix_width_leq(prefix, tolerance_exp),
-            "Bounds width should be <= tolerance",
-        );
     }
 
     #[test]

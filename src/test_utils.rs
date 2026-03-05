@@ -70,6 +70,8 @@ pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
 
 use crate::binary::{Bounds, FiniteBounds};
 use crate::computable::Computable;
+use crate::prefix::Prefix;
+use crate::refinement::{XUsize, prefix_width_leq};
 
 /// Creates a Binary representing 2^(-n), for test assertions that need
 /// epsilon as a Binary value for arithmetic.
@@ -135,4 +137,63 @@ pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
 pub fn interval_noop_computable(lower: i64, upper: i64) -> Computable {
     let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
     Computable::new(interval_state, |state| Ok(state.clone()), |state| Ok(state))
+}
+
+/// Convert a Prefix to Bounds for test assertions.
+pub fn to_bounds(prefix: &Prefix) -> Bounds {
+    Bounds::from(prefix)
+}
+
+/// Assert that the Prefix-derived bounds contain the expected interval.
+/// Due to Prefix normalization (width rounded up to power of 2), the actual
+/// bounds may be wider than the tight mathematical result.
+pub fn assert_bounds_contain(
+    prefix: &Prefix,
+    expected_lower: &XBinary,
+    expected_upper: &XBinary,
+) {
+    let bounds = Bounds::from(prefix);
+    assert!(
+        bounds.small() <= expected_lower,
+        "lower bound {:?} should be <= expected {:?}",
+        bounds.small(),
+        expected_lower
+    );
+    assert!(
+        &bounds.large() >= expected_upper,
+        "upper bound {:?} should be >= expected {:?}",
+        bounds.large(),
+        expected_upper
+    );
+}
+
+/// Assert that a Prefix contains a specific expected value and has width within tolerance.
+pub fn assert_bounds_compatible_with_expected(
+    prefix: &Prefix,
+    expected: &Binary,
+    tolerance_exp: &XUsize,
+) {
+    let bounds = Bounds::from(prefix);
+    let lower = unwrap_finite(bounds.small());
+    let upper_xb = bounds.large();
+    let upper = unwrap_finite(&upper_xb);
+
+    assert!(
+        lower <= *expected && *expected <= upper,
+        "Expected {} to be in bounds [{}, {}]",
+        expected,
+        lower,
+        upper
+    );
+    assert!(
+        prefix_width_leq(prefix, tolerance_exp),
+        "Bounds width should be <= tolerance",
+    );
+}
+
+/// Assert that a Prefix represents an exact value (lower == upper == expected).
+pub fn assert_exact(prefix: &Prefix, expected: &Binary) {
+    let bounds = Bounds::from(prefix);
+    assert_eq!(unwrap_finite(bounds.small()), *expected);
+    assert_eq!(unwrap_finite(&bounds.large()), *expected);
 }

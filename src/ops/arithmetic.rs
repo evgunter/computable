@@ -138,31 +138,7 @@ impl NodeOp for MulOp {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{Bounds, XBinary};
-    use crate::test_utils::{interval_midpoint_computable, xbin};
-
-    /// Assert that the Prefix-derived bounds contain the expected interval.
-    /// Due to Prefix normalization (width rounded up to power of 2), the actual
-    /// bounds may be wider than the tight mathematical result.
-    fn assert_bounds_contain(
-        prefix: &crate::prefix::Prefix,
-        expected_lower: &XBinary,
-        expected_upper: &XBinary,
-    ) {
-        let bounds = Bounds::from(prefix);
-        assert!(
-            bounds.small() <= expected_lower,
-            "lower bound {:?} should be <= expected {:?}",
-            bounds.small(),
-            expected_lower
-        );
-        assert!(
-            &bounds.large() >= expected_upper,
-            "upper bound {:?} should be >= expected {:?}",
-            bounds.large(),
-            expected_upper
-        );
-    }
+    use crate::test_utils::{assert_bounds_contain, interval_midpoint_computable, xbin};
 
     #[test]
     fn add_combines_bounds() {
