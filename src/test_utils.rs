@@ -70,12 +70,6 @@ pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
 
 use crate::binary::{Bounds, FiniteBounds};
 use crate::computable::Computable;
-use crate::prefix::Prefix;
-
-/// Converts a Prefix back to Bounds for test assertions using `.small()` / `.large()`.
-pub fn prefix_to_bounds(prefix: &Prefix) -> Bounds {
-    Bounds::from(prefix)
-}
 
 /// Creates a Binary representing 2^(-n), for test assertions that need
 /// epsilon as a Binary value for arithmetic.
