@@ -85,9 +85,9 @@ impl Computable {
         tolerance_exp: XUsize,
     ) -> Result<Prefix, ComputableError> {
         loop {
-            let bounds = self.node.get_bounds()?;
-            if prefix_width_leq(&bounds, &tolerance_exp) {
-                return Ok(bounds);
+            let prefix = self.node.get_bounds()?;
+            if prefix_width_leq(&prefix, &tolerance_exp) {
+                return Ok(prefix);
             }
 
             let mut state_guard = self.node.refinement.state.lock();
@@ -198,9 +198,9 @@ impl Computable {
             None => {
                 // x^0 = 1 for all x, including 0^0 = 1 by convention
                 // Check for infinite bounds - infinity^0 is an indeterminate form.
-                if let Ok(bounds) = self.node.get_bounds() {
-                    let has_infinite = matches!(bounds.lower(), XBinary::NegInf | XBinary::PosInf)
-                        || matches!(bounds.upper(), XBinary::NegInf | XBinary::PosInf);
+                if let Ok(prefix) = self.node.get_bounds() {
+                    let has_infinite = matches!(prefix.lower(), XBinary::NegInf | XBinary::PosInf)
+                        || matches!(prefix.upper(), XBinary::NegInf | XBinary::PosInf);
                     if has_infinite {
                         crate::detected_computable_with_infinite_value!(
                             "input has infinite bounds for x^0 (infinity^0 is an indeterminate form)"

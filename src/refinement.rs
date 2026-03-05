@@ -74,7 +74,7 @@ pub struct RefinerHandle {
 #[derive(Clone)]
 pub struct NodeUpdate {
     pub node_id: usize,
-    pub bounds: Prefix,
+    pub prefix: Prefix,
 }
 
 /// Reason a refiner has stopped producing further updates.
@@ -144,9 +144,9 @@ impl RefinementGraph {
         tolerance_exp: &XUsize,
     ) -> Result<Prefix, ComputableError> {
         // Eagerly populate all bounds caches so we can identify exact-bounds refiners.
-        let root_bounds = self.root.get_bounds()?;
-        if prefix_width_leq(&root_bounds, tolerance_exp) {
-            return Ok(root_bounds);
+        let root_prefix = self.root.get_bounds()?;
+        if prefix_width_leq(&root_prefix, tolerance_exp) {
+            return Ok(root_prefix);
         }
 
         let mut outcome = None;
@@ -526,7 +526,7 @@ impl RefinementGraph {
     fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
-            node.set_bounds(update.bounds);
+            node.set_bounds(update.prefix);
             queue.push_back(node.id);
         }
 
@@ -627,7 +627,7 @@ fn refiner_loop(
         match commands.recv() {
             Ok(RefineCommand::Step { precision_bits }) => match node.refine_step(precision_bits) {
                 Ok(true) => {
-                    let bounds = match node.compute_bounds() {
+                    let prefix = match node.compute_bounds() {
                         Ok(b) => b,
                         Err(e) => {
                             // Safe to discard: send fails only when the coordinator
@@ -636,11 +636,11 @@ fn refiner_loop(
                             break;
                         }
                     };
-                    node.set_bounds(bounds.clone());
+                    node.set_bounds(prefix.clone());
                     if updates
                         .send(RefinerMessage::Update(NodeUpdate {
                             node_id: node.id,
-                            bounds,
+                            prefix,
                         }))
                         .is_err()
                     {
@@ -648,7 +648,7 @@ fn refiner_loop(
                     }
                 }
                 Ok(false) => {
-                    let bounds = match node.compute_bounds() {
+                    let prefix = match node.compute_bounds() {
                         Ok(b) => b,
                         Err(e) => {
                             // Safe to discard: send fails only when the coordinator
@@ -657,26 +657,26 @@ fn refiner_loop(
                             break;
                         }
                     };
-                    node.set_bounds(bounds.clone());
+                    node.set_bounds(prefix.clone());
                     // Safe to discard: send fails only when the coordinator
                     // has already dropped update_rx (i.e. it already has a result).
                     let _send = updates.send(RefinerMessage::Exhausted {
                         update: NodeUpdate {
                             node_id: node.id,
-                            bounds,
+                            prefix,
                         },
                         reason: ExhaustionReason::Converged,
                     });
                     break;
                 }
                 Err(ComputableError::StateUnchanged) => {
-                    let bounds = node.cached_bounds().unwrap_or_else(Prefix::unbounded);
+                    let prefix = node.cached_bounds().unwrap_or_else(Prefix::unbounded);
                     // Safe to discard: send fails only when the coordinator
                     // has already dropped update_rx (i.e. it already has a result).
                     let _send = updates.send(RefinerMessage::Exhausted {
                         update: NodeUpdate {
                             node_id: node.id,
-                            bounds,
+                            prefix,
                         },
                         reason: ExhaustionReason::StateUnchanged,
                     });
