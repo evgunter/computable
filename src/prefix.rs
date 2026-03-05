@@ -432,10 +432,11 @@ fn width_to_xexponent(width: &Binary) -> XExponent {
     // If mantissa == 1, then width = 2^exponent exactly
     // Otherwise width > 2^(bits-1+exponent), so we need ceil(log2(width)) = bits + exponent
     let mantissa_bits = width.mantissa().magnitude().bits();
-    let bits_minus_1 = mantissa_bits
-        .checked_sub(1)
-        .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("mantissa has zero bits"));
-    let is_power_of_two = *width.mantissa().magnitude() == (num_bigint::BigUint::one() << bits_minus_1);
+    let bits_minus_1 = mantissa_bits.checked_sub(1).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!("mantissa has zero bits")
+    });
+    let is_power_of_two =
+        *width.mantissa().magnitude() == (num_bigint::BigUint::one() << bits_minus_1);
     let exponent_i64 = width
         .exponent()
         .to_i64()
@@ -443,10 +444,9 @@ fn width_to_xexponent(width: &Binary) -> XExponent {
 
     if is_power_of_two {
         // width = 2^(bits-1) * 2^exponent = 2^(bits-1+exponent)
-        let bits_minus_1_i64 = i64::try_from(bits_minus_1)
-            .unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("mantissa too large")
-            });
+        let bits_minus_1_i64 = i64::try_from(bits_minus_1).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("mantissa too large")
+        });
         let result = bits_minus_1_i64
             .checked_add(exponent_i64)
             .unwrap_or_else(|| {
@@ -455,15 +455,12 @@ fn width_to_xexponent(width: &Binary) -> XExponent {
         XExponent::Finite(result)
     } else {
         // Need ceil: bits + exponent
-        let bits_i64 = i64::try_from(mantissa_bits)
-            .unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("mantissa too large")
-            });
-        let result = bits_i64
-            .checked_add(exponent_i64)
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow")
-            });
+        let bits_i64 = i64::try_from(mantissa_bits).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("mantissa too large")
+        });
+        let result = bits_i64.checked_add(exponent_i64).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow")
+        });
         XExponent::Finite(result)
     }
 }
@@ -484,8 +481,8 @@ impl From<&Prefix> for Bounds {
             }
             (XBinary::Finite(lo), XBinary::Finite(hi)) => {
                 let width_binary = hi.sub(lo);
-                let width = UBinary::try_from_binary(&width_binary)
-                    .unwrap_or_else(|_| UBinary::zero());
+                let width =
+                    UBinary::try_from_binary(&width_binary).unwrap_or_else(|_| UBinary::zero());
                 Bounds::from_lower_and_width(lower, UXBinary::Finite(width))
             }
         }
@@ -521,10 +518,9 @@ impl From<&PrefixBounds> for Prefix {
             finite_bounds_to_prefix(&lower, &upper)
         } else {
             // Single-sign: convert exponent
-            let we = pb.exponent.to_i64()
-                .unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!("exponent too large")
-                });
+            let we = pb.exponent.to_i64().unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent too large")
+            });
             if lower.mantissa().is_negative() {
                 Prefix::Finite {
                     inner: upper,

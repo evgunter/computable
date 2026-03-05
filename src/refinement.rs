@@ -670,9 +670,7 @@ fn refiner_loop(
                     break;
                 }
                 Err(ComputableError::StateUnchanged) => {
-                    let bounds = node
-                        .cached_bounds()
-                        .unwrap_or_else(Prefix::unbounded);
+                    let bounds = node.cached_bounds().unwrap_or_else(Prefix::unbounded);
                     // Safe to discard: send fails only when the coordinator
                     // has already dropped update_rx (i.e. it already has a result).
                     let _send = updates.send(RefinerMessage::Exhausted {
@@ -727,13 +725,13 @@ pub fn prefix_width_leq(prefix: &Prefix, tolerance_exp: &XUsize) -> bool {
 mod tests {
     use super::*;
     use crate::binary::{Bounds, XBinary};
-    use num_traits::Zero;
     use crate::computable::Computable;
     use crate::error::ComputableError;
     use crate::test_utils::{
         bin, interval_midpoint_computable, interval_noop_computable, interval_refine,
         midpoint_between, unwrap_finite, xbin,
     };
+    use num_traits::Zero;
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
@@ -869,10 +867,7 @@ mod tests {
         let upper = bounds.large();
         assert!(bounds.small() < &upper);
         assert!(prefix_width_leq(&prefix, &tolerance_exp));
-        assert_eq!(
-            computable.bounds().expect("bounds should succeed"),
-            prefix
-        );
+        assert_eq!(computable.bounds().expect("bounds should succeed"), prefix);
     }
 
     #[test]

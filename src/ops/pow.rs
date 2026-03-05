@@ -229,11 +229,7 @@ mod tests {
     }
 
     /// Assert that the Prefix-derived bounds contain the expected interval.
-    fn assert_bounds_contain(
-        prefix: &Prefix,
-        expected_lower: &XBinary,
-        expected_upper: &XBinary,
-    ) {
+    fn assert_bounds_contain(prefix: &Prefix, expected_lower: &XBinary, expected_upper: &XBinary) {
         let bounds = Bounds::from(prefix);
         assert!(
             bounds.small() <= expected_lower,

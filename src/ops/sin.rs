@@ -257,10 +257,7 @@ fn sin_bounds(
         result_hi
     };
 
-    let bounds = Bounds::new(
-        XBinary::Finite(clamped_lo),
-        XBinary::Finite(clamped_hi),
-    );
+    let bounds = Bounds::new(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi));
     Ok(Prefix::from(&bounds))
 }
 
@@ -1148,7 +1145,9 @@ mod tests {
         assert!(
             lower <= expected_value.add(&tolerance) && expected_value.sub(&tolerance) <= upper,
             "sin(100) bounds [{}, {}] should be within tolerance of expected value {}",
-            lower, upper, expected_value
+            lower,
+            upper,
+            expected_value
         );
     }
 
@@ -1172,7 +1171,8 @@ mod tests {
         assert!(
             lower <= zero && zero <= upper,
             "sin(pi) bounds [{}, {}] should contain zero",
-            lower, upper
+            lower,
+            upper
         );
     }
 
@@ -1234,7 +1234,9 @@ mod tests {
         assert!(
             lower <= expected && expected <= upper,
             "sin(2^20) bounds [{}, {}] should contain expected value {}",
-            lower, upper, expected
+            lower,
+            upper,
+            expected
         );
     }
 
@@ -1274,7 +1276,9 @@ mod tests {
         assert!(
             lower <= expected && expected <= upper,
             "sin(-10000) bounds [{}, {}] should contain expected value {}",
-            lower, upper, expected
+            lower,
+            upper,
+            expected
         );
     }
 

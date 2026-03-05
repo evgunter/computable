@@ -243,7 +243,6 @@ pub fn normalize_bounds(
     Ok(bounds_from_normalized(lower_mantissa, target_exp))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,5 +581,4 @@ mod tests {
             );
         }
     }
-
 }
