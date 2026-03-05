@@ -250,6 +250,11 @@ impl RefinementGraph {
                 // refiners are always re-dispatched since they don't depend
                 // on other refiners' bounds.
                 let mut needs_redispatch = vec![true; num_refiners];
+                // Queue of refiners ready for dispatch consideration.
+                // Avoids scanning all N refiners each iteration — only
+                // check refiners whose needs_redispatch was recently set.
+                let mut dispatch_queue: VecDeque<usize> = (0..num_refiners).collect();
+                let mut in_queue = vec![true; num_refiners];
 
                 // Build node_id → refiner index mapping for routing responses.
                 let mut refiner_index: HashMap<usize, usize> = HashMap::new();
@@ -318,7 +323,14 @@ impl RefinementGraph {
                     //    Only refresh if the graph has bounds-dependent ops
                     //    (MulOp, PowOp, etc.). For pure AddOp/NegOp trees,
                     //    budgets are static functions of the tolerance.
-                    if any_budget_dynamic && !any_outstanding {
+                    // Only refresh if there are active non-leaf refiners
+                    // with dynamic budgets. Leaf refiners always
+                    // self-redispatch, so budget loosening doesn't change
+                    // their dispatch behavior.
+                    let needs_refresh = !any_outstanding
+                        && (0..num_refiners)
+                            .any(|i| active[i] && !budget_is_static[i] && !is_leaf_refiner[i]);
+                    if needs_refresh {
                         let map = self.compute_propagated_budgets(tolerance_exp);
                         for (i, node) in refiner_nodes.iter().enumerate() {
                             if !budget_is_static[i] {
@@ -332,7 +344,8 @@ impl RefinementGraph {
                     };
                     let mut dispatched = 0usize;
 
-                    for (i, handle) in refiner_handles.iter().enumerate() {
+                    while let Some(i) = dispatch_queue.pop_front() {
+                        in_queue[i] = false;
                         if !active[i]
                             || outstanding[i]
                             || steps[i] >= MAX_REFINEMENT_ITERATIONS
@@ -346,7 +359,7 @@ impl RefinementGraph {
                                 .is_some_and(|b| b.width() <= *budget)
                         });
                         if !skip {
-                            handle
+                            refiner_handles[i]
                                 .sender
                                 .send(RefineCommand::Step { precision_bits })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
@@ -381,6 +394,10 @@ impl RefinementGraph {
                                     });
                                 if above_budget {
                                     needs_redispatch[i] = true;
+                                    if !in_queue[i] {
+                                        dispatch_queue.push_back(i);
+                                        in_queue[i] = true;
+                                    }
                                     any_forced = true;
                                 }
                             }
@@ -445,19 +462,32 @@ impl RefinementGraph {
                                     all_state_unchanged = false;
                                 }
                             }
-                            // Non-leaf refiners' inputs may have changed via
-                            // apply_update propagation → mark for re-dispatch.
-                            // Leaf refiners are independent (their compute_bounds
-                            // reads only their own subtree, which apply_update
-                            // propagation from other refiners can't reach), so
-                            // they don't need marking.
+                            // Enqueue refiners that need re-dispatch, avoiding
+                            // duplicates via in_queue guard.
+                            // Leaf responding refiner: always re-dispatch.
+                            // Non-leaf others: inputs may have changed via propagation.
+                            // Leaf others: independent, skip.
+                            if is_leaf_refiner[idx] {
+                                needs_redispatch[idx] = true;
+                                if !in_queue[idx] {
+                                    dispatch_queue.push_back(idx);
+                                    in_queue[idx] = true;
+                                }
+                            } else if needs_redispatch[idx] && !in_queue[idx] {
+                                // Non-leaf refiner was already marked by a
+                                // previous response but was outstanding when
+                                // the queue was drained. Re-enqueue now.
+                                dispatch_queue.push_back(idx);
+                                in_queue[idx] = true;
+                            }
                             for j in 0..num_refiners {
                                 if j != idx && !is_leaf_refiner[j] {
                                     needs_redispatch[j] = true;
+                                    if !in_queue[j] {
+                                        dispatch_queue.push_back(j);
+                                        in_queue[j] = true;
+                                    }
                                 }
-                            }
-                            if is_leaf_refiner[idx] {
-                                needs_redispatch[idx] = true;
                             }
                         }};
                     }
