@@ -399,9 +399,6 @@ fn finite_bounds_to_prefix(lower: &Binary, upper: &Binary) -> Prefix {
 /// This is `ceil(log2(|value|))` when value is not a power of 2,
 /// and `log2(|value|)` when it is.
 fn magnitude_exponent(value: &Binary) -> XExponent {
-    if value.mantissa().is_zero() {
-        return XExponent::NegInf;
-    }
     // value = mantissa * 2^exponent (mantissa is odd after normalization)
     // |value| = |mantissa| * 2^exponent
     // bits(|mantissa|) = floor(log2(|mantissa|)) + 1
@@ -413,10 +410,13 @@ fn magnitude_exponent(value: &Binary) -> XExponent {
     //
     // But Binary normalizes mantissa to be odd, so |mantissa| is a power of 2
     // only when |mantissa| = 1 (since 1 is the only odd power of 2).
-    let mantissa_bits = value.mantissa().magnitude().bits();
+    let mantissa_bits = match std::num::NonZeroU64::new(value.mantissa().magnitude().bits()) {
+        None => return XExponent::NegInf,
+        Some(nz) => nz,
+    };
     let is_power_of_two = *value.mantissa().magnitude() == num_bigint::BigUint::one();
 
-    let mantissa_bits_i64 = i64::try_from(mantissa_bits)
+    let mantissa_bits_i64 = i64::try_from(mantissa_bits.get())
         .unwrap_or_else(|_| crate::detected_computable_would_exhaust_memory!("mantissa too large"));
     let exponent_i64 = value
         .exponent()
@@ -424,9 +424,10 @@ fn magnitude_exponent(value: &Binary) -> XExponent {
         .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent too large"));
 
     let effective_bits = if is_power_of_two {
-        mantissa_bits_i64
-            .checked_sub(1)
-            .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("underflow"))
+        i64::try_from(crate::sane::sub_one_u64(mantissa_bits))
+            .unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("mantissa too large")
+            })
     } else {
         mantissa_bits_i64
     };
@@ -440,16 +441,14 @@ fn magnitude_exponent(value: &Binary) -> XExponent {
 ///
 /// Returns the smallest e such that 2^e >= width.
 fn width_to_xexponent(width: &Binary) -> XExponent {
-    if width.mantissa().is_zero() {
-        return XExponent::NegInf;
-    }
     // width = mantissa * 2^exponent, mantissa is odd and positive
     // If mantissa == 1, then width = 2^exponent exactly
     // Otherwise width > 2^(bits-1+exponent), so we need ceil(log2(width)) = bits + exponent
-    let mantissa_bits = width.mantissa().magnitude().bits();
-    let bits_minus_1 = mantissa_bits.checked_sub(1).unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!("mantissa has zero bits")
-    });
+    let mantissa_bits = match std::num::NonZeroU64::new(width.mantissa().magnitude().bits()) {
+        None => return XExponent::NegInf,
+        Some(nz) => nz,
+    };
+    let bits_minus_1 = crate::sane::sub_one_u64(mantissa_bits);
     let is_power_of_two =
         *width.mantissa().magnitude() == (num_bigint::BigUint::one() << bits_minus_1);
     let exponent_i64 = width
@@ -470,7 +469,7 @@ fn width_to_xexponent(width: &Binary) -> XExponent {
         XExponent::Finite(result)
     } else {
         // Need ceil: bits + exponent
-        let bits_i64 = i64::try_from(mantissa_bits).unwrap_or_else(|_| {
+        let bits_i64 = i64::try_from(mantissa_bits.get()).unwrap_or_else(|_| {
             crate::detected_computable_would_exhaust_memory!("mantissa too large")
         });
         let result = bits_i64.checked_add(exponent_i64).unwrap_or_else(|| {
