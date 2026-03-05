@@ -42,7 +42,6 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::{BigInt, BigUint};
 
-use crate::binary::Bounds;
 use crate::binary::{UBinary, UXBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
@@ -726,17 +725,10 @@ pub fn prefix_width_leq(prefix: &Prefix, tolerance_exp: &XUsize) -> bool {
     }
 }
 
-/// Legacy bounds_width_leq — converts to Prefix and delegates.
-#[allow(dead_code)]
-pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
-    let prefix = Prefix::from(bounds);
-    prefix_width_leq(&prefix, tolerance_exp)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::XBinary;
+    use crate::binary::{Bounds, XBinary};
     use num_traits::Zero;
     use crate::computable::Computable;
     use crate::error::ComputableError;
