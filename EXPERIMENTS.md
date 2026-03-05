@@ -172,14 +172,42 @@ Ir metric cannot capture.
 | bench_integer_roots | -1.5% | ~0% | Neutral in Ir (wall-clock -16 to -52%) |
 | Various small (pi_half etc.) | — | +5-16% | Event-loop fixed overhead |
 
-## Remaining Ir Regressions
+## Experiment 8: Static budget detection + targeted needs_redispatch
 
-### bench_inv +137%
-100 InvOp refiners in a balanced sum. The event-loop's per-response overhead
-(loop iteration, dispatch check over all refiners, budget comparison, channel
-ops) dominates for this many-refiner case. The old model's tight collection
-loop has much less per-response overhead. This is structural to the event-loop
-architecture. Wall-clock regression is smaller (+64-103%) due to parallelism.
+Investigation of the bench_inv +137% regression revealed it was NOT purely
+structural. The smoking gun: `compute_propagated_budgets` at wave boundaries
+did a BFS over 299 nodes with 200 BigUint multiplications (InvOp's
+`child_demand_budget` computes `target * min_abs²`). For the inv benchmark's
+pure-AddOp tree, these refreshes were entirely wasted — AddOp budgets are
+`target >> depth`, independent of bounds.
+
+### Fix 1: budget_is_static per refiner
+Added `budget_depends_on_bounds()` trait method to `NodeOp` (default: false).
+MulOp, PowOp (n>1), SinOp, InvOp, NthRootOp (n>1) return true. At setup,
+walk root-to-refiner paths: if any op along the way has bounds-dependent
+budgets, the refiner's budget is non-static. Only refresh non-static budgets
+at wave boundaries. If all budgets are static, skip the entire BFS.
+
+### Fix 2: Only mark non-leaf refiners for needs_redispatch
+Leaf refiners' `compute_bounds` reads only their own subtree. `apply_update`
+propagation from other refiners goes upward through parents, never into a
+leaf refiner's subtree. So marking leaf refiners for redispatch when another
+refiner responds is wasted work. For the inv benchmark (100 independent leaf
+InvOps), this eliminates the O(100) scan per response entirely.
+
+### Local wall-clock results (criterion, macOS)
+
+| Benchmark | Main | Before opt | After opt | vs main |
+|-----------|------|-----------|-----------|---------|
+| inv bits=1 | 3.45ms | 11.0ms | 2.16ms | **-37%** |
+| inv bits=64 | 3.58ms | 7.27ms | 3.71ms | **+4%** |
+| inv bits=256 | 3.53ms | 5.79ms | 3.96ms | **+12%** |
+| sin bits=64 | 57ms | 42.2ms | 43.7ms | **-23%** |
+
+**Status:** PR #58 created, awaiting CI. Expecting significant Ir improvement
+for inv (the dominant cost was the wasted BFS, not structural overhead).
+
+## Remaining Ir Regressions (expected after Experiment 8)
 
 ### bench_sin low precision +15-26%
 At low precision (bits=1,4), the total work is tiny and the event-loop's
