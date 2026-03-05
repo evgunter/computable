@@ -16,6 +16,7 @@ use crate::binary::{
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 use crate::sane;
 
 /// Minimum seed precision bits for Newton-Raphson initialization.
@@ -67,22 +68,22 @@ pub struct InvOp {
 }
 
 impl NodeOp for InvOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+    fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
         let state = self.newton_state.read();
 
         match &*state {
             None => {
                 // No state yet — return infinite bounds in the appropriate direction.
                 let existing = self.inner.get_bounds()?;
-                let lower = existing.small();
-                let upper = existing.large();
+                let lower = existing.lower();
+                let upper = existing.upper();
                 let zero = XBinary::zero();
-                if lower <= &zero && upper >= zero {
-                    Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf))
+                if lower <= zero && upper >= zero {
+                    Ok(Prefix::unbounded())
                 } else if upper < zero {
-                    Ok(Bounds::new(XBinary::NegInf, XBinary::zero()))
+                    Ok(Prefix::from(&Bounds::new(XBinary::NegInf, XBinary::zero())))
                 } else {
-                    Ok(Bounds::new(XBinary::zero(), XBinary::PosInf))
+                    Ok(Prefix::from(&Bounds::new(XBinary::zero(), XBinary::PosInf)))
                 }
             }
             Some(s) => {
@@ -99,13 +100,13 @@ impl NodeOp for InvOp {
                         XBinary::Finite(s.hi.upper.clone()),
                     )
                 };
-                Ok(Bounds::new(out_lo, out_hi))
+                Ok(Prefix::from(&Bounds::new(out_lo, out_hi)))
             }
         }
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
-        let input_bounds = self.inner.get_bounds()?;
+        let input_bounds = self.inner.get_bounds_as_bounds()?;
         let mut state = self.newton_state.write();
 
         match &mut *state {
@@ -147,7 +148,7 @@ impl NodeOp for InvOp {
     /// [a,b] is 1/min_abs² (worst case at the value closest to zero).
     /// Child budget = target × min_abs².
     fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
-        let min_abs = match self.inner.cached_bounds() {
+        let min_abs = match self.inner.cached_bounds_as_bounds() {
             Some(b) => {
                 let (lo, hi) = b.abs();
                 std::cmp::min(lo, hi)
@@ -393,16 +394,17 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{Bounds, XBinary};
-    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::binary::Bounds;
+    use crate::prefix::Prefix;
+    use crate::refinement::{XUsize, prefix_width_leq};
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
 
     #[test]
     fn inv_allows_infinite_bounds() {
         let value = interval_midpoint_computable(-1, 1);
         let inv = value.inv();
-        let bounds = inv.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(XBinary::NegInf, XBinary::PosInf));
+        let prefix = inv.bounds().expect("bounds should succeed");
+        assert_eq!(prefix, Prefix::unbounded());
     }
 
     #[test]
@@ -412,9 +414,10 @@ mod tests {
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
         let tolerance_exp = XUsize::Finite(8);
-        let bounds = inv
+        let prefix = inv
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
+        let bounds = Bounds::from(&prefix);
 
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
@@ -433,7 +436,7 @@ mod tests {
             upper.mul(&three)
         );
         assert!(
-            bounds_width_leq(&bounds, &tolerance_exp),
+            prefix_width_leq(&prefix, &tolerance_exp),
             "bounds width exceeds tolerance"
         );
     }

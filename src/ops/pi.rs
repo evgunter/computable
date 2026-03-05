@@ -25,6 +25,7 @@ use crate::binary::{
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 use crate::sane::Sane;
 
 /// Initial number of Taylor series terms for pi computation.
@@ -125,18 +126,18 @@ pub struct PiOp {
 }
 
 impl NodeOp for PiOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+    fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
         let num_terms = *self.num_terms.read();
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
-        // Normalization happens at cache boundaries (Node::get_bounds / apply_update)
-        Ok(Bounds::from_lower_and_width(
+        let bounds = Bounds::from_lower_and_width(
             XBinary::Finite(pi_lo.clone()),
             UXBinary::Finite(
                 crate::binary::UBinary::try_from_binary(&pi_hi.sub(&pi_lo))
                     .unwrap_or_else(|_| crate::binary::UBinary::zero()),
             ),
-        ))
+        );
+        Ok(Prefix::from(&bounds))
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
@@ -421,29 +422,24 @@ mod tests {
     fn pi_computable_refines() {
         let pi_comp = pi();
         let tolerance_exp = XUsize::Finite(20); // 2^-20 precision
-        let bounds = pi_comp
+        let prefix = pi_comp
             .refine_to_default(tolerance_exp)
             .expect("refine should succeed");
 
+        let bounds = crate::binary::Bounds::from(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
         let pi_f64 = pi_f64_binary();
 
-        // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
         assert!(
             upper >= pi_f64,
             "upper bound should be >= f64 pi approximation"
         );
-
-        // The lower bound should be very close to f64 pi. With 2^-20 epsilon precision,
-        // the bounds are much looser than f64 precision, so lower should be <= f64 pi.
-        // (The refined bounds are simplified/loosened from the raw computation.)
         assert!(
             lower <= pi_f64,
             "lower bound should be <= f64 pi approximation (after simplification)"
         );
 
-        // Check width is within epsilon
         let width = upper.sub(&lower);
         let eps_binary = epsilon_as_binary(20);
         assert!(width <= eps_binary, "width should be <= epsilon");
@@ -491,10 +487,11 @@ mod tests {
     fn pi_computable_refines_beyond_128_bits() {
         let pi_comp = pi();
         let tolerance_exp = XUsize::Finite(128); // 2^-128 precision
-        let bounds = pi_comp
+        let prefix = pi_comp
             .refine_to_default(tolerance_exp)
             .expect("refine to 2^-128 should succeed");
 
+        let bounds = crate::binary::Bounds::from(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 

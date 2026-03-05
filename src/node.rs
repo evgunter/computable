@@ -11,19 +11,19 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 
-use crate::binary::{Bounds, FiniteBounds, UXBinary, XBinary};
-use crate::binary_utils::bisection::normalize_finite_to_bounds;
+use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
+use crate::prefix::Prefix;
 
 /// Shared API for retrieving bounds with lazy computation.
 pub trait BoundsAccess {
-    fn get_bounds(&self) -> Result<Bounds, ComputableError>;
+    fn get_bounds(&self) -> Result<Prefix, ComputableError>;
 }
 
 /// Type-erased base node so we can store heterogeneous leaf states in a single graph.
 /// This is also the hook for future user-defined base nodes.
 pub trait BaseNode: Send + Sync {
-    fn get_bounds(&self) -> Result<Bounds, ComputableError>;
+    fn get_bounds(&self) -> Result<Prefix, ComputableError>;
     fn refine(&self) -> Result<(), ComputableError>;
 }
 
@@ -81,10 +81,10 @@ where
     F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
 {
     /// Returns cached bounds for the current base state, computing and caching if needed.
-    fn get_bounds(&self) -> Result<Bounds, ComputableError> {
+    fn get_bounds(&self) -> Result<Prefix, ComputableError> {
         let mut snapshot = self.snapshot.write();
         let bounds = self.snapshot_bounds(&mut snapshot)?;
-        Ok(bounds)
+        Ok(Prefix::from(&bounds))
     }
 
     /// Refines the base state and computes the new bounds for that refined state.
@@ -115,7 +115,7 @@ where
 }
 
 impl<T: BaseNode + ?Sized> BoundsAccess for T {
-    fn get_bounds(&self) -> Result<Bounds, ComputableError> {
+    fn get_bounds(&self) -> Result<Prefix, ComputableError> {
         BaseNode::get_bounds(self)
     }
 }
@@ -126,7 +126,7 @@ impl<T: BaseNode + ?Sized> BoundsAccess for T {
 /// implement this trait to provide custom refinement logic beyond simple arithmetic.
 // TODO: ensure it is possible to create user-defined composed nodes.
 pub trait NodeOp: Send + Sync {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError>;
+    fn compute_bounds(&self) -> Result<Prefix, ComputableError>;
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError>;
     fn children(&self) -> Vec<Arc<Node>>;
     fn is_refiner(&self) -> bool;
@@ -197,7 +197,7 @@ impl Default for RefinementSync {
 pub struct Node {
     pub id: usize,
     pub op: Arc<dyn NodeOp>,
-    pub bounds_cache: RwLock<Option<Bounds>>,
+    pub bounds_cache: RwLock<Option<Prefix>>,
     pub refinement: RefinementSync,
 }
 
@@ -213,31 +213,42 @@ impl Node {
     }
 
     /// Returns cached bounds if already computed.
-    pub fn cached_bounds(&self) -> Option<Bounds> {
+    pub fn cached_bounds(&self) -> Option<Prefix> {
         self.bounds_cache.read().clone()
+    }
+
+    /// Returns cached bounds as legacy `Bounds` type. Used by ops that need
+    /// `Bounds` for demand budget calculations (abs, etc.).
+    pub fn cached_bounds_as_bounds(&self) -> Option<Bounds> {
+        self.bounds_cache.read().as_ref().map(Bounds::from)
     }
 
     /// Returns cached bounds, computing and caching if needed.
     /// Combinators are infallible, so bounds are lazily computed on demand.
-    /// Bounds are normalized to prefix-compatible form before caching.
-    pub fn get_bounds(&self) -> Result<Bounds, ComputableError> {
-        if let Some(bounds) = self.cached_bounds() {
-            return Ok(bounds);
+    pub fn get_bounds(&self) -> Result<Prefix, ComputableError> {
+        if let Some(prefix) = self.cached_bounds() {
+            return Ok(prefix);
         }
-        let bounds = self.compute_bounds()?;
-        let bounds = normalize_bounds_extended(&bounds)?;
-        self.set_bounds(bounds.clone());
-        Ok(bounds)
+        let prefix = self.compute_bounds()?;
+        self.set_bounds(prefix.clone());
+        Ok(prefix)
     }
 
-    pub fn set_bounds(&self, bounds: Bounds) {
+    /// Returns bounds as the legacy `Bounds` type.
+    /// Convenience for ops that work internally with `Bounds`.
+    pub fn get_bounds_as_bounds(&self) -> Result<Bounds, ComputableError> {
+        let prefix = self.get_bounds()?;
+        Ok(Bounds::from(&prefix))
+    }
+
+    pub fn set_bounds(&self, prefix: Prefix) {
         let mut cache = self.bounds_cache.write();
-        *cache = Some(bounds);
+        *cache = Some(prefix);
         self.refinement.notify_bounds_updated();
     }
 
     /// Computes bounds for this node from current children/base state.
-    pub fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+    pub fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
         self.op.compute_bounds()
     }
 
@@ -256,22 +267,7 @@ impl Node {
 }
 
 impl BoundsAccess for Node {
-    fn get_bounds(&self) -> Result<Bounds, ComputableError> {
+    fn get_bounds(&self) -> Result<Prefix, ComputableError> {
         Node::get_bounds(self)
-    }
-}
-
-/// Normalizes bounds to prefix-compatible form, handling infinite bounds.
-///
-/// - Infinite bounds (any endpoint is ±∞): returned as-is (no normalization possible)
-/// - Finite bounds: delegated to [`normalize_finite_to_bounds`] which handles
-///   zero-crossing, precision thresholding, and prefix normalization
-pub(crate) fn normalize_bounds_extended(bounds: &Bounds) -> Result<Bounds, ComputableError> {
-    match (bounds.small(), &bounds.large()) {
-        (XBinary::Finite(lo), XBinary::Finite(hi)) => {
-            let finite = FiniteBounds::new(lo.clone(), hi.clone());
-            normalize_finite_to_bounds(&finite)
-        }
-        _ => Ok(bounds.clone()),
     }
 }

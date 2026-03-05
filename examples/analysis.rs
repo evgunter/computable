@@ -18,7 +18,7 @@ use std::num::NonZeroU32;
 use std::time::Instant;
 
 use computable::{
-    Binary, Bounds, Computable, FiniteBounds, XBinary, XUsize, pi, pi_bounds_at_precision,
+    Binary, Bounds, Computable, FiniteBounds, Prefix, XBinary, XUsize, pi, pi_bounds_at_precision,
 };
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
@@ -31,7 +31,8 @@ use common::balanced_sum;
 // Helpers (example-specific; balanced_sum comes from benches/common.rs)
 // ---------------------------------------------------------------------------
 
-fn try_finite_bounds(bounds: &Bounds) -> Option<FiniteBounds> {
+fn try_finite_bounds(prefix: &Prefix) -> Option<FiniteBounds> {
+    let bounds = Bounds::from(prefix);
     match (bounds.small(), bounds.large()) {
         (XBinary::Finite(lower), XBinary::Finite(upper)) => {
             Some(FiniteBounds::new(lower.clone(), upper))
@@ -478,12 +479,13 @@ fn pi_analysis() {
             .expect("sin(n*pi) should succeed");
         let duration = start.elapsed();
 
-        let lower = finite_binary(bounds.small());
-        let upper = finite_binary(&bounds.large());
+        let bounds_iv = Bounds::from(&bounds);
+        let lower = finite_binary(bounds_iv.small());
+        let upper = finite_binary(&bounds_iv.large());
         let contains_zero = lower.mantissa().is_negative() || lower.mantissa().is_zero();
         println!(
             "  sin({multiplier:>3}*pi): {duration:>10?}  bounds: [{lower}, {upper}]  width: {}  contains 0: {contains_zero}",
-            bounds.width()
+            bounds_iv.width()
         );
     }
 
@@ -499,10 +501,11 @@ fn pi_analysis() {
             .refine_to_default(epsilon)
             .expect("high precision pi should succeed");
         let duration = start.elapsed();
+        let bounds_iv = Bounds::from(&bounds);
         println!(
             "  {bits:>5} bits (~{} digits): {duration:>10?}  width: {}",
             (bits as f64 * 0.301).round() as u64,
-            bounds.width()
+            bounds_iv.width()
         );
     }
 }

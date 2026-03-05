@@ -15,7 +15,8 @@ use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
-use crate::refinement::{RefinementGraph, XUsize, bounds_width_leq};
+use crate::prefix::Prefix;
+use crate::refinement::{RefinementGraph, XUsize, prefix_width_leq};
 
 use parking_lot::RwLock;
 
@@ -60,7 +61,7 @@ impl Computable {
     }
 
     /// Returns the current bounds for this computable.
-    pub fn bounds(&self) -> Result<Bounds, ComputableError> {
+    pub fn bounds(&self) -> Result<Prefix, ComputableError> {
         self.node.get_bounds()
     }
 
@@ -82,10 +83,10 @@ impl Computable {
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         &self,
         tolerance_exp: XUsize,
-    ) -> Result<Bounds, ComputableError> {
+    ) -> Result<Prefix, ComputableError> {
         loop {
             let bounds = self.node.get_bounds()?;
-            if bounds_width_leq(&bounds, &tolerance_exp) {
+            if prefix_width_leq(&bounds, &tolerance_exp) {
                 return Ok(bounds);
             }
 
@@ -114,7 +115,7 @@ impl Computable {
     }
 
     /// Refines this computable using the default maximum iterations.
-    pub fn refine_to_default(&self, tolerance_exp: XUsize) -> Result<Bounds, ComputableError> {
+    pub fn refine_to_default(&self, tolerance_exp: XUsize) -> Result<Prefix, ComputableError> {
         self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(tolerance_exp)
     }
 
@@ -198,8 +199,8 @@ impl Computable {
                 // x^0 = 1 for all x, including 0^0 = 1 by convention
                 // Check for infinite bounds - infinity^0 is an indeterminate form.
                 if let Ok(bounds) = self.node.get_bounds() {
-                    let has_infinite = matches!(bounds.small(), XBinary::NegInf | XBinary::PosInf)
-                        || matches!(&bounds.large(), XBinary::NegInf | XBinary::PosInf);
+                    let has_infinite = matches!(bounds.lower(), XBinary::NegInf | XBinary::PosInf)
+                        || matches!(bounds.upper(), XBinary::NegInf | XBinary::PosInf);
                     if has_infinite {
                         crate::detected_computable_with_infinite_value!(
                             "input has infinite bounds for x^0 (infinity^0 is an indeterminate form)"
@@ -313,10 +314,7 @@ mod tests {
         let computable: Computable = value.clone().into();
 
         let bounds = computable.bounds().expect("bounds should succeed");
-        assert_eq!(
-            bounds,
-            Bounds::new(XBinary::Finite(value.clone()), XBinary::Finite(value))
-        );
+        assert_eq!(bounds, Prefix::exact(value));
     }
 
     #[test]
@@ -326,10 +324,11 @@ mod tests {
         let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
 
         let tolerance_exp = XUsize::Finite(12);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
+        let bounds = Bounds::from(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
         let upper = unwrap_finite(&upper_xb);
@@ -352,10 +351,11 @@ mod tests {
         let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
 
         let tolerance_exp = XUsize::Finite(12);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
+        let bounds = Bounds::from(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
         let upper = unwrap_finite(&upper_xb);

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 
 /// Negation operation.
 pub struct NegOp {
@@ -12,11 +13,11 @@ pub struct NegOp {
 }
 
 impl NodeOp for NegOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let existing = self.inner.get_bounds()?;
+    fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
+        let existing = self.inner.get_bounds_as_bounds()?;
         let lower = existing.small().neg();
         let upper = existing.large().neg();
-        Ok(Bounds::new_checked(upper, lower)?)
+        Ok(Prefix::from(&Bounds::new_checked(upper, lower)?))
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
@@ -44,12 +45,12 @@ pub struct AddOp {
 }
 
 impl NodeOp for AddOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let left_bounds = self.left.get_bounds()?;
-        let right_bounds = self.right.get_bounds()?;
+    fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
+        let left_bounds = self.left.get_bounds_as_bounds()?;
+        let right_bounds = self.right.get_bounds_as_bounds()?;
         let lower = left_bounds.small().add_lower(right_bounds.small());
         let upper = left_bounds.large().add_upper(&right_bounds.large());
-        Ok(Bounds::new_checked(lower, upper)?)
+        Ok(Prefix::from(&Bounds::new_checked(lower, upper)?))
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
@@ -77,9 +78,9 @@ pub struct MulOp {
 }
 
 impl NodeOp for MulOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let left_bounds = self.left.get_bounds()?;
-        let right_bounds = self.right.get_bounds()?;
+    fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
+        let left_bounds = self.left.get_bounds_as_bounds()?;
+        let right_bounds = self.right.get_bounds_as_bounds()?;
         let left_lower = left_bounds.small();
         let left_upper = left_bounds.large();
         let right_lower = right_bounds.small();
@@ -97,7 +98,7 @@ impl NodeOp for MulOp {
             .min(lu_ru.clone());
         let max = ll_rl.max(ll_ru).max(lu_rl).max(lu_ru);
 
-        Ok(Bounds::new_checked(min, max)?)
+        Ok(Prefix::from(&Bounds::new_checked(min, max)?))
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
@@ -120,7 +121,7 @@ impl NodeOp for MulOp {
         } else {
             &self.left
         };
-        let sibling_max_abs = match sibling.cached_bounds() {
+        let sibling_max_abs = match sibling.cached_bounds_as_bounds() {
             Some(b) => {
                 let (lo, hi) = b.abs();
                 std::cmp::max(lo, hi)
@@ -137,8 +138,31 @@ impl NodeOp for MulOp {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::Bounds;
+    use crate::binary::{Bounds, XBinary};
     use crate::test_utils::{interval_midpoint_computable, xbin};
+
+    /// Assert that the Prefix-derived bounds contain the expected interval.
+    /// Due to Prefix normalization (width rounded up to power of 2), the actual
+    /// bounds may be wider than the tight mathematical result.
+    fn assert_bounds_contain(
+        prefix: &crate::prefix::Prefix,
+        expected_lower: &XBinary,
+        expected_upper: &XBinary,
+    ) {
+        let bounds = Bounds::from(prefix);
+        assert!(
+            bounds.small() <= expected_lower,
+            "lower bound {:?} should be <= expected {:?}",
+            bounds.small(),
+            expected_lower
+        );
+        assert!(
+            &bounds.large() >= expected_upper,
+            "upper bound {:?} should be >= expected {:?}",
+            bounds.large(),
+            expected_upper
+        );
+    }
 
     #[test]
     fn add_combines_bounds() {
@@ -146,8 +170,8 @@ mod tests {
         let right = interval_midpoint_computable(1, 3);
 
         let sum = left + right;
-        let sum_bounds = sum.bounds().expect("bounds should succeed");
-        assert_eq!(sum_bounds, Bounds::new(xbin(1, 0), xbin(5, 0)));
+        let prefix = sum.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(1, 0), &xbin(5, 0));
     }
 
     #[test]
@@ -156,16 +180,16 @@ mod tests {
         let right = interval_midpoint_computable(1, 2);
 
         let diff = left - right;
-        let diff_bounds = diff.bounds().expect("bounds should succeed");
-        assert_eq!(diff_bounds, Bounds::new(xbin(2, 0), xbin(5, 0)));
+        let prefix = diff.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(2, 0), &xbin(5, 0));
     }
 
     #[test]
     fn neg_flips_bounds() {
         let value = interval_midpoint_computable(1, 3);
         let negated = -value;
-        let bounds = negated.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(-3, 0), xbin(-1, 0)));
+        let prefix = negated.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(-3, 0), &xbin(-1, 0));
     }
 
     #[test]
@@ -174,8 +198,8 @@ mod tests {
         let right = interval_midpoint_computable(2, 4);
 
         let product = left * right;
-        let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(2, 0), xbin(12, 0)));
+        let prefix = product.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(2, 0), &xbin(12, 0));
     }
 
     #[test]
@@ -184,8 +208,8 @@ mod tests {
         let right = interval_midpoint_computable(2, 4);
 
         let product = left * right;
-        let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(-12, 0), xbin(-2, 0)));
+        let prefix = product.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(-12, 0), &xbin(-2, 0));
     }
 
     #[test]
@@ -194,8 +218,8 @@ mod tests {
         let right = interval_midpoint_computable(4, 5);
 
         let product = left * right;
-        let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(-10, 0), xbin(15, 0)));
+        let prefix = product.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(-10, 0), &xbin(15, 0));
     }
 
     #[test]
@@ -204,7 +228,7 @@ mod tests {
         let right = interval_midpoint_computable(-1, 4);
 
         let product = left * right;
-        let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(-8, 0), xbin(12, 0)));
+        let prefix = product.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(-8, 0), &xbin(12, 0));
     }
 }
