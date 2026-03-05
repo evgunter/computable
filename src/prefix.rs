@@ -200,8 +200,12 @@ impl Prefix {
         }
     }
 
-    /// Returns the width exponent — for Finite, the stored exponent;
-    /// for ZeroCrossing, the max of both exponents (conservative).
+    /// Returns the width exponent — the smallest `e` such that `2^e >= width`.
+    ///
+    /// For `Finite`, this is the stored exponent. For `ZeroCrossing`, the width
+    /// is `2^neg + 2^pos`, so the exponent is `max(neg, pos) + 1` when both
+    /// sides contribute nonzero width, or just the nonzero side's exponent
+    /// when the other is `NegInf` (zero contribution).
     pub fn width_exponent(&self) -> XExponent {
         match self {
             Self::Finite {
@@ -211,7 +215,18 @@ impl Prefix {
             Self::ZeroCrossing {
                 neg_exponent,
                 pos_exponent,
-            } => (*neg_exponent).max(*pos_exponent),
+            } => {
+                match (neg_exponent, pos_exponent) {
+                    (XExponent::NegInf, other) | (other, XExponent::NegInf) => *other,
+                    (XExponent::PosInf, _) | (_, XExponent::PosInf) => XExponent::PosInf,
+                    (XExponent::Finite(a), XExponent::Finite(b)) => {
+                        // width = 2^a + 2^b > 2^max(a,b), so ceil is max + 1.
+                        // Saturate to avoid overflow (would require astronomic exponents).
+                        let m = (*a).max(*b);
+                        XExponent::Finite(m.saturating_add(1))
+                    }
+                }
+            }
         }
     }
 
@@ -863,11 +878,32 @@ mod tests {
 
     #[test]
     fn width_exponent_for_zero_crossing() {
+        // Asymmetric: width = 2^3 + 2^5 = 40, ceil(log2(40)) = 6 = max(3,5) + 1
         let p = Prefix::ZeroCrossing {
             neg_exponent: XExponent::Finite(3),
             pos_exponent: XExponent::Finite(5),
         };
+        assert_eq!(p.width_exponent(), XExponent::Finite(6));
+    }
+
+    #[test]
+    fn width_exponent_for_zero_crossing_symmetric() {
+        // Symmetric: width = 2^4 + 2^4 = 2^5, exponent = 5 = 4 + 1
+        let p = Prefix::ZeroCrossing {
+            neg_exponent: XExponent::Finite(4),
+            pos_exponent: XExponent::Finite(4),
+        };
         assert_eq!(p.width_exponent(), XExponent::Finite(5));
+    }
+
+    #[test]
+    fn width_exponent_for_zero_crossing_one_side_zero() {
+        // One side NegInf (zero contribution): width = 0 + 2^3 = 2^3
+        let p = Prefix::ZeroCrossing {
+            neg_exponent: XExponent::NegInf,
+            pos_exponent: XExponent::Finite(3),
+        };
+        assert_eq!(p.width_exponent(), XExponent::Finite(3));
     }
 
     #[test]
