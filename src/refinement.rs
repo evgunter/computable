@@ -241,8 +241,6 @@ impl RefinementGraph {
                         .map(|node| node_is_static.get(&node.id).copied().unwrap_or(true))
                         .collect()
                 };
-                let any_budget_dynamic = budget_is_static.iter().any(|&s| !s);
-
                 // Track whether each refiner should be re-dispatched.
                 // True initially (first dispatch) and when another refiner
                 // responds (inputs may have changed via propagation). Leaf
