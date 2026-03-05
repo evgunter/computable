@@ -432,7 +432,10 @@ fn width_to_xexponent(width: &Binary) -> XExponent {
     // If mantissa == 1, then width = 2^exponent exactly
     // Otherwise width > 2^(bits-1+exponent), so we need ceil(log2(width)) = bits + exponent
     let mantissa_bits = width.mantissa().magnitude().bits();
-    let is_power_of_two = *width.mantissa().magnitude() == (num_bigint::BigUint::one() << (mantissa_bits - 1));
+    let bits_minus_1 = mantissa_bits
+        .checked_sub(1)
+        .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("mantissa has zero bits"));
+    let is_power_of_two = *width.mantissa().magnitude() == (num_bigint::BigUint::one() << bits_minus_1);
     let exponent_i64 = width
         .exponent()
         .to_i64()
@@ -440,11 +443,11 @@ fn width_to_xexponent(width: &Binary) -> XExponent {
 
     if is_power_of_two {
         // width = 2^(bits-1) * 2^exponent = 2^(bits-1+exponent)
-        let bits_minus_1 = i64::try_from(mantissa_bits - 1)
+        let bits_minus_1_i64 = i64::try_from(bits_minus_1)
             .unwrap_or_else(|_| {
                 crate::detected_computable_would_exhaust_memory!("mantissa too large")
             });
-        let result = bits_minus_1
+        let result = bits_minus_1_i64
             .checked_add(exponent_i64)
             .unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent overflow")
