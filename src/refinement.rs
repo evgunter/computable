@@ -189,6 +189,14 @@ impl RefinementGraph {
                 let mut all_state_unchanged = true;
                 let mut steps = vec![0usize; num_refiners];
                 let mut outstanding = vec![false; num_refiners];
+                // Track whether each refiner should be re-dispatched.
+                // True initially (first dispatch), when another refiner
+                // responds (inputs may have changed), or when the refiner's
+                // own step improved its bounds. Prevents wasteful
+                // re-dispatches when a refiner's compute_bounds would read
+                // the same stale inputs as last time.
+                let mut needs_redispatch = vec![true; num_refiners];
+                let mut last_response_width: Vec<Option<UXBinary>> = vec![None; num_refiners];
 
                 // Build node_id → refiner index mapping for routing responses.
                 let mut refiner_index: HashMap<usize, usize> = HashMap::new();
@@ -260,7 +268,11 @@ impl RefinementGraph {
                     let mut dispatched = 0usize;
 
                     for (i, handle) in refiner_handles.iter().enumerate() {
-                        if !active[i] || outstanding[i] || steps[i] >= MAX_REFINEMENT_ITERATIONS {
+                        if !active[i]
+                            || outstanding[i]
+                            || steps[i] >= MAX_REFINEMENT_ITERATIONS
+                            || !needs_redispatch[i]
+                        {
                             continue;
                         }
                         let skip = refiner_budgets[i].as_ref().is_some_and(|budget| {
@@ -274,6 +286,7 @@ impl RefinementGraph {
                                 .send(RefineCommand::Step { precision_bits })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             outstanding[i] = true;
+                            needs_redispatch[i] = false;
                             dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
                                 unreachable!(
                                     "dispatched <= refiner_handles.len(), cannot overflow usize"
@@ -283,40 +296,30 @@ impl RefinementGraph {
                     }
 
                     // Stall guard: if nothing was dispatched and nothing is
-                    // outstanding, no further progress is possible. The
-                    // propagated budgets are provably sufficient, so this can
-                    // only happen when some refiner couldn't meet its budget
-                    // (hit max iterations or exhausted). If all refiners DID
-                    // meet their budgets, the root should have met the target
-                    // — a stall in that case is a budget computation bug.
+                    // outstanding, no further progress is possible. This can
+                    // happen when some refiner couldn't meet its budget (hit
+                    // max iterations or exhausted), or when all are waiting
+                    // for input changes that won't come (needs_redispatch
+                    // blocked them but nothing outstanding to unblock).
                     if dispatched == 0 && !outstanding.iter().any(|&o| o) {
-                        let any_budget_unmet = refiner_nodes.iter().enumerate().any(|(i, r)| {
-                            refiner_budgets[i].as_ref().is_some_and(|budget| {
-                                r.cached_bounds().is_some_and(|b| b.width() > budget)
-                            })
-                        });
-                        assert!(
-                            any_budget_unmet,
-                            "refinement stalled with all budgets met — \
-                             bug in propagated demand budget computation"
-                        );
                         return Err(ComputableError::MaxRefinementIterations {
                             max: MAX_REFINEMENT_ITERATIONS,
                         });
                     }
 
-                    // 4. Collect ALL outstanding responses before re-dispatching.
+                    // 4. Receive responses and update state.
                     //
-                    //    Waiting for every dispatched refiner prevents wasteful
-                    //    re-dispatches of fast refiners whose compute_bounds
-                    //    depends on slow refiners that haven't responded yet.
-                    //    (Under serialized execution like valgrind, one-at-a-time
-                    //    collection causes SinOp to accumulate Taylor terms with
-                    //    stale inner bounds, each step more expensive than the
-                    //    last.)  Checking precision after each response preserves
-                    //    early-exit: when apply_update propagation makes the root
-                    //    precise enough, we return before processing stale
-                    //    responses from the same wave.
+                    //    Block for one response, drain any immediately available
+                    //    via try_recv, then loop back to dispatch. Checking
+                    //    precision after each response allows early exit when
+                    //    apply_update propagation meets the target mid-batch.
+                    //
+                    //    After each response, mark OTHER refiners as needing
+                    //    re-dispatch (their inputs may have changed). The
+                    //    responding refiner is only marked for re-dispatch if
+                    //    its bounds actually improved — this prevents wasteful
+                    //    re-dispatches when compute_bounds reads stale inputs
+                    //    from slow refiners that haven't responded yet.
 
                     // Process a response: apply the update and return the refiner
                     // index + exhaustion info so the caller can update bookkeeping
@@ -342,7 +345,7 @@ impl RefinementGraph {
 
                     // Inline helper: update bookkeeping after a response.
                     // Not a closure to avoid holding a mutable borrow on
-                    // `outstanding` across the collection loop.
+                    // `outstanding` across the straggler collection loop.
                     macro_rules! record_completion {
                         ($idx:expr, $exhaustion:expr) => {{
                             let idx = $idx;
@@ -356,14 +359,48 @@ impl RefinementGraph {
                                     all_state_unchanged = false;
                                 }
                             }
+                            // Other refiners' inputs may have changed via
+                            // apply_update propagation → mark for re-dispatch.
+                            for j in 0..num_refiners {
+                                if j != idx {
+                                    needs_redispatch[j] = true;
+                                }
+                            }
+                            // The responding refiner: re-dispatch only if its
+                            // own bounds improved from the previous response
+                            // (self-improving refiner like bisection). If not,
+                            // leave needs_redispatch as-is — it may already be
+                            // true from another refiner's response in this batch.
+                            let current_width = refiner_nodes[idx]
+                                .cached_bounds()
+                                .map(|b| b.width().clone());
+                            let self_improved = match (&current_width, &last_response_width[idx]) {
+                                (Some(curr), Some(prev)) => curr < prev,
+                                (Some(_), None) => true, // first response
+                                _ => false,
+                            };
+                            if self_improved {
+                                needs_redispatch[idx] = true;
+                            }
+                            last_response_width[idx] = current_width;
                         }};
                     }
 
-                    while outstanding.iter().any(|&o| o) {
-                        let msg = match update_rx.recv() {
+                    // Block for the first response.
+                    {
+                        let first = match update_rx.recv() {
                             Ok(msg) => msg,
                             Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
+                        let (idx, exhaustion) = apply_response(first)?;
+                        record_completion!(idx, exhaustion);
+                        if precision_met(&self.root, tolerance_exp)? {
+                            return self.root.get_bounds();
+                        }
+                    }
+
+                    // Drain any immediately available responses.
+                    while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion) = apply_response(msg)?;
                         record_completion!(idx, exhaustion);
                         if precision_met(&self.root, tolerance_exp)? {
