@@ -274,13 +274,8 @@ impl NodeOp for PiOp {
             }
         }
 
-        // With per-refiner budgets, the leap formula always produces needed > num_terms
-        // when the coordinator dispatches (otherwise the refiner would have been skipped).
-        // TODO: investigate whether the dispatch logic can be tightened to avoid this path entirely.
-        unreachable!(
-            "PiOp doubling fallback should never fire: precision_bits={}, num_terms={}",
-            precision_bits, state.num_terms
-        )
+        // Current state already satisfies the requested precision — no refinement needed.
+        Ok(false)
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
