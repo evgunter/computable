@@ -280,6 +280,55 @@ original baseline. No catastrophic regressions across any scheduling order.
 | bench_integer_roots | -1.5% | +0.5% | Neutral |
 | Various small (pi_half etc.) | — | +5-10% | Event-loop fixed overhead |
 
+## Experiment 12: Input-readiness gate for non-leaf refiners
+
+**Problem:** Under different thread scheduling orders, SinOp would see wide
+or narrow pi bounds from its sub-refiners, causing bimodal behavior. The
+event loop didn't distinguish "all subs responded" from "all subs responded
+with useful precision." Dispatching SinOp with wide pi bounds triggers
+expensive Taylor series evaluations that produce useless [-1,1] output.
+Valgrind crystallizes this nondeterminism: ~7M vs ~306M instructions (~4000%
+fluctuation), and ~1ms vs ~30ms wall-clock variance.
+
+**Root cause:** The all-sub-refiners-responded gate (Experiment 11) ensured
+SinOp waited for PiOp to respond, but didn't check whether PiOp's response
+was *precise enough*. A PiOp response with wide bounds still triggered
+dispatch.
+
+**Fix:** Gate non-leaf dispatch on sub-refiner input readiness. Three
+coordinated changes:
+
+1. **Reverse index** (`parent_refiner_indices`): maps each refiner to the
+   parent non-leaf refiners that contain it as a sub-refiner. Needed for
+   efficient notification when a sub-refiner is budget-skipped.
+
+2. **Budget-skip counts as "responded"**: When a refiner is budget-skipped
+   (already precise enough), it won't send a response. Notify parent
+   non-leaf refiners via the reverse index so their sub_responded gate
+   can open. Without this, parents stall waiting for responses that
+   never come.
+
+3. **Input-readiness check**: Before dispatching a non-leaf refiner, verify
+   all sub-refiners' cached widths are within their propagated budgets.
+   If not, reset sub-responded tracking and skip (so future sub-refiner
+   responses re-trigger enqueue). Applied in both normal dispatch and
+   stall recovery paths.
+
+**Liveness concern:** When the input-readiness gate blocks a non-leaf
+refiner, its sub-responded tracking is reset so future sub-refiner
+responses can re-trigger enqueue. Sub-refiners with no budget constraint
+(`None`) are treated as ready.
+
+### Local wall-clock results (criterion, bits=256, sample-size=50)
+
+| Benchmark | Change vs previous |
+|-----------|-------------------|
+| sin_1pi | **-98.4%** |
+| sin_2pi | **-98.3%** |
+| sin_10pi | **-98.1%** |
+
+CI valgrind results: pending (PR #65).
+
 ## Remaining Ir Regressions
 
 ### bench_inv +137% (Ir) / +3-12% (wall-clock)
