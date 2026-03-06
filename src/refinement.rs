@@ -912,11 +912,8 @@ mod tests {
 
     #[test]
     fn refine_to_enforces_max_iterations() {
-        let computable = Computable::new(
-            0usize,
-            |_| Ok(Prefix::unbounded()),
-            |state| Ok(state + 1),
-        );
+        let computable =
+            Computable::new(0usize, |_| Ok(Prefix::unbounded()), |state| Ok(state + 1));
         let tolerance_exp = XUsize::Finite(1);
         let result = computable.refine_to::<5>(tolerance_exp);
         assert!(matches!(
@@ -995,16 +992,8 @@ mod tests {
 
     #[test]
     fn refine_to_max_iterations_multiple_refiners() {
-        let left = Computable::new(
-            0usize,
-            |_| Ok(Prefix::unbounded()),
-            |state| Ok(state + 1),
-        );
-        let right = Computable::new(
-            0usize,
-            |_| Ok(Prefix::unbounded()),
-            |state| Ok(state + 1),
-        );
+        let left = Computable::new(0usize, |_| Ok(Prefix::unbounded()), |state| Ok(state + 1));
+        let right = Computable::new(0usize, |_| Ok(Prefix::unbounded()), |state| Ok(state + 1));
         let expr = left + right;
         let tolerance_exp = XUsize::Finite(4);
         let result = expr.refine_to::<2>(tolerance_exp);

@@ -411,10 +411,9 @@ fn magnitude_exponent(value: &Binary) -> XExponent {
         .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent too large"));
 
     let effective_bits = if is_power_of_two {
-        i64::try_from(crate::sane::sub_one_u64(mantissa_bits))
-            .unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("mantissa too large")
-            })
+        i64::try_from(crate::sane::sub_one_u64(mantissa_bits)).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("mantissa too large")
+        })
     } else {
         mantissa_bits_i64
     };

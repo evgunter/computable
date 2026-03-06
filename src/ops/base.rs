@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::binary::UXBinary;
 use crate::error::ComputableError;
-use crate::node::{BaseNode, PrefixAccess, Node, NodeOp};
+use crate::node::{BaseNode, Node, NodeOp, PrefixAccess};
 use crate::prefix::Prefix;
 
 /// Operation that wraps a user-defined base node.

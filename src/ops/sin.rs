@@ -30,8 +30,8 @@ use parking_lot::RwLock;
 use crate::binary::{
     Binary, ReciprocalRounding, UBinary, UXBinary, XBinary, reciprocal_of_biguint,
 };
-use crate::finite_interval::FiniteInterval;
 use crate::error::ComputableError;
+use crate::finite_interval::FiniteInterval;
 use crate::node::{Node, NodeOp};
 
 /// Sine operation with Taylor series refinement.
@@ -257,7 +257,10 @@ fn sin_prefix(
         result_hi
     };
 
-    Ok(Prefix::from_lower_upper(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi)))
+    Ok(Prefix::from_lower_upper(
+        XBinary::Finite(clamped_lo),
+        XBinary::Finite(clamped_hi),
+    ))
 }
 
 //=============================================================================
@@ -961,11 +964,7 @@ mod tests {
 
     #[test]
     fn sin_with_infinite_input_bounds() {
-        let unbounded = Computable::new(
-            0usize,
-            |_| Ok(Prefix::unbounded()),
-            |state| Ok(state + 1),
-        );
+        let unbounded = Computable::new(0usize, |_| Ok(Prefix::unbounded()), |state| Ok(state + 1));
         let sin_unbounded = unbounded.sin();
         let prefix = sin_unbounded.prefix().expect("bounds should succeed");
         let bounds = to_bounds(&prefix);

@@ -69,8 +69,8 @@ mod ordered_pair;
 
 // New internal modules
 mod computable;
-mod finite_interval;
 mod error;
+mod finite_interval;
 mod node;
 mod ops;
 mod prefix;

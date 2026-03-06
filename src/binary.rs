@@ -55,7 +55,6 @@ use num_bigint::{BigInt, BigUint};
 
 use crate::ordered_pair::{AbsDistance, AddWidth, Unsigned};
 
-
 impl Unsigned for BigUint {}
 
 impl AbsDistance<BigInt, BigUint> for BigInt {

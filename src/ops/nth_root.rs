@@ -32,12 +32,12 @@ use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{Binary, UXBinary, XBinary};
-use crate::finite_interval::FiniteInterval;
 use crate::binary_utils::bisection::{
     PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint, normalize_bounds,
 };
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
+use crate::finite_interval::FiniteInterval;
 use crate::node::{Node, NodeOp};
 use crate::prefix::Prefix;
 

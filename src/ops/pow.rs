@@ -163,7 +163,7 @@ mod tests {
     use crate::computable::Computable;
     use crate::refinement::XUsize;
     use crate::test_utils::{
-        assert_bounds_contain, assert_bounds_compatible_with_expected, assert_exact, bin,
+        assert_bounds_compatible_with_expected, assert_bounds_contain, assert_exact, bin,
         interval_noop_computable, to_bounds, xbin,
     };
 

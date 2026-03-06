@@ -111,11 +111,7 @@ pub fn interval_refine(state: Prefix) -> Result<Prefix, crate::error::Computable
 /// ```
 pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
     let initial_prefix = Prefix::from_lower_upper(xbin(lower, 0), xbin(upper, 0));
-    Computable::new(
-        initial_prefix,
-        |state| Ok(state.clone()),
-        interval_refine,
-    )
+    Computable::new(initial_prefix, |state| Ok(state.clone()), interval_refine)
 }
 
 /// Creates a Computable that represents an interval [lower, upper] without refinement.
@@ -179,11 +175,7 @@ pub fn to_bounds(prefix: &Prefix) -> PrefixView {
 /// Assert that the Prefix-derived bounds contain the expected interval.
 /// Due to Prefix normalization (width rounded up to power of 2), the actual
 /// bounds may be wider than the tight mathematical result.
-pub fn assert_bounds_contain(
-    prefix: &Prefix,
-    expected_lower: &XBinary,
-    expected_upper: &XBinary,
-) {
+pub fn assert_bounds_contain(prefix: &Prefix, expected_lower: &XBinary, expected_upper: &XBinary) {
     let lower = prefix.lower();
     let upper = prefix.upper();
     assert!(

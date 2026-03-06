@@ -17,9 +17,7 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use parking_lot::RwLock;
 
-use crate::binary::{
-    Binary, ReciprocalRounding, UXBinary, XBinary, reciprocal_of_biguint,
-};
+use crate::binary::{Binary, ReciprocalRounding, UXBinary, XBinary, reciprocal_of_biguint};
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -309,7 +307,9 @@ fn divide_one_by_bigint(
 
 /// Returns pi as a FiniteInterval with specified precision.
 #[cfg(test)]
-pub(crate) fn pi_interval_at_precision(precision_bits: usize) -> crate::finite_interval::FiniteInterval {
+pub(crate) fn pi_interval_at_precision(
+    precision_bits: usize,
+) -> crate::finite_interval::FiniteInterval {
     use crate::finite_interval::FiniteInterval;
     let (lo, hi) = pi_prefix_at_precision(precision_bits);
     FiniteInterval::new(lo, hi)
@@ -317,7 +317,9 @@ pub(crate) fn pi_interval_at_precision(precision_bits: usize) -> crate::finite_i
 
 /// Returns 2*pi as a FiniteInterval with specified precision.
 #[cfg(test)]
-pub(crate) fn two_pi_interval_at_precision(precision_bits: usize) -> crate::finite_interval::FiniteInterval {
+pub(crate) fn two_pi_interval_at_precision(
+    precision_bits: usize,
+) -> crate::finite_interval::FiniteInterval {
     use crate::binary::UBinary;
     use num_bigint::BigUint;
 
