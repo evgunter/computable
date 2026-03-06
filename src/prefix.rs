@@ -182,9 +182,11 @@ impl Prefix {
                     (XExponent::PosInf, _) | (_, XExponent::PosInf) => XExponent::PosInf,
                     (XExponent::Finite(a), XExponent::Finite(b)) => {
                         // width = 2^a + 2^b > 2^max(a,b), so ceil is max + 1.
-                        // Saturate to avoid overflow (would require astronomic exponents).
                         let m = (*a).max(*b);
-                        XExponent::Finite(m.saturating_add(1))
+                        match m.checked_add(1) {
+                            Some(v) => XExponent::Finite(v),
+                            None => XExponent::PosInf,
+                        }
                     }
                 }
             }
