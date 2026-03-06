@@ -280,6 +280,110 @@ original baseline. No catastrophic regressions across any scheduling order.
 | bench_integer_roots | -1.5% | +0.5% | Neutral |
 | Various small (pi_half etc.) | — | +5-10% | Event-loop fixed overhead |
 
+## Experiments 12–14: Input-readiness gate for non-leaf refiners
+
+**Branch:** `mng/valgrind-noise`, **PR:** #65
+
+### Problem
+
+Under different thread scheduling orders, SinOp would see wide or narrow
+pi bounds from its sub-refiners, causing bimodal behavior. The event loop
+didn't distinguish "all subs responded" from "all subs responded with
+useful precision." Dispatching SinOp with wide pi bounds triggers expensive
+Taylor series evaluations that produce useless [-1,1] output. Valgrind
+crystallizes this nondeterminism: ~1M vs ~300M+ instructions.
+
+### Shared infrastructure (all three experiments)
+
+- **Reverse index** (`parent_refiner_indices`): maps each refiner to
+  parent non-leaf refiners that depend on it
+- **Budget-skip-as-responded**: when a refiner is budget-skipped, notify
+  parents via the reverse index so their sub_responded gate can open
+- **Input-readiness gate**: before dispatching a non-leaf refiner, verify
+  all sub-refiners' cached bounds are within their propagated budgets
+- **`child_demand_budget` doc update** (`src/node.rs`): hard invariant
+  that budgets must err on the conservative side
+
+### Experiment 12: gate with sub_responded reset
+
+**Commits:** `001d579`, `e7b83e2`, `ef43dd2`
+(reverted in `a47e8d3`)
+
+When the input-readiness gate blocks a non-leaf refiner, reset its
+sub_responded tracking so future sub-refiner responses re-trigger enqueue.
+
+| | Wall-clock | Valgrind (Ir) |
+|---|-----------|--------------|
+| **Result** | **-98%** (dramatic) | **+1048% to +31169%** (catastrophic) |
+
+**Root cause of valgrind failure:** The sub_responded reset creates a
+pathological loop under serialized scheduling:
+1. PiOp responds (partially tightened, not yet within budget)
+2. SinOp's sub_responded gate opens → enqueued
+3. Input-readiness fails → sub_responded reset → skip
+4. PiOp dispatched again (leaf, self-re-dispatches) → responds → goto 2
+
+Each cycle forces an extra PiOp step (exponentially expensive). Under
+real parallelism this is hidden by concurrent execution, but under
+valgrind's serialization it's catastrophic. Reverted.
+
+### Experiment 13: gate with deferred list re-enqueue (v2)
+
+**Commit:** `cf48fbd`
+
+Same gate, but on failure: collect blocked refiners into a `deferred` list
+and re-enqueue them after the dispatch drain. No sub_responded reset.
+
+| | Wall-clock | Valgrind (Ir) |
+|---|-----------|--------------|
+| **Result** | ~neutral | nondeterministic (sin_100pi p4: 327M vs 1.1M baseline) |
+
+**Analysis:** Deferred re-enqueue creates polling overhead — each main loop
+iteration re-checks deferred refiners, consuming instructions that compete
+with PiOp's thread under valgrind serialization.
+
+### Experiment 14: event-driven parent notification (v3)
+
+**Commits:** `5c0bec6`, `55d3024`
+
+Remove the deferred list entirely. Instead, when a sub-refiner responds
+in `record_completion`, use the reverse index to check each parent. If all
+of that parent's sub-refiners now meet their budgets, enqueue the parent.
+
+| | Wall-clock | Valgrind (Ir) |
+|---|-----------|--------------|
+| **Result** | ~neutral | improved over v2, still nondeterministic |
+
+Key valgrind numbers (v3 vs v2 vs baseline):
+
+| Benchmark | Baseline (main) | v2 | v3 |
+|-----------|----------------|-----|-----|
+| sin_1pi p4 | 1.85M | 17.9M | 10.2M |
+| sin_2pi p4 | 1.26M | 7.2M | 5.3M |
+| sin_10pi p4 | 1.06M | 7.4M | 5.5M |
+| sin_100pi p4 | 1.27M | 327M | 5.6M |
+| sin p4 | 91M | 30.4B | 27.7B |
+
+Most dramatic: `sin_100pi p4` dropped from 327M (v2) to 5.6M (v3). The
+event-driven approach eliminated the polling overhead that caused v2's
+worst case.
+
+### Overall conclusion: approach abandoned
+
+**Net result vs main: ~neutral wall-clock, ~neutral valgrind (just
+different scheduling luck).**
+
+The input-readiness gate cannot fix the fundamental problem: under valgrind
+serialization, the coordinator thread and refiner threads share one CPU.
+Whether PiOp meets its budget before SinOp gets checked depends on which
+thread valgrind schedules first — no amount of gate logic can control this.
+
+The v3 code adds ~80 lines of non-trivial coordinator logic (reverse index,
+budget-skip-as-responded, input-readiness gate, event-driven parent
+notification) for no measurable improvement. All code changes reverted;
+further investigation should focus on the benchmarking infrastructure
+(e.g. `--fair-sched=yes`, min-of-N runs) rather than the algorithm.
+
 ## Remaining Ir Regressions
 
 ### bench_inv +137% (Ir) / +3-12% (wall-clock)
@@ -299,140 +403,3 @@ precision where computation dominates, sin shows -7 to -22% improvement.
 Benchmarks with few refiners and low precision show small regression from
 the event-loop's per-iteration overhead. This is the fixed cost of the
 architecture, offset by parallelism benefits invisible to valgrind.
-
----
-
-## Experiment 12: Prefix-Native Refinement Infrastructure (PR #68)
-
-### Background
-
-PR #63 attempted to switch the node cache from `Bounds` (arbitrary-precision
-width) to `Prefix` (power-of-2 width). It was reverted (commit 73ec202)
-because benchmarks hung — the bench CI job ran >4 hours before being cancelled
-(normal runtime ~38 min).
-
-**Root cause of the hang:** Refiners produced arbitrary-precision bound
-improvements, but `Prefix::from_lower_upper` rounds width to the next power
-of 2. Small improvements became invisible in Prefix representation →
-propagation saw no change → coordinator re-dispatched indefinitely.
-
-### Approach: Target-Aware Refiners
-
-Instead of having refiners produce arbitrary precision and hoping Prefix
-captures it, make each `refine_step` receive a target width exponent:
-
-```rust
-fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError>;
-```
-
-Contract: after returning `Ok(true)`, `compute_prefix()` must return a Prefix
-with `width_exponent < current` (at least 1 bit improvement).
-
-### Implementation (Stages 0-3)
-
-**Stage 0:** Reintroduced `Prefix` and `FiniteInterval` types (additive, no
-behavior change).
-
-**Stage 1:** Switched node cache to Prefix. Added `NodeOp::compute_prefix()`
-with default implementation that converts `compute_bounds()` result. This
-preserves exact Bounds-based arithmetic while using Prefix for the refinement
-dispatch system.
-
-**Stage 2:** Made `refine_step` target-aware (signature change from
-`precision_bits: usize` to `target_width_exp: i64`).
-
-**Stage 3:** Updated refinement infrastructure — `prefix_width_leq` for
-tolerance checking, exponent-based demand budgets, Prefix-based propagation.
-
-### Dual Cache Architecture
-
-A critical design decision: Node stores both `prefix_cache` (for refinement
-power-of-2 dispatch) and `bounds_cache` (for exact arithmetic). Without this,
-Prefix rounding widened exact bounds through round-trip conversion. For example,
-exact bounds `[2,5]` (width 3) became `[2,6]` (width 4, next power of 2) when
-going through Prefix. See Experiment 13 for analysis of why this matters.
-
-- `get_prefix()` → used by refinement system for dispatch decisions
-- `get_bounds()` → used by arithmetic ops for exact interval arithmetic
-- `set_prefix()` invalidates `bounds_cache` (children may have changed)
-- `set_bounds()` sets both caches (derives prefix from bounds)
-
-### 1-Step-Per-Dispatch Principle
-
-The original implementation of target-aware refiners tried to loop internally
-until the target was met. This caused hangs:
-
-- **InvOp (Newton):** 10 Newton steps per dispatch. With `target_width_exp =
-  i64::MIN` (unreachable for irrationals), quadratic convergence doubled
-  mantissa size each step: 64 bits → 65K bits → 67M bits on next dispatch.
-- **NthRootOp (bisection):** 256 bisection steps per dispatch. Each step adds
-  1 bit of precision; 256 steps → huge Ir under valgrind.
-
-**Fix:** Limit all refiners to exactly 1 internal step per dispatch. The
-coordinator handles iteration count and re-dispatches as needed.
-
-### CI Benchmark Results (vs main baseline)
-
-| Benchmark | Ir Δ | Notes |
-|-----------|------|-------|
-| bench_pi_refinement (p4) | **-85%** | |
-| bench_sin_2pi (p4) | **-98%** | 329M → 7.2M Ir |
-| bench_sin (p0-p4) | **-42% to -68%** | |
-| bench_integer_roots (p0-p4) | **-38% to -48%** | |
-| bench_inv (p0-p4) | **-25% to -44%** | Previously +137% |
-| bench_sqrt2_plus_cbrt3 (p0-p4) | **-27% to -38%** | |
-| bench_complex | **-22%** | |
-| bench_summation | **-26%** | |
-| bench_sin_10pi (p3) | +35% | Scheduling-sensitive |
-| bench_sin_100pi (p4) | +1940% | Known SinOp/PiOp interaction |
-
-### Stages Remaining
-
-- Stage 4: Update public API, remove Bounds from public interface
-- Stage 5: Rename pass ("bounds" → "prefix" in identifiers)
-- Stage 6: Update documentation (README.md, src/README.md)
-
----
-
-## Experiment 13: Remove dual cache (single Prefix cache)
-
-**Branch:** `experiment/remove-bounds-cache` (commit `c8c9fd8`)
-
-**Hypothesis:** The dual cache (prefix_cache + bounds_cache) might be
-overengineered. Prefix rounding widens bounds by at most 1 bit per tree level,
-so for typical depth 3-5 trees that's only 3-5 extra refinement iterations.
-
-**Change:** Removed `bounds_cache` from `Node`. `get_bounds()` now returns
-`get_prefix()?.to_bounds()`. Updated 10 tests to assert containment rather
-than exact equality.
-
-### Wall-clock results (criterion, macOS)
-
-| Benchmark | With dual cache | Without | Change |
-|-----------|----------------|---------|--------|
-| pi_refinement/256 | 354 µs | 204 µs | **-42%** |
-| two_pi/256 | 369 µs | 207 µs | **-44%** |
-| pi_squared/256 | 679 µs | 445 µs | **-35%** |
-| integer_roots/64 | 2.06 s | 1.38 s | **-33%** |
-| inv/1 | 3.29 ms | 2.34 ms | **-29%** |
-| inv/64 | 4.09 ms | 4.97 ms | **+21%** |
-| inv/256 | 3.92 ms | 7.61 ms | **+94%** |
-| sin_1pi/256 | 14.5 ms | 20.3 ms | **+40%** |
-| sin_10pi/256 | 14.4 ms | 24.7 ms | **+71%** |
-
-### Analysis
-
-The regressions are NOT caused by caching overhead — they're caused by
-**precision loss degrading convergence rates**. When InvOp reads its child's
-bounds via `get_bounds()`, Prefix rounding gives wider-than-exact bounds.
-Wider input bounds → less precise Newton-Raphson seeds → more Newton iterations
-to reach the target. The effect compounds at higher precision: inv/1 improves
-(-29%) but inv/256 nearly doubles (+94%).
-
-**Conclusion:** The dual cache is necessary for correctness of convergence at
-high precision. The speedups from removing it (less lock contention) are real
-but outweighed by convergence regressions in precision-sensitive operations.
-
-**Possible alternative:** A single cache that stores exact Bounds and derives
-Prefix lazily (rather than storing both). This would preserve exact arithmetic
-while eliminating the extra field and its synchronization. Needs investigation.
