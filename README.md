@@ -23,7 +23,7 @@ there are a few ways the implementation diverges from this abstraction; see [dev
 # features
 
 - there is a function (`Computable::refine_to`) which takes a computable number $(x, b, f)$ and a precision $\epsilon$ and applies $f$ to $x$ until $b_u(f^n(x)) - b_\ell(f^n(x)) \leq \epsilon$ (where $n$ is the number of applications required).
-- computable numbers may be composed using arithmetic operations via the standard operators (`+`, `-`, `*`, `/`, unary `-`) and methods like `Computable::inv`, `.sin()`, `.pow(n)`, `.nth_root(n)`, and `pi()`.
+- computable numbers may be composed using arithmetic operations via the standard operators (`+`, `-`, `*`, `/`, unary `-`) and `Computable::inv`.
 for example, given computable numbers $C_0 = (x_0, b_0, f_0)$ and $C_1 = (x_1, b_1, f_1)$, $$C_0 + C_1 = ((x_0, x_1), (x, y) \mapsto (b_{0\ell}(x) + b_{1\ell}(y), b_{0u}(x) + b_{1u}(y)), (x, y) \mapsto (f_0(x), f_1(y)))$$
 
 # deviations from the formalism
@@ -33,7 +33,7 @@ sadly, the implementation cannot exactly realize the formalism.
 - many operations are fallible: bounds functions and composed operations return `Result` rather than only the types specified above. the refinement function $f$ itself is infallible in the implementation, but `Computable::refine_to` can fail when validating the refinement progress
 - refinement is bounded: `Computable::refine_to` stops after a maximum number of iterations and returns an error instead of looping forever. note that default iteration limits differ by build: debug builds use a smaller max to catch issues quickly, while release builds allow more refinements for accuracy.
 - we do not (and cannot. but maybe if we had an actual proof system...) enforce that the provided $f$ actually satisfies the convergence requirement from the formalism; this is the caller's responsibility. violations may lead to runtime errors. the implementation only checks that, on refinement, the state does change (if the width hasn't converged to zero) and the bounds don't get worse (since these are necessary conditions which are easy to check).
-- the formalism above suggests that composed computables have a combined refinement function $(x, y) \mapsto (f_0(x), f_1(y))$ that directly calls both children's refinement functions. in the implementation, combinators (`AddOp`, `MulOp`, `NegOp`) are passive—they don't refine anything themselves. instead, `RefinementGraph` discovers all "refiner" nodes (base computables, `InvOp`, `NthRootOp`) and drives them externally, then propagates prefix updates upward through the passive combinators. this is functionally equivalent but architecturally different. <!-- TODO: consider whether to update the formalism to match the implementation, or vice versa -->
+- the formalism above suggests that composed computables have a combined refinement function $(x, y) \mapsto (f_0(x), f_1(y))$ that directly calls both children's refinement functions. in the implementation, combinators (`AddOp`, `MulOp`, `NegOp`) are passive—they don't refine anything themselves. instead, `RefinementGraph` discovers all leaf "refiner" nodes (base computables and `InvOp`) and drives them externally, then propagates bounds upward through the passive combinators. this is functionally equivalent but architecturally different. <!-- TODO: consider whether to update the formalism to match the implementation, or vice versa -->
 
 
 # internal design of computable numbers
@@ -43,14 +43,8 @@ sadly, the implementation cannot exactly realize the formalism.
 - hiding internal state: although the computable number will mutate its state $x$ on refinement, the users of the computable number can't see the state directly. they may only perceive it indirectly via time required to return (if long, the state must not have been refined much yet) and returned precision (if in excess of requested, the computable number was probably already refined to a greater precision than requested).
 - parallelism: if an expression being refined has multiple components that need to be refined separately, those sub-refinements run in parallel.
 
-## interval representation
-
-internally, bounds are stored as a `Prefix`: a compact representation that records an inner endpoint (the one closest to zero) plus a width exponent (so the width is a power of 2 or infinity). this trades a small amount of tightness (width is rounded up to the next power of 2) for constant-time width comparisons and efficient demand propagation.
-
-for intermediate computations that need tight interval arithmetic (e.g. Taylor series accumulation in `sin` and `pi`), a lightweight `FiniteInterval` type provides exact `(lower, upper)` pairs with interval add/sub/neg/scale/midpoint operations. these are converted to `Prefix` at the boundary before being stored in the computation graph.
-
 ## threading model
-the implementation spawns one thread per refiner node (base computable numbers, `InvOp`, `NthRootOp`) using `std::thread::scope`. there is no thread pool or work-stealing; threads are created per refinement call and cleaned up when refinement completes. demand propagation allows the coordinator to skip refiners that are already precise enough for the target tolerance, avoiding wasted computation on fast-converging operands.
+the implementation spawns one thread per refiner node (base computable numbers and `inv` operations) using `std::thread::scope`. there is no thread pool or work-stealing; threads are created per refinement call and cleaned up when refinement completes. this may need to be modified to improve performance.
 
 ## design
 - i use the term 'composition' to refer to a computable number which contains multiple base computable numbers. for example, $\sqrt{a + ab}$ is a composition. $a + a$ is also considered a composition even though the constituent computable numbers are identical. (however, $2a$ is not a composition; it has only a single constituent to refine.)
@@ -76,7 +70,7 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$
 - refine $\sqrt{a + ab}$
     - step inside the $\sqrt{}$
         - consider both sides of the addition in parallel
-            - left branch: acquire the refinement lock on $a$ and refine $a$ repeatedly. on each refinement, publish the new prefix for reading elsewhere. let's suppose the successive refinements are $(-0.5, 0.5)$, $(-0.25, 0.25)$, $(0.125, 0.25)$, ...
+            - left branch: acquire the refinement lock on $a$ and refine $a$ repeatedly. on each refinement, publish the new bounds for reading elsewhere. let's suppose the successive refinements are $(-0.5, 0.5)$, $(-0.25, 0.25)$, $(0.125, 0.25)$, ...
             - right branch: consider both sides of the multiplication in parallel
                 - left branch: try to acquire the refinement lock on $a$. since the refinement lock is already acquired, instead subscribe to updates on $a$'s bounds.
                 - right branch: acquire the refinement lock on $b$. let's suppose refining $b$ is quite slow, and no refinements come in for now.
@@ -93,8 +87,7 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$
 - computable numbers are backed by `Binary` numbers, which are represented by $(m, e)$ where $m$ and $e$ are integers; the number represented is $m * 2^e$
 - the integers themselves are represented with `BigInt`
 - we also use "extended" binary numbers (`XBinary`), i.e. the above but also including $-\infty$ and $+\infty$
-- it is also frequently useful to represent only nonnegative binary numbers; for this we have a separate type `UBinary` which is represented in the same way except that $m \geq 0$ (or internally, $m$ is a `BigUint`). similarly, there is a `UXBinary` type.
-- bounds on a computable number are stored as a `Prefix`, which records the inner endpoint (closest to zero) and a width exponent (so the interval width is $2^e$ for some exponent $e$, or $\infty$). intervals that cross zero use a `ZeroCrossing` variant with separate exponents for the negative and positive sides.
+- it is also frequently useful to represent only nonnegative binary numbers; for this we have a separate type `UBinary` which is represented in the same way except that $m \geq 0$ (or internally, $m$ is a `BigUint`). similarly, there is a `UXBinary` type (which is used to represent the width of bounds.)
 
 # norms
 
@@ -107,8 +100,8 @@ let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$
     - a program which finds the (real) square root of a computable number and then does something with the result may refine that number until the lower bound is nonnegative (or the upper bound becomes negative and triggers an error). (it would also be permissible to defer the detection of this error until later, when the result is actually used.)
 - to apply a function $g$ to computable numbers, you must define a function $G$ which computes a bound on $g$'s output based on bounds on its input such that the output bounds converge if the input bounds do.
 Then $g((x, b, f)) = (x, G(b), f)$.
-for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \mapsto (u^2, \ell^2)$ if $\ell,u \leq 0$, $(\ell, u) \mapsto (\ell^2, u^2)$ if $\ell,u \geq 0$, and $(\ell, u) \mapsto (0, \max(\ell^2, u^2))$ if $\ell \leq 0$ and $u \geq 0$.
-`PowOp` implements this specific example; `InvOp`, `SinOp`, and `NthRootOp` demonstrate more complex patterns where the operation itself maintains refinement state.
+for example, if $g(y) = y^2$, its corresponding $G : B \to B$ has $(\ell, u) \mapsto (u^2, \ell^2)$ if $\ell,u \leq 0$, $(\ell, u) \mapsto (\ell^2, u^2)$ if $\ell,u \geq 0$, and $(\ell, u) \mapsto (0, \max(\ell^2, u^2))$ if $\ell \leq 0$ and $u \geq 0$. 
+`Computable::inv` demonstrates this pattern.
 <!-- TODO: add a general helper for applying bounded functions. -->
 
 ## design norms
