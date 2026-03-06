@@ -16,7 +16,7 @@ impl NodeOp for BaseOp {
         BoundsAccess::get_bounds(self.base.as_ref())
     }
 
-    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: i64) -> Result<bool, ComputableError> {
         self.base.refine()?;
         let bounds = BoundsAccess::get_bounds(self.base.as_ref())?;
         if bounds.small() == &bounds.large() {

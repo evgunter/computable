@@ -62,6 +62,13 @@ impl UXBinary {
     }
 
     /// Multiplies two extended unsigned binary numbers.
+    ///
+    /// `0 * Inf = 0` is valid here because UXBinary values represent bounds
+    /// (widths), not instantiated infinite quantities. A zero-width factor
+    /// means the corresponding dimension contributes no uncertainty, regardless
+    /// of the other factor's width. If UXBinary is ever used for values where
+    /// `0 * Inf` should be indeterminate (cf. `detected_computable_with_infinite_value!`),
+    /// this convention would need to change.
     pub fn mul(&self, other: &Self) -> Self {
         use UXBinary::{Finite, Inf};
         // 0 * anything = 0 (including 0 * infinity)

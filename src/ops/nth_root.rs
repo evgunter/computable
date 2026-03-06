@@ -102,7 +102,7 @@ impl NodeOp for NthRootOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
         // Ensure bisection state is initialized (compute_bounds is always called
         // before refine_step by the coordinator, but be defensive).
         {
@@ -125,7 +125,9 @@ impl NodeOp for NthRootOp {
             return Ok(false);
         }
 
-        // Perform one bisection step
+        // One bisection step per dispatch. Each step halves the interval
+        // (1 bit improvement), which always produces a visible Prefix change.
+        // The coordinator handles iteration count and re-dispatches.
         let degree = self.degree.get();
         let target = &s.target;
         let result =

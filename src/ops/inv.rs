@@ -177,7 +177,7 @@ impl NodeOp for InvOp {
         }
     }
 
-    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.division_state.write();
 
@@ -215,6 +215,13 @@ impl NodeOp for InvOp {
                 *state = None;
                 return Ok(true);
             }
+        };
+
+        // Convert target_width_exp to precision_bits (positive usize).
+        // target_width_exp is typically negative (e.g. -64 means width ≤ 2^(-64)).
+        let precision_bits = match usize::try_from(target_width_exp.unsigned_abs()) {
+            Ok(v) => v,
+            Err(_) => usize::MAX,
         };
 
         // The output width is 2^(-Q - shift - exponent). To achieve width ≤ 2^(-precision_bits),

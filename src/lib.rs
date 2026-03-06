@@ -70,8 +70,12 @@ mod ordered_pair;
 // New internal modules
 mod computable;
 mod error;
+#[allow(dead_code)]
+mod finite_interval;
 mod node;
 mod ops;
+#[allow(dead_code)]
+mod prefix;
 mod refinement;
 mod sane;
 

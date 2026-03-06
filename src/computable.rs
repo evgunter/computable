@@ -15,7 +15,7 @@ use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
-use crate::refinement::{RefinementGraph, XUsize, bounds_width_leq};
+use crate::refinement::{RefinementGraph, XUsize, prefix_width_leq};
 
 use parking_lot::RwLock;
 
@@ -84,9 +84,9 @@ impl Computable {
         tolerance_exp: XUsize,
     ) -> Result<Bounds, ComputableError> {
         loop {
-            let bounds = self.node.get_bounds()?;
-            if bounds_width_leq(&bounds, &tolerance_exp) {
-                return Ok(bounds);
+            let prefix = self.node.get_prefix()?;
+            if prefix_width_leq(&prefix, &tolerance_exp) {
+                return Ok(prefix.to_bounds());
             }
 
             let mut state_guard = self.node.refinement.state.lock();
