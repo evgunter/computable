@@ -9,7 +9,7 @@ use rand::{Rng, SeedableRng};
 
 use common::{balanced_sum, bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
-use computable::Bounds;
+use computable::Prefix;
 use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 200_000_usize;
@@ -18,7 +18,7 @@ const SAMPLE_COUNT: usize = 200_000_usize;
 // exactness, so refinement is a no-op regardless of the requested tolerance.
 bench_group! {
     name: summation,
-    fn bench_summation() -> Bounds {
+    fn bench_summation() -> Prefix {
         let mut rng = StdRng::seed_from_u64(7);
         let base = f64::from(2_i32.pow(30));
         let mut terms = Vec::with_capacity(SAMPLE_COUNT + 1_usize);

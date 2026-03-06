@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 
-use crate::binary::{Bounds, UXBinary};
+use crate::binary::UXBinary;
 use crate::error::ComputableError;
 use crate::prefix::Prefix;
 
@@ -27,88 +27,87 @@ pub trait BaseNode: Send + Sync {
     fn refine(&self) -> Result<(), ComputableError>;
 }
 
-/// Cached base state plus bounds derived from that state.
+/// Cached base state plus prefix derived from that state.
 #[derive(Clone)]
 struct BaseSnapshot<X> {
     state: X,
-    bounds: Option<Bounds>,
+    prefix: Option<Prefix>,
 }
 
 /// Concrete base node that owns the user-provided state and refinement logic.
 pub struct TypedBaseNode<X, B, F>
 where
     X: Eq + Clone + Send + Sync + 'static,
-    B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+    B: Fn(&X) -> Result<Prefix, ComputableError> + Send + Sync + 'static,
     F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
 {
-    /// Snapshot ties a particular state with its computed bounds to avoid recomputation.
+    /// Snapshot ties a particular state with its computed prefix to avoid recomputation.
     snapshot: RwLock<BaseSnapshot<X>>,
-    bounds: B,
+    bounds_fn: B,
     refine: F,
 }
 
 impl<X, B, F> TypedBaseNode<X, B, F>
 where
     X: Eq + Clone + Send + Sync + 'static,
-    B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+    B: Fn(&X) -> Result<Prefix, ComputableError> + Send + Sync + 'static,
     F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
 {
-    pub fn new(state: X, bounds: B, refine: F) -> Self {
+    pub fn new(state: X, bounds_fn: B, refine: F) -> Self {
         Self {
             snapshot: RwLock::new(BaseSnapshot {
                 state,
-                bounds: None,
+                prefix: None,
             }),
-            bounds,
+            bounds_fn,
             refine,
         }
     }
 
-    fn snapshot_bounds(&self, snapshot: &mut BaseSnapshot<X>) -> Result<Bounds, ComputableError> {
-        if let Some(bounds) = &snapshot.bounds {
-            return Ok(bounds.clone());
+    fn snapshot_prefix(&self, snapshot: &mut BaseSnapshot<X>) -> Result<Prefix, ComputableError> {
+        if let Some(prefix) = &snapshot.prefix {
+            return Ok(prefix.clone());
         }
-        let bounds = (self.bounds)(&snapshot.state)?;
-        snapshot.bounds = Some(bounds.clone());
-        Ok(bounds)
+        let prefix = (self.bounds_fn)(&snapshot.state)?;
+        snapshot.prefix = Some(prefix.clone());
+        Ok(prefix)
     }
 }
 
 impl<X, B, F> BaseNode for TypedBaseNode<X, B, F>
 where
     X: Eq + Clone + Send + Sync + 'static,
-    B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+    B: Fn(&X) -> Result<Prefix, ComputableError> + Send + Sync + 'static,
     F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
 {
-    /// Returns cached bounds for the current base state, computing and caching if needed.
+    /// Returns cached prefix for the current base state, computing and caching if needed.
     fn get_bounds(&self) -> Result<Prefix, ComputableError> {
         let mut snapshot = self.snapshot.write();
-        let bounds = self.snapshot_bounds(&mut snapshot)?;
-        Ok(Prefix::from(&bounds))
+        self.snapshot_prefix(&mut snapshot)
     }
 
-    /// Refines the base state and computes the new bounds for that refined state.
+    /// Refines the base state and computes the new prefix for that refined state.
     fn refine(&self) -> Result<(), ComputableError> {
         let mut snapshot = self.snapshot.write();
-        let previous_bounds = self.snapshot_bounds(&mut snapshot)?;
+        let previous_prefix = self.snapshot_prefix(&mut snapshot)?;
         let previous_state = snapshot.state.clone();
         let next_state = (self.refine)(previous_state.clone())?;
         if next_state == previous_state {
-            if previous_bounds.small() == &previous_bounds.large() {
+            if previous_prefix.lower() == previous_prefix.upper() {
                 return Ok(());
             }
             return Err(ComputableError::StateUnchanged);
         }
 
-        let next_bounds = (self.bounds)(&next_state)?;
-        let lower_worsened = next_bounds.small() < previous_bounds.small();
-        let upper_worsened = next_bounds.large() > previous_bounds.large();
+        let next_prefix = (self.bounds_fn)(&next_state)?;
+        let lower_worsened = next_prefix.lower() < previous_prefix.lower();
+        let upper_worsened = next_prefix.upper() > previous_prefix.upper();
         if lower_worsened || upper_worsened {
             return Err(ComputableError::BoundsWorsened);
         }
 
         snapshot.state = next_state;
-        snapshot.bounds = Some(next_bounds);
+        snapshot.prefix = Some(next_prefix);
 
         Ok(())
     }

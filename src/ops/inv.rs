@@ -394,10 +394,9 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::Bounds;
     use crate::prefix::Prefix;
     use crate::refinement::{XUsize, prefix_width_leq};
-    use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
+    use crate::test_utils::{bin, interval_midpoint_computable, to_bounds, unwrap_finite};
 
     #[test]
     fn inv_allows_infinite_bounds() {
@@ -417,7 +416,7 @@ mod tests {
         let prefix = inv
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
-        let bounds = Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
 
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());

@@ -724,7 +724,7 @@ pub fn prefix_width_leq(prefix: &Prefix, tolerance_exp: &XUsize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::{Bounds, XBinary};
+    use crate::binary::XBinary;
     use crate::computable::Computable;
     use crate::error::ComputableError;
     use crate::test_utils::{
@@ -736,16 +736,14 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    type IntervalState = Bounds;
-
-    fn interval_bounds(state: &IntervalState) -> Bounds {
+    fn interval_bounds(state: &Prefix) -> Prefix {
         state.clone()
     }
 
-    fn interval_refine_strict(state: IntervalState) -> Result<IntervalState, ComputableError> {
-        let midpoint = midpoint_between(state.small(), &state.large());
-        Ok(Bounds::new(
-            state.small().clone(),
+    fn interval_refine_strict(state: Prefix) -> Result<Prefix, ComputableError> {
+        let midpoint = midpoint_between(&state.lower(), &state.upper());
+        Ok(Prefix::from_lower_upper(
+            state.lower(),
             XBinary::Finite(midpoint),
         ))
     }
@@ -756,8 +754,7 @@ mod tests {
     }
 
     fn assert_width_nonnegative(prefix: &Prefix) {
-        let bounds = Bounds::from(prefix);
-        assert!(*bounds.width() >= UXBinary::zero());
+        assert!(prefix.width() >= UXBinary::zero());
     }
 
     // --- tests for different results of refinement (mostly errors) ---
@@ -826,13 +823,13 @@ mod tests {
         let bounds = to_bounds(&prefix);
         let expected = xbin(1, 0);
         let upper = bounds.large();
-        assert!(bounds.small() <= &expected && &expected <= &upper);
+        assert!(bounds.small() <= &expected && expected <= upper);
         assert!(prefix_width_leq(&prefix, &tolerance_exp));
 
         let refined_prefix = computable.bounds().expect("bounds should succeed");
         let refined_bounds = to_bounds(&refined_prefix);
         let refined_upper = refined_bounds.large();
-        assert!(refined_bounds.small() <= &expected && &expected <= &refined_upper);
+        assert!(refined_bounds.small() <= &expected && expected <= refined_upper);
     }
 
     #[test]
@@ -847,7 +844,7 @@ mod tests {
     fn refine_to_enforces_max_iterations() {
         let computable = Computable::new(
             0usize,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         );
         let tolerance_exp = XUsize::Finite(1);
@@ -861,7 +858,7 @@ mod tests {
     // Test the "normal case" where the bounds shrink but never meet.
     #[test]
     fn refine_to_handles_non_meeting_bounds() {
-        let interval_state = Bounds::new(xbin(0, 0), xbin(4, 0));
+        let interval_state = Prefix::from_lower_upper(xbin(0, 0), xbin(4, 0));
         let computable = Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
@@ -880,15 +877,15 @@ mod tests {
 
     #[test]
     fn refine_to_rejects_worsened_bounds() {
-        let interval_state = Bounds::new(xbin(0, 0), xbin(1, 0));
+        let interval_state = Prefix::from_lower_upper(xbin(0, 0), xbin(1, 0));
         let computable = Computable::new(
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
-            |inner_state: IntervalState| {
-                let upper = inner_state.large();
+            |inner_state: Prefix| {
+                let upper = inner_state.upper();
                 let worse_upper = unwrap_finite(&upper).add(&bin(1, 0));
-                Ok(Bounds::new(
-                    inner_state.small().clone(),
+                Ok(Prefix::from_lower_upper(
+                    inner_state.lower(),
                     XBinary::Finite(worse_upper),
                 ))
             },
@@ -918,7 +915,7 @@ mod tests {
     fn refine_to_propagates_refiner_error() {
         let computable = Computable::new(
             0usize,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |_| Err(ComputableError::DomainError),
         );
         let tolerance_exp = XUsize::Finite(4);
@@ -930,12 +927,12 @@ mod tests {
     fn refine_to_max_iterations_multiple_refiners() {
         let left = Computable::new(
             0usize,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         );
         let right = Computable::new(
             0usize,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         );
         let expr = left + right;
@@ -951,9 +948,9 @@ mod tests {
     fn refine_to_error_path_stops_refiners() {
         let stable = interval_midpoint_computable(0, 2);
         let faulty = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(1, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(1, 0)),
             |state| Ok(state.clone()),
-            |state| Ok(Bounds::new(state.small().clone(), xbin(2, 0))),
+            |state: Prefix| Ok(Prefix::from_lower_upper(state.lower(), xbin(2, 0))),
         );
         let expr = stable + faulty;
         let tolerance_exp = XUsize::Finite(4);
@@ -965,7 +962,7 @@ mod tests {
     fn concurrent_bounds_reads_during_failed_refinement() {
         let computable = Arc::new(Computable::new(
             0usize,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         ));
         let tolerance_exp = XUsize::Finite(6);
@@ -995,7 +992,7 @@ mod tests {
         let slow_refiner = |concurrent: Arc<AtomicUsize>, max_conc: Arc<AtomicUsize>| {
             Computable::new(
                 0usize,
-                |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+                |_| Ok(Prefix::unbounded()),
                 move |state| {
                     let prev = concurrent.fetch_add(1, Ordering::SeqCst);
                     max_conc.fetch_max(prev + 1, Ordering::SeqCst);
@@ -1077,9 +1074,9 @@ mod tests {
         let shared_active = Arc::clone(&active_refines);
         let shared_overlap = Arc::clone(&saw_overlap);
         let computable = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(4, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(4, 0)),
             |state| Ok(state.clone()),
-            move |state: IntervalState| {
+            move |state: Prefix| {
                 let prior = shared_active.fetch_add(1, Ordering::SeqCst);
                 if prior > 0 {
                     shared_overlap.store(true, Ordering::SeqCst);
@@ -1167,7 +1164,7 @@ mod tests {
         // upper bound each step (width halves each round). No sleeps, so
         // convergence is fast but gradual — takes ~12 steps to reach width < 0.25.
         let x = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(1024, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(1024, 0)),
             |state| Ok(state.clone()),
             interval_refine_strict,
         );
@@ -1176,9 +1173,9 @@ mod tests {
         // propagated budget of ε/2 = 0.25, but above the old flat budget
         // of ε/4 = 0.125. Each step sleeps 1s — if stepped, the test is slow.
         let y = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(3, -4)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(3, -4)),
             |state| Ok(state.clone()),
-            move |state: Bounds| {
+            move |state: Prefix| {
                 thread::sleep(Duration::from_millis(SLOW_STEP_MS));
                 interval_refine(state)
             },
@@ -1225,7 +1222,7 @@ mod tests {
         // x: fast refiner with wide initial bounds. Halves each step with no
         // sleep, so all ~20 needed steps complete in microseconds.
         let x = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(1024, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(1024, 0)),
             |state| Ok(state.clone()),
             interval_refine_strict,
         );
@@ -1233,9 +1230,9 @@ mod tests {
         // y: slow refiner with narrower initial bounds. Halves each step but
         // sleeps 200ms per step, so each step is expensive.
         let y = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(4, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(4, 0)),
             |state| Ok(state.clone()),
-            move |state: Bounds| {
+            move |state: Prefix| {
                 thread::sleep(Duration::from_millis(SLOW_STEP_MS));
                 interval_refine_strict(state)
             },

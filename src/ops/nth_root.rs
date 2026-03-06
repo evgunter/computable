@@ -288,11 +288,11 @@ fn initialize_nth_root_bisection_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::Bounds;
     use crate::computable::Computable;
     use crate::refinement::XUsize;
     use crate::test_utils::{
-        assert_bounds_compatible_with_expected, bin, interval_noop_computable, unwrap_finite,
+        assert_bounds_compatible_with_expected, bin, interval_noop_computable, to_bounds,
+        unwrap_finite,
     };
 
     /// Helper to create NonZeroU32 from a literal in tests.
@@ -395,7 +395,7 @@ mod tests {
         let zero = Computable::constant(bin(0, 0));
         let sqrt_zero = zero.nth_root(nz(2));
         let prefix = sqrt_zero.bounds().expect("bounds should succeed");
-        let bounds = Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
         let expected = bin(0, 0);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
@@ -407,7 +407,7 @@ mod tests {
         let interval = interval_noop_computable(-1, 4);
         let sqrt_interval = interval.nth_root(nz(2));
         let prefix = sqrt_interval.bounds().expect("bounds should succeed");
-        let bounds = Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
         assert!(lower <= bin(1, 0), "lower {} should be <= 1", lower);
@@ -419,7 +419,7 @@ mod tests {
         let interval = interval_noop_computable(-8, 27);
         let cbrt_interval = interval.nth_root(nz(3));
         let prefix = cbrt_interval.bounds().expect("bounds should succeed");
-        let bounds = Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
         assert!(lower <= bin(2, 0), "lower {} should be <= 2", lower);

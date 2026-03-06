@@ -17,7 +17,7 @@ mod common;
 use std::num::NonZeroU32;
 use std::time::Instant;
 
-use computable::{Binary, Bounds, Computable, Prefix, XBinary, XUsize, pi, pi_bounds_at_precision};
+use computable::{Binary, Computable, Prefix, XBinary, XUsize, pi, pi_bounds_at_precision};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use rand::rngs::StdRng;
@@ -31,8 +31,7 @@ use common::balanced_sum;
 
 /// Returns the lower and upper finite bounds plus midpoint, if both are finite.
 fn try_finite_bounds(prefix: &Prefix) -> Option<FiniteBoundsView> {
-    let bounds = Bounds::from(prefix);
-    match (bounds.small(), bounds.large()) {
+    match (prefix.lower(), prefix.upper()) {
         (XBinary::Finite(lower), XBinary::Finite(upper)) => {
             let sum = lower.add(&upper);
             let midpoint =
@@ -492,13 +491,12 @@ fn pi_analysis() {
             .expect("sin(n*pi) should succeed");
         let duration = start.elapsed();
 
-        let bounds_iv = Bounds::from(&bounds);
-        let lower = finite_binary(bounds_iv.small());
-        let upper = finite_binary(&bounds_iv.large());
+        let lower = finite_binary(&bounds.lower());
+        let upper = finite_binary(&bounds.upper());
         let contains_zero = lower.mantissa().is_negative() || lower.mantissa().is_zero();
         println!(
             "  sin({multiplier:>3}*pi): {duration:>10?}  bounds: [{lower}, {upper}]  width: {}  contains 0: {contains_zero}",
-            bounds_iv.width()
+            bounds.width()
         );
     }
 
@@ -514,11 +512,10 @@ fn pi_analysis() {
             .refine_to_default(epsilon)
             .expect("high precision pi should succeed");
         let duration = start.elapsed();
-        let bounds_iv = Bounds::from(&bounds);
         println!(
             "  {bits:>5} bits (~{} digits): {duration:>10?}  width: {}",
             (bits as f64 * 0.301).round() as u64,
-            bounds_iv.width()
+            bounds.width()
         );
     }
 }

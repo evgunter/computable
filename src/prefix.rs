@@ -12,7 +12,7 @@
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
-use crate::binary::{Binary, Bounds, UBinary, UXBinary, XBinary};
+use crate::binary::{Binary, UBinary, UXBinary, XBinary};
 use crate::binary_utils::bisection::PrefixBounds;
 
 /// Exponent extended with ±infinity, used for width/magnitude bounds.
@@ -315,19 +315,6 @@ fn xexponent_to_uxbinary(exp: &XExponent) -> UXBinary {
 // Conversions
 // =========================================================================
 
-impl From<&Bounds> for Prefix {
-    /// Converts arbitrary `Bounds` to `Prefix` form.
-    fn from(bounds: &Bounds) -> Self {
-        Self::from_lower_upper(bounds.small().clone(), bounds.large())
-    }
-}
-
-impl From<Bounds> for Prefix {
-    fn from(bounds: Bounds) -> Self {
-        Self::from(&bounds)
-    }
-}
-
 /// Converts finite lower/upper bounds to a Prefix.
 fn finite_bounds_to_prefix(lower: &Binary, upper: &Binary) -> Prefix {
     let lower_negative = lower.mantissa().is_negative();
@@ -476,36 +463,6 @@ fn width_to_xexponent(width: &Binary) -> XExponent {
             crate::detected_computable_would_exhaust_memory!("exponent overflow")
         });
         XExponent::Finite(result)
-    }
-}
-
-impl From<&Prefix> for Bounds {
-    /// Converts a `Prefix` back to `Bounds`.
-    fn from(prefix: &Prefix) -> Self {
-        let lower = prefix.lower();
-        let upper = prefix.upper();
-        // Compute width from lower and upper
-        match (&lower, &upper) {
-            (XBinary::NegInf, _) | (_, XBinary::PosInf) => {
-                Bounds::from_lower_and_width(lower, UXBinary::Inf)
-            }
-            (XBinary::PosInf, _) | (_, XBinary::NegInf) => {
-                // Shouldn't happen for well-formed Prefix
-                Bounds::from_lower_and_width(lower, UXBinary::Inf)
-            }
-            (XBinary::Finite(lo), XBinary::Finite(hi)) => {
-                let width_binary = hi.sub(lo);
-                let width =
-                    UBinary::try_from_binary(&width_binary).unwrap_or_else(|_| UBinary::zero());
-                Bounds::from_lower_and_width(lower, UXBinary::Finite(width))
-            }
-        }
-    }
-}
-
-impl From<Prefix> for Bounds {
-    fn from(prefix: Prefix) -> Self {
-        Bounds::from(&prefix)
     }
 }
 
@@ -687,24 +644,21 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn from_bounds_unbounded() {
-        let bounds = Bounds::new(XBinary::NegInf, XBinary::PosInf);
-        let p = Prefix::from(&bounds);
+    fn from_lower_upper_unbounded() {
+        let p = Prefix::from_lower_upper(XBinary::NegInf, XBinary::PosInf);
         assert_eq!(p, Prefix::unbounded());
     }
 
     #[test]
-    fn from_bounds_exact() {
-        let bounds = Bounds::new(xbin(3, 0), xbin(3, 0));
-        let p = Prefix::from(&bounds);
+    fn from_lower_upper_exact() {
+        let p = Prefix::from_lower_upper(xbin(3, 0), xbin(3, 0));
         assert_eq!(p, Prefix::exact(bin(3, 0)));
     }
 
     #[test]
-    fn from_bounds_positive_interval() {
+    fn from_lower_upper_positive_interval() {
         // [2, 4] → width = 2 = 2^1
-        let bounds = Bounds::new(xbin(2, 0), xbin(4, 0));
-        let p = Prefix::from(&bounds);
+        let p = Prefix::from_lower_upper(xbin(2, 0), xbin(4, 0));
         match &p {
             Prefix::Finite {
                 inner,
@@ -717,16 +671,15 @@ mod tests {
             }
             _ => panic!("expected Finite, got {:?}", p),
         }
-        // Round-trip: should contain original bounds
+        // Should contain original endpoints
         assert!(p.contains(&xbin(2, 0)));
         assert!(p.contains(&xbin(4, 0)));
     }
 
     #[test]
-    fn from_bounds_negative_interval() {
+    fn from_lower_upper_negative_interval() {
         // [-4, -2] → inner = -2 (closest to zero), width = 2 = 2^1
-        let bounds = Bounds::new(xbin(-4, 0), xbin(-2, 0));
-        let p = Prefix::from(&bounds);
+        let p = Prefix::from_lower_upper(xbin(-4, 0), xbin(-2, 0));
         match &p {
             Prefix::Finite {
                 inner,
@@ -742,10 +695,9 @@ mod tests {
     }
 
     #[test]
-    fn from_bounds_zero_crossing() {
+    fn from_lower_upper_zero_crossing() {
         // [-2, 3]
-        let bounds = Bounds::new(xbin(-2, 0), xbin(3, 0));
-        let p = Prefix::from(&bounds);
+        let p = Prefix::from_lower_upper(xbin(-2, 0), xbin(3, 0));
         match &p {
             Prefix::ZeroCrossing {
                 neg_exponent,
@@ -763,10 +715,9 @@ mod tests {
     }
 
     #[test]
-    fn from_bounds_half_infinite_positive() {
+    fn from_lower_upper_half_infinite_positive() {
         // [3, +inf)
-        let bounds = Bounds::from_lower_and_width(xbin(3, 0), UXBinary::Inf);
-        let p = Prefix::from(&bounds);
+        let p = Prefix::from_lower_upper(xbin(3, 0), XBinary::PosInf);
         match &p {
             Prefix::Finite {
                 inner,
@@ -781,10 +732,7 @@ mod tests {
 
     #[test]
     fn from_bounds_half_infinite_negative() {
-        // (-inf, -3] cannot be represented in Bounds because
-        // Bounds stores lower + width, and NegInf + Inf = PosInf.
-        // So Bounds::new(NegInf, -3) → lower=NegInf, large()=PosInf.
-        // Test via direct Prefix construction instead.
+        // (-inf, -3] — test via direct Prefix construction.
         let p = Prefix::Finite {
             inner: bin(-3, 0),
             width_exponent: XExponent::PosInf,
@@ -794,32 +742,26 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_bounds_finite() {
-        let original = Bounds::new(xbin(5, 0), xbin(8, 0));
-        let prefix = Prefix::from(&original);
-        let back = Bounds::from(&prefix);
-        // The round-trip may widen (ZeroCrossing loses mantissa info)
-        // but for single-sign Finite the result should contain the original
-        assert!(back.small() <= original.small());
-        assert!(back.large() >= original.large());
+    fn lower_upper_roundtrip_finite() {
+        let prefix = Prefix::from_lower_upper(xbin(5, 0), xbin(8, 0));
+        // Prefix may widen (width rounded up to power of 2)
+        // but should contain the original endpoints
+        assert!(prefix.lower() <= xbin(5, 0));
+        assert!(prefix.upper() >= xbin(8, 0));
     }
 
     #[test]
-    fn roundtrip_bounds_exact() {
-        let original = Bounds::new(xbin(42, 0), xbin(42, 0));
-        let prefix = Prefix::from(&original);
-        let back = Bounds::from(&prefix);
-        assert_eq!(back.small(), original.small());
-        assert_eq!(back.large(), original.large());
+    fn lower_upper_roundtrip_exact() {
+        let prefix = Prefix::from_lower_upper(xbin(42, 0), xbin(42, 0));
+        assert_eq!(prefix.lower(), xbin(42, 0));
+        assert_eq!(prefix.upper(), xbin(42, 0));
     }
 
     #[test]
-    fn roundtrip_bounds_unbounded() {
-        let original = Bounds::new(XBinary::NegInf, XBinary::PosInf);
-        let prefix = Prefix::from(&original);
-        let back = Bounds::from(&prefix);
-        assert_eq!(back.small(), original.small());
-        assert_eq!(back.large(), original.large());
+    fn lower_upper_roundtrip_unbounded() {
+        let prefix = Prefix::from_lower_upper(XBinary::NegInf, XBinary::PosInf);
+        assert_eq!(prefix.lower(), XBinary::NegInf);
+        assert_eq!(prefix.upper(), XBinary::PosInf);
     }
 
     #[test]
@@ -920,11 +862,10 @@ mod tests {
     }
 
     #[test]
-    fn from_bounds_non_power_of_two_width() {
+    fn from_lower_upper_non_power_of_two_width() {
         // [1, 4] → width = 3, which is not a power of 2
         // width_to_xexponent should round up: ceil(log2(3)) = 2
-        let bounds = Bounds::new(xbin(1, 0), xbin(4, 0));
-        let p = Prefix::from(&bounds);
+        let p = Prefix::from_lower_upper(xbin(1, 0), xbin(4, 0));
         match &p {
             Prefix::Finite {
                 inner,
@@ -941,10 +882,9 @@ mod tests {
     }
 
     #[test]
-    fn from_bounds_fractional() {
+    fn from_lower_upper_fractional() {
         // [0.5, 1.5] → width = 1 = 2^0
-        let bounds = Bounds::new(xbin(1, -1), xbin(3, -1));
-        let p = Prefix::from(&bounds);
+        let p = Prefix::from_lower_upper(xbin(1, -1), xbin(3, -1));
         match &p {
             Prefix::Finite {
                 inner,

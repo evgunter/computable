@@ -851,7 +851,6 @@ pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary::Bounds;
     use crate::computable::Computable;
     use crate::refinement::{XUsize, prefix_width_leq};
     use crate::test_utils::{
@@ -964,7 +963,7 @@ mod tests {
     fn sin_with_infinite_input_bounds() {
         let unbounded = Computable::new(
             0usize,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         );
         let sin_unbounded = unbounded.sin();

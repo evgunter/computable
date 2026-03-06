@@ -82,7 +82,6 @@ mod sane;
 pub mod test_utils;
 
 // Re-export public API
-pub use binary::Bounds;
 pub use binary::{Binary, BinaryError, UBinary, UXBinary, XBinary, XBinaryError};
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
 pub use error::ComputableError;

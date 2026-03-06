@@ -160,12 +160,11 @@ fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) ->
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::Bounds;
     use crate::computable::Computable;
     use crate::refinement::XUsize;
     use crate::test_utils::{
         assert_bounds_contain, assert_bounds_compatible_with_expected, assert_exact, bin,
-        interval_noop_computable, xbin,
+        interval_noop_computable, to_bounds, xbin,
     };
 
     #[test]
@@ -314,7 +313,7 @@ mod tests {
         let zero = Computable::constant(bin(0, 0));
         let squared = zero.pow(2);
         let prefix = squared.bounds().expect("bounds should succeed");
-        let bounds = Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
 
         assert!(bounds.small().is_zero());
         assert!(bounds.large().is_zero());

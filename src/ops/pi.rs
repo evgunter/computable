@@ -331,7 +331,7 @@ pub(crate) fn two_pi_interval_at_precision(precision_bits: usize) -> crate::fini
 mod tests {
     use super::*;
     use crate::refinement::XUsize;
-    use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
+    use crate::test_utils::{bin, epsilon_as_binary, to_bounds, unwrap_finite};
 
     /// Returns the f64 approximation of pi as a Binary.
     ///
@@ -396,7 +396,7 @@ mod tests {
             .refine_to_default(tolerance_exp)
             .expect("refine should succeed");
 
-        let bounds = crate::binary::Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
         let pi_f64 = pi_f64_binary();
@@ -461,7 +461,7 @@ mod tests {
             .refine_to_default(tolerance_exp)
             .expect("refine to 2^-128 should succeed");
 
-        let bounds = crate::binary::Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 

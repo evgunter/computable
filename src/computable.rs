@@ -10,7 +10,6 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use num_traits::One;
 
-use crate::binary::Bounds;
 use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
@@ -46,7 +45,7 @@ impl Computable {
     pub fn new<X, B, F>(state: X, bounds: B, refine: F) -> Self
     where
         X: Eq + Clone + Send + Sync + 'static,
-        B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+        B: Fn(&X) -> Result<Prefix, ComputableError> + Send + Sync + 'static,
         F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
     {
         let base_node_struct = TypedBaseNode::new(state, bounds, refine);
@@ -224,11 +223,8 @@ impl Computable {
 
     /// Creates a constant computable with exact bounds.
     pub fn constant(value: Binary) -> Self {
-        fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
-            Ok(Bounds::new(
-                XBinary::Finite(value.clone()),
-                XBinary::Finite(value.clone()),
-            ))
+        fn bounds(value: &Binary) -> Result<Prefix, ComputableError> {
+            Ok(Prefix::exact(value.clone()))
         }
 
         fn refine(value: Binary) -> Result<Binary, ComputableError> {
@@ -301,7 +297,7 @@ impl std::ops::Div for Computable {
 mod tests {
     use super::*;
     use crate::refinement::XUsize;
-    use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
+    use crate::test_utils::{bin, epsilon_as_binary, to_bounds, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
         Computable::constant(bin(i64::try_from(value_int).expect("value fits in i64"), 0))
@@ -328,7 +324,7 @@ mod tests {
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
-        let bounds = Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
         let upper = unwrap_finite(&upper_xb);
@@ -355,7 +351,7 @@ mod tests {
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
-        let bounds = Bounds::from(&prefix);
+        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
         let upper = unwrap_finite(&upper_xb);
