@@ -299,3 +299,140 @@ precision where computation dominates, sin shows -7 to -22% improvement.
 Benchmarks with few refiners and low precision show small regression from
 the event-loop's per-iteration overhead. This is the fixed cost of the
 architecture, offset by parallelism benefits invisible to valgrind.
+
+---
+
+## Experiment 12: Prefix-Native Refinement Infrastructure (PR #68)
+
+### Background
+
+PR #63 attempted to switch the node cache from `Bounds` (arbitrary-precision
+width) to `Prefix` (power-of-2 width). It was reverted (commit 73ec202)
+because benchmarks hung — the bench CI job ran >4 hours before being cancelled
+(normal runtime ~38 min).
+
+**Root cause of the hang:** Refiners produced arbitrary-precision bound
+improvements, but `Prefix::from_lower_upper` rounds width to the next power
+of 2. Small improvements became invisible in Prefix representation →
+propagation saw no change → coordinator re-dispatched indefinitely.
+
+### Approach: Target-Aware Refiners
+
+Instead of having refiners produce arbitrary precision and hoping Prefix
+captures it, make each `refine_step` receive a target width exponent:
+
+```rust
+fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError>;
+```
+
+Contract: after returning `Ok(true)`, `compute_prefix()` must return a Prefix
+with `width_exponent < current` (at least 1 bit improvement).
+
+### Implementation (Stages 0-3)
+
+**Stage 0:** Reintroduced `Prefix` and `FiniteInterval` types (additive, no
+behavior change).
+
+**Stage 1:** Switched node cache to Prefix. Added `NodeOp::compute_prefix()`
+with default implementation that converts `compute_bounds()` result. This
+preserves exact Bounds-based arithmetic while using Prefix for the refinement
+dispatch system.
+
+**Stage 2:** Made `refine_step` target-aware (signature change from
+`precision_bits: usize` to `target_width_exp: i64`).
+
+**Stage 3:** Updated refinement infrastructure — `prefix_width_leq` for
+tolerance checking, exponent-based demand budgets, Prefix-based propagation.
+
+### Dual Cache Architecture
+
+A critical design decision: Node stores both `prefix_cache` (for refinement
+power-of-2 dispatch) and `bounds_cache` (for exact arithmetic). Without this,
+Prefix rounding widened exact bounds through round-trip conversion. For example,
+exact bounds `[2,5]` (width 3) became `[2,6]` (width 4, next power of 2) when
+going through Prefix. See Experiment 13 for analysis of why this matters.
+
+- `get_prefix()` → used by refinement system for dispatch decisions
+- `get_bounds()` → used by arithmetic ops for exact interval arithmetic
+- `set_prefix()` invalidates `bounds_cache` (children may have changed)
+- `set_bounds()` sets both caches (derives prefix from bounds)
+
+### 1-Step-Per-Dispatch Principle
+
+The original implementation of target-aware refiners tried to loop internally
+until the target was met. This caused hangs:
+
+- **InvOp (Newton):** 10 Newton steps per dispatch. With `target_width_exp =
+  i64::MIN` (unreachable for irrationals), quadratic convergence doubled
+  mantissa size each step: 64 bits → 65K bits → 67M bits on next dispatch.
+- **NthRootOp (bisection):** 256 bisection steps per dispatch. Each step adds
+  1 bit of precision; 256 steps → huge Ir under valgrind.
+
+**Fix:** Limit all refiners to exactly 1 internal step per dispatch. The
+coordinator handles iteration count and re-dispatches as needed.
+
+### CI Benchmark Results (vs main baseline)
+
+| Benchmark | Ir Δ | Notes |
+|-----------|------|-------|
+| bench_pi_refinement (p4) | **-85%** | |
+| bench_sin_2pi (p4) | **-98%** | 329M → 7.2M Ir |
+| bench_sin (p0-p4) | **-42% to -68%** | |
+| bench_integer_roots (p0-p4) | **-38% to -48%** | |
+| bench_inv (p0-p4) | **-25% to -44%** | Previously +137% |
+| bench_sqrt2_plus_cbrt3 (p0-p4) | **-27% to -38%** | |
+| bench_complex | **-22%** | |
+| bench_summation | **-26%** | |
+| bench_sin_10pi (p3) | +35% | Scheduling-sensitive |
+| bench_sin_100pi (p4) | +1940% | Known SinOp/PiOp interaction |
+
+### Stages Remaining
+
+- Stage 4: Update public API, remove Bounds from public interface
+- Stage 5: Rename pass ("bounds" → "prefix" in identifiers)
+- Stage 6: Update documentation (README.md, src/README.md)
+
+---
+
+## Experiment 13: Remove dual cache (single Prefix cache)
+
+**Branch:** `experiment/remove-bounds-cache` (commit `c8c9fd8`)
+
+**Hypothesis:** The dual cache (prefix_cache + bounds_cache) might be
+overengineered. Prefix rounding widens bounds by at most 1 bit per tree level,
+so for typical depth 3-5 trees that's only 3-5 extra refinement iterations.
+
+**Change:** Removed `bounds_cache` from `Node`. `get_bounds()` now returns
+`get_prefix()?.to_bounds()`. Updated 10 tests to assert containment rather
+than exact equality.
+
+### Wall-clock results (criterion, macOS)
+
+| Benchmark | With dual cache | Without | Change |
+|-----------|----------------|---------|--------|
+| pi_refinement/256 | 354 µs | 204 µs | **-42%** |
+| two_pi/256 | 369 µs | 207 µs | **-44%** |
+| pi_squared/256 | 679 µs | 445 µs | **-35%** |
+| integer_roots/64 | 2.06 s | 1.38 s | **-33%** |
+| inv/1 | 3.29 ms | 2.34 ms | **-29%** |
+| inv/64 | 4.09 ms | 4.97 ms | **+21%** |
+| inv/256 | 3.92 ms | 7.61 ms | **+94%** |
+| sin_1pi/256 | 14.5 ms | 20.3 ms | **+40%** |
+| sin_10pi/256 | 14.4 ms | 24.7 ms | **+71%** |
+
+### Analysis
+
+The regressions are NOT caused by caching overhead — they're caused by
+**precision loss degrading convergence rates**. When InvOp reads its child's
+bounds via `get_bounds()`, Prefix rounding gives wider-than-exact bounds.
+Wider input bounds → less precise Newton-Raphson seeds → more Newton iterations
+to reach the target. The effect compounds at higher precision: inv/1 improves
+(-29%) but inv/256 nearly doubles (+94%).
+
+**Conclusion:** The dual cache is necessary for correctness of convergence at
+high precision. The speedups from removing it (less lock contention) are real
+but outweighed by convergence regressions in precision-sensitive operations.
+
+**Possible alternative:** A single cache that stores exact Bounds and derives
+Prefix lazily (rather than storing both). This would preserve exact arithmetic
+while eliminating the extra field and its synchronization. Needs investigation.
