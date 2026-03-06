@@ -18,7 +18,7 @@ use num_bigint::BigInt;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_of_biguint,
+    Binary, ReciprocalRounding, UXBinary, XBinary, reciprocal_of_biguint,
 };
 use crate::computable::Computable;
 use crate::error::ComputableError;
@@ -128,14 +128,10 @@ impl NodeOp for PiOp {
         let num_terms = *self.num_terms.read();
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
-        let bounds = Bounds::from_lower_and_width(
-            XBinary::Finite(pi_lo.clone()),
-            UXBinary::Finite(
-                crate::binary::UBinary::try_from_binary(&pi_hi.sub(&pi_lo))
-                    .unwrap_or_else(|_| crate::binary::UBinary::zero()),
-            ),
-        );
-        Ok(Prefix::from(&bounds))
+        Ok(Prefix::from_lower_upper(
+            XBinary::Finite(pi_lo),
+            XBinary::Finite(pi_hi),
+        ))
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {

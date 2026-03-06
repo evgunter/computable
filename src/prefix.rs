@@ -230,6 +230,70 @@ impl Prefix {
         }
     }
 
+    /// Constructs a `Prefix` from lower and upper `XBinary` bounds.
+    ///
+    /// This normalizes the bounds to prefix representation, handling:
+    /// - Infinite bounds → appropriate ZeroCrossing/Finite variants
+    /// - Zero-crossing finite bounds → ZeroCrossing with magnitude exponents
+    /// - Single-sign finite bounds → Finite with inner closest to zero
+    pub fn from_lower_upper(lower: XBinary, upper: XBinary) -> Self {
+        match (&lower, &upper) {
+            (XBinary::NegInf, XBinary::PosInf) => Self::unbounded(),
+            (XBinary::NegInf, XBinary::Finite(hi)) => {
+                let pos_exp = if hi.mantissa().is_positive() {
+                    magnitude_exponent(hi)
+                } else if hi.mantissa().is_zero() {
+                    XExponent::NegInf
+                } else {
+                    return Self::Finite {
+                        inner: hi.clone(),
+                        width_exponent: XExponent::PosInf,
+                    };
+                };
+                Self::ZeroCrossing {
+                    neg_exponent: XExponent::PosInf,
+                    pos_exponent: pos_exp,
+                }
+            }
+            (XBinary::Finite(lo), XBinary::PosInf) => {
+                let neg_exp = if lo.mantissa().is_negative() {
+                    magnitude_exponent(&lo.neg())
+                } else if lo.mantissa().is_zero() {
+                    XExponent::NegInf
+                } else {
+                    return Self::Finite {
+                        inner: lo.clone(),
+                        width_exponent: XExponent::PosInf,
+                    };
+                };
+                Self::ZeroCrossing {
+                    neg_exponent: neg_exp,
+                    pos_exponent: XExponent::PosInf,
+                }
+            }
+            (XBinary::NegInf, XBinary::NegInf) | (XBinary::PosInf, XBinary::PosInf) => {
+                crate::detected_computable_with_infinite_value!(
+                    "both bounds are the same infinity"
+                );
+                Self::unbounded()
+            }
+            (XBinary::PosInf, _) | (_, XBinary::NegInf) => {
+                crate::detected_computable_with_infinite_value!(
+                    "invalid bounds ordering with infinities"
+                );
+                Self::unbounded()
+            }
+            (XBinary::Finite(lo), XBinary::Finite(hi)) => finite_bounds_to_prefix(lo, hi),
+        }
+    }
+
+    /// Returns the absolute value (magnitude) of each bound as a pair.
+    ///
+    /// For prefix with bounds [lower, upper], returns (|lower|, |upper|).
+    pub fn abs(&self) -> (UXBinary, UXBinary) {
+        (self.lower().magnitude(), self.upper().magnitude())
+    }
+
     /// Returns true if this prefix contains the given point.
     pub fn contains(&self, point: &XBinary) -> bool {
         let lo = self.lower();
@@ -253,72 +317,8 @@ fn xexponent_to_uxbinary(exp: &XExponent) -> UXBinary {
 
 impl From<&Bounds> for Prefix {
     /// Converts arbitrary `Bounds` to `Prefix` form.
-    ///
-    /// This normalizes the bounds to a prefix representation:
-    /// - Infinite bounds become appropriate ZeroCrossing variants
-    /// - Zero-crossing finite bounds become ZeroCrossing with magnitude exponents
-    /// - Single-sign finite bounds become Finite with inner closest to zero
     fn from(bounds: &Bounds) -> Self {
-        let lower = bounds.small();
-        let upper = &bounds.large();
-
-        // Handle infinite cases
-        match (lower, upper) {
-            (XBinary::NegInf, XBinary::PosInf) => Self::unbounded(),
-            (XBinary::NegInf, XBinary::Finite(hi)) => {
-                let pos_exp = if hi.mantissa().is_positive() {
-                    magnitude_exponent(hi)
-                } else if hi.mantissa().is_zero() {
-                    XExponent::NegInf
-                } else {
-                    // Upper is negative but lower is -inf: this is a negative half-line
-                    // Actually, upper < 0, lower = -inf → all negative
-                    return Self::Finite {
-                        inner: hi.clone(),
-                        width_exponent: XExponent::PosInf,
-                    };
-                };
-                Self::ZeroCrossing {
-                    neg_exponent: XExponent::PosInf,
-                    pos_exponent: pos_exp,
-                }
-            }
-            (XBinary::Finite(lo), XBinary::PosInf) => {
-                let neg_exp = if lo.mantissa().is_negative() {
-                    magnitude_exponent(&lo.neg())
-                } else if lo.mantissa().is_zero() {
-                    XExponent::NegInf
-                } else {
-                    // Lower is positive but upper is +inf: positive half-line
-                    return Self::Finite {
-                        inner: lo.clone(),
-                        width_exponent: XExponent::PosInf,
-                    };
-                };
-                Self::ZeroCrossing {
-                    neg_exponent: neg_exp,
-                    pos_exponent: XExponent::PosInf,
-                }
-            }
-            (XBinary::NegInf, XBinary::NegInf) | (XBinary::PosInf, XBinary::PosInf) => {
-                // Degenerate: shouldn't happen in well-formed bounds.
-                crate::detected_computable_with_infinite_value!(
-                    "both bounds are the same infinity"
-                );
-                Self::unbounded()
-            }
-            (XBinary::PosInf, _) | (_, XBinary::NegInf) => {
-                // Invalid: lower > upper. Shouldn't happen.
-                crate::detected_computable_with_infinite_value!(
-                    "invalid bounds ordering with infinities"
-                );
-                Self::unbounded()
-            }
-            (XBinary::Finite(lo), XBinary::Finite(hi)) => {
-                // Both finite — handle below
-                finite_bounds_to_prefix(lo, hi)
-            }
-        }
+        Self::from_lower_upper(bounds.small().clone(), bounds.large())
     }
 }
 

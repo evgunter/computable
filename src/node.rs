@@ -217,12 +217,6 @@ impl Node {
         self.bounds_cache.read().clone()
     }
 
-    /// Returns cached bounds as legacy `Bounds` type. Used by ops that need
-    /// `Bounds` for demand budget calculations (abs, etc.).
-    pub fn cached_bounds_as_bounds(&self) -> Option<Bounds> {
-        self.bounds_cache.read().as_ref().map(Bounds::from)
-    }
-
     /// Returns cached bounds, computing and caching if needed.
     /// Combinators are infallible, so bounds are lazily computed on demand.
     pub fn get_bounds(&self) -> Result<Prefix, ComputableError> {
@@ -232,13 +226,6 @@ impl Node {
         let prefix = self.compute_bounds()?;
         self.set_bounds(prefix.clone());
         Ok(prefix)
-    }
-
-    /// Returns bounds as the legacy `Bounds` type.
-    /// Convenience for ops that work internally with `Bounds`.
-    pub fn get_bounds_as_bounds(&self) -> Result<Bounds, ComputableError> {
-        let prefix = self.get_bounds()?;
-        Ok(Bounds::from(&prefix))
     }
 
     pub fn set_bounds(&self, prefix: Prefix) {

@@ -12,7 +12,7 @@ use num_traits::Signed;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
+    Binary, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -81,9 +81,9 @@ impl NodeOp for InvOp {
                 if lower <= zero && upper >= zero {
                     Ok(Prefix::unbounded())
                 } else if upper < zero {
-                    Ok(Prefix::from(&Bounds::new(XBinary::NegInf, XBinary::zero())))
+                    Ok(Prefix::from_lower_upper(XBinary::NegInf, XBinary::zero()))
                 } else {
-                    Ok(Prefix::from(&Bounds::new(XBinary::zero(), XBinary::PosInf)))
+                    Ok(Prefix::from_lower_upper(XBinary::zero(), XBinary::PosInf))
                 }
             }
             Some(s) => {
@@ -100,13 +100,13 @@ impl NodeOp for InvOp {
                         XBinary::Finite(s.hi.upper.clone()),
                     )
                 };
-                Ok(Prefix::from(&Bounds::new(out_lo, out_hi)))
+                Ok(Prefix::from_lower_upper(out_lo, out_hi))
             }
         }
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
-        let input_bounds = self.inner.get_bounds_as_bounds()?;
+        let input_prefix = self.inner.get_bounds()?;
         let mut state = self.newton_state.write();
 
         match &mut *state {
@@ -118,12 +118,12 @@ impl NodeOp for InvOp {
                 } else {
                     MIN_SEED_PRECISION_BITS
                 };
-                *state = try_initialize(&input_bounds, seed_precision)?;
+                *state = try_initialize(&input_prefix, seed_precision)?;
                 Ok(true)
             }
             Some(s) => {
                 // Read current inner bounds and update denominators.
-                update_denominators(s, &input_bounds)?;
+                update_denominators(s, &input_prefix)?;
 
                 // One N-R step on each endpoint.
                 // TODO: With a high-precision seed, the N-R doubling may overshoot
@@ -148,9 +148,9 @@ impl NodeOp for InvOp {
     /// [a,b] is 1/min_abs² (worst case at the value closest to zero).
     /// Child budget = target × min_abs².
     fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
-        let min_abs = match self.inner.cached_bounds_as_bounds() {
-            Some(b) => {
-                let (lo, hi) = b.abs();
+        let min_abs = match self.inner.cached_bounds() {
+            Some(p) => {
+                let (lo, hi) = p.abs();
                 std::cmp::min(lo, hi)
             }
             None => return target_width.clone(),
@@ -169,17 +169,17 @@ impl NodeOp for InvOp {
 /// `seed_precision` controls the number of bits used for the initial reciprocal
 /// seed. A higher value means fewer N-R doublings to reach the target precision.
 fn try_initialize(
-    input_bounds: &Bounds,
+    input_prefix: &Prefix,
     seed_precision: usize,
 ) -> Result<Option<NewtonState>, ComputableError> {
-    let lower = input_bounds.small();
-    let upper = input_bounds.large();
+    let lower = input_prefix.lower();
+    let upper = input_prefix.upper();
     let zero = XBinary::zero();
 
-    if lower <= &zero && upper >= zero {
+    if lower <= zero && upper >= zero {
         return Ok(None);
     }
-    let (lower_finite, upper_finite) = match (lower, &upper) {
+    let (lower_finite, upper_finite) = match (&lower, &upper) {
         (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
         _ => return Ok(None),
     };
@@ -240,12 +240,12 @@ fn seed_reciprocal(
 /// - `abs_lower` increases: `hi.upper` stays valid, `hi.lower` may need refresh.
 fn update_denominators(
     state: &mut NewtonState,
-    input_bounds: &Bounds,
+    input_prefix: &Prefix,
 ) -> Result<(), ComputableError> {
-    let lower = input_bounds.small();
-    let upper = &input_bounds.large();
+    let lower = input_prefix.lower();
+    let upper = input_prefix.upper();
 
-    let (lower_finite, upper_finite) = match (lower, upper) {
+    let (lower_finite, upper_finite) = match (&lower, &upper) {
         (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
         _ => return Ok(()), // still infinite, keep old denominators
     };

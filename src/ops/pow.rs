@@ -10,7 +10,7 @@ use std::sync::Arc;
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 
-use crate::binary::{Bounds, UBinary, UXBinary, XBinary};
+use crate::binary::{UBinary, UXBinary, XBinary};
 use crate::binary_utils::power::{is_negative, is_positive, xbinary_max, xbinary_pow};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -37,24 +37,22 @@ pub struct PowOp {
 
 impl NodeOp for PowOp {
     fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
-        let input_bounds = self.inner.get_bounds_as_bounds()?;
-        let lower = input_bounds.small();
-        let upper = &input_bounds.large();
+        let input_prefix = self.inner.get_bounds()?;
+        let lower = input_prefix.lower();
+        let upper = input_prefix.upper();
 
         // Handle the trivial case of exponent = 1
         if self.exponent.get() == 1 {
-            return Ok(Prefix::from(&input_bounds));
+            return Ok(input_prefix);
         }
 
         let is_even = self.exponent.get().is_multiple_of(2);
 
-        let bounds = if is_even {
-            compute_even_power_bounds(lower, upper, self.exponent)
+        if is_even {
+            Ok(compute_even_power_bounds(&lower, &upper, self.exponent))
         } else {
-            compute_odd_power_bounds(lower, upper, self.exponent)
-        };
-
-        Ok(Prefix::from(&bounds))
+            Ok(compute_odd_power_bounds(&lower, &upper, self.exponent))
+        }
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
@@ -77,9 +75,9 @@ impl NodeOp for PowOp {
         if n == 1 {
             return target_width.clone();
         }
-        let max_abs = match self.inner.cached_bounds_as_bounds() {
-            Some(b) => {
-                let (lo, hi) = b.abs();
+        let max_abs = match self.inner.cached_bounds() {
+            Some(p) => {
+                let (lo, hi) = p.abs();
                 std::cmp::max(lo, hi)
             }
             None => return target_width.clone(),
@@ -128,10 +126,10 @@ pub(crate) fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
 ///
 /// Since x^n is monotonically increasing for odd n, the output bounds
 /// are simply [lower^n, upper^n].
-fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Bounds {
+fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Prefix {
     let result_lower = xbinary_pow(lower, n);
     let result_upper = xbinary_pow(upper, n);
-    Bounds::new(result_lower, result_upper)
+    Prefix::from_lower_upper(result_lower, result_upper)
 }
 
 /// Computes bounds for x^n where n is even.
@@ -140,27 +138,23 @@ fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> 
 /// - If [lower, upper] is entirely non-negative: bounds are [lower^n, upper^n]
 /// - If [lower, upper] is entirely non-positive: bounds are [upper^n, lower^n]
 /// - If [lower, upper] spans zero: bounds are [0, max(|lower|^n, |upper|^n)]
-fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Bounds {
+fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Prefix {
     let lower_non_negative = !is_negative(lower);
     let upper_non_positive = !is_positive(upper);
 
     if lower_non_negative {
-        // [lower, upper] is entirely non-negative
         let result_lower = xbinary_pow(lower, n);
         let result_upper = xbinary_pow(upper, n);
-        Bounds::new(result_lower, result_upper)
+        Prefix::from_lower_upper(result_lower, result_upper)
     } else if upper_non_positive {
-        // [lower, upper] is entirely non-positive
-        // For even powers, more negative gives larger positive result
         let result_lower = xbinary_pow(upper, n);
         let result_upper = xbinary_pow(lower, n);
-        Bounds::new(result_lower, result_upper)
+        Prefix::from_lower_upper(result_lower, result_upper)
     } else {
-        // Interval spans zero
         let lower_pow = xbinary_pow(lower, n);
         let upper_pow = xbinary_pow(upper, n);
         let result_upper = xbinary_max(&lower_pow, &upper_pow);
-        Bounds::new(XBinary::zero(), result_upper)
+        Prefix::from_lower_upper(XBinary::zero(), result_upper)
     }
 }
 

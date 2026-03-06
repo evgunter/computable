@@ -31,7 +31,7 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, Bounds, UXBinary, XBinary};
+use crate::binary::{Binary, UXBinary, XBinary};
 use crate::finite_interval::FiniteInterval;
 use crate::binary_utils::bisection::{
     PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint, normalize_bounds,
@@ -83,25 +83,25 @@ pub struct BisectionState {
 
 impl NodeOp for NthRootOp {
     fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
-        let input_bounds = self.inner.get_bounds_as_bounds()?;
+        let input_prefix = self.inner.get_bounds()?;
 
         // Fast path: read lock to check if already initialized.
         {
             let state = self.bisection_state.read();
             if let Some(s) = &*state {
-                return Ok(Prefix::from(&bounds_from_bisection_state(s)));
+                return Ok(prefix_from_bisection_state(s));
             }
         }
         // Slow path: upgrade to write lock and initialize.
         // Double-check after acquiring write lock (another thread may have initialized).
         let mut state = self.bisection_state.write();
         if let Some(s) = &*state {
-            return Ok(Prefix::from(&bounds_from_bisection_state(s)));
+            return Ok(prefix_from_bisection_state(s));
         }
-        let s = initialize_nth_root_bisection_state(&input_bounds, self.degree.get())?;
-        let bounds = bounds_from_bisection_state(&s);
+        let s = initialize_nth_root_bisection_state(&input_prefix, self.degree.get())?;
+        let prefix = prefix_from_bisection_state(&s);
         *state = Some(s);
-        Ok(Prefix::from(&bounds))
+        Ok(prefix)
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
@@ -167,9 +167,9 @@ impl NodeOp for NthRootOp {
         if n == 1 {
             return target_width.clone();
         }
-        let min_abs = match self.inner.cached_bounds_as_bounds() {
-            Some(b) => {
-                let (lo, hi) = b.abs();
+        let min_abs = match self.inner.cached_bounds() {
+            Some(p) => {
+                let (lo, hi) = p.abs();
                 std::cmp::min(lo, hi)
             }
             None => return target_width.clone(),
@@ -183,8 +183,8 @@ impl NodeOp for NthRootOp {
     }
 }
 
-/// Extracts bounds from an initialized bisection state.
-fn bounds_from_bisection_state(s: &BisectionState) -> Bounds {
+/// Extracts a Prefix from an initialized bisection state.
+fn prefix_from_bisection_state(s: &BisectionState) -> Prefix {
     let finite_bounds = {
         let bounds = if let Some(exact) = &s.exact_value {
             FiniteInterval::point(exact.clone())
@@ -197,9 +197,9 @@ fn bounds_from_bisection_state(s: &BisectionState) -> Bounds {
             bounds
         }
     };
-    Bounds::from_lower_and_width(
+    Prefix::from_lower_upper(
         XBinary::Finite(finite_bounds.small().clone()),
-        UXBinary::Finite(finite_bounds.width().clone()),
+        XBinary::Finite(finite_bounds.hi()),
     )
 }
 
@@ -208,14 +208,14 @@ fn bounds_from_bisection_state(s: &BisectionState) -> Bounds {
 /// Takes the midpoint of input bounds as the target value, then sets up initial
 /// bisection bounds to find the nth root of that target.
 fn initialize_nth_root_bisection_state(
-    input_bounds: &Bounds,
+    input_prefix: &Prefix,
     degree: u32,
 ) -> Result<BisectionState, ComputableError> {
-    let lower = input_bounds.small();
-    let upper = &input_bounds.large();
+    let lower = input_prefix.lower();
+    let upper = input_prefix.upper();
 
     // Get the target value - use midpoint for intervals, exact for points
-    let target = match (lower, upper) {
+    let target = match (&lower, &upper) {
         (XBinary::Finite(l), XBinary::Finite(u)) => midpoint(l, u),
         _ => return Err(ComputableError::InfiniteBounds),
     };
@@ -288,6 +288,7 @@ fn initialize_nth_root_bisection_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binary::Bounds;
     use crate::computable::Computable;
     use crate::refinement::XUsize;
     use crate::test_utils::{

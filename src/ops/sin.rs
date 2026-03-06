@@ -28,7 +28,7 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, ReciprocalRounding, UBinary, UXBinary, XBinary, reciprocal_of_biguint,
+    Binary, ReciprocalRounding, UBinary, UXBinary, XBinary, reciprocal_of_biguint,
 };
 use crate::finite_interval::FiniteInterval;
 use crate::error::ComputableError;
@@ -43,10 +43,10 @@ pub struct SinOp {
 
 impl NodeOp for SinOp {
     fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
-        let input_bounds = self.inner.get_bounds_as_bounds()?;
-        let pi_bounds = self.pi_node.get_bounds_as_bounds()?;
+        let input_prefix = self.inner.get_bounds()?;
+        let pi_prefix = self.pi_node.get_bounds()?;
         let num_terms = self.num_terms.read().clone();
-        sin_bounds(&input_bounds, &pi_bounds, &num_terms)
+        sin_bounds(&input_prefix, &pi_prefix, &num_terms)
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
@@ -64,8 +64,8 @@ impl NodeOp for SinOp {
 
         // Leap to match input precision when possible (complementary: handles
         // cases where inner bounds are still wide).
-        if let Ok(input_bounds) = self.inner.get_bounds_as_bounds()
-            && let Some(width_bits) = estimate_precision_bits(&input_bounds)
+        if let Ok(input_prefix) = self.inner.get_bounds()
+            && let Some(width_bits) = estimate_precision_bits(&input_prefix)
         {
             let needed_n = (width_bits / 3).max(1);
             let needed = BigInt::from(needed_n);
@@ -98,16 +98,16 @@ impl NodeOp for SinOp {
             return target_width.clone();
         }
         // Pi child: budget = target · pi_lower / max_abs(input).
-        let input_max_abs = match self.inner.cached_bounds_as_bounds() {
-            Some(b) => {
-                let (lo, hi) = b.abs();
+        let input_max_abs = match self.inner.cached_bounds() {
+            Some(p) => {
+                let (lo, hi) = p.abs();
                 std::cmp::max(lo, hi)
             }
             None => return UXBinary::zero(),
         };
-        let pi_lower = match self.pi_node.cached_bounds_as_bounds() {
-            Some(b) => {
-                let (lo, _hi) = b.abs();
+        let pi_lower = match self.pi_node.cached_bounds() {
+            Some(p) => {
+                let (lo, _hi) = p.abs();
                 lo
             }
             None => return UXBinary::zero(),
@@ -135,33 +135,33 @@ impl NodeOp for SinOp {
 /// 5. Compute Taylor series on reduced interval
 /// 6. Apply sign flips and clamp to [-1, 1]
 fn sin_bounds(
-    input_bounds: &Bounds,
-    pi_bounds: &Bounds,
+    input_prefix: &Prefix,
+    pi_prefix: &Prefix,
     num_terms: &BigInt,
 ) -> Result<Prefix, ComputableError> {
     let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
     let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
 
     // Extract finite bounds, or return [-1, 1] for any infinite bounds
-    let lower = input_bounds.small();
-    let upper = input_bounds.large();
+    let lower = input_prefix.lower();
+    let upper = input_prefix.upper();
     let minus_one_to_one = || {
-        Prefix::from(&Bounds::new(
+        Prefix::from_lower_upper(
             XBinary::Finite(Binary::new(BigInt::from(-1_i32), BigInt::zero())),
             XBinary::Finite(Binary::new(BigInt::from(1_i32), BigInt::zero())),
-        ))
+        )
     };
-    let (lower_bin, upper_bin) = match (lower, &upper) {
-        (XBinary::Finite(l), XBinary::Finite(u)) => (l, u),
+    let (lower_bin, upper_bin) = match (&lower, &upper) {
+        (XBinary::Finite(l), XBinary::Finite(u)) => (l.clone(), u.clone()),
         _ => {
             return Ok(minus_one_to_one());
         }
     };
 
     // Extract finite pi bounds, or return [-1, 1] if pi bounds are infinite
-    let pi_lo = pi_bounds.small();
-    let pi_hi_xb = pi_bounds.large();
-    let pi_interval = match (pi_lo, &pi_hi_xb) {
+    let pi_lo = pi_prefix.lower();
+    let pi_hi = pi_prefix.upper();
+    let pi_interval = match (&pi_lo, &pi_hi) {
         (XBinary::Finite(lo), XBinary::Finite(hi)) => FiniteInterval::new(lo.clone(), hi.clone()),
         _ => {
             return Ok(minus_one_to_one());
@@ -195,7 +195,7 @@ fn sin_bounds(
     // width is between two_pi_lo and true 2π), but we never miss a case where
     // the width truly exceeds 2π. Over-approximation is always sound; under-approximation
     // would be a correctness bug.
-    let input_width = upper_bin.sub(lower_bin);
+    let input_width = upper_bin.sub(&lower_bin);
     if input_width >= *two_pi_interval.lo() {
         // Input spans at least one full period, sin ranges over all of [-1, 1]
         return Ok(minus_one_to_one());
@@ -257,8 +257,7 @@ fn sin_bounds(
         result_hi
     };
 
-    let bounds = Bounds::new(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi));
-    Ok(Prefix::from(&bounds))
+    Ok(Prefix::from_lower_upper(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi)))
 }
 
 //=============================================================================
@@ -817,19 +816,19 @@ fn divide_by_factorial_directed(
     value.mul(&reciprocal)
 }
 
-/// Estimates the number of precision bits in a `Bounds` interval.
+/// Estimates the number of precision bits in a `Prefix` interval.
 ///
 /// Returns `Some(bits)` where `bits ≈ -log2(width)` for finite bounds with
 /// nonzero width. Returns `None` for zero-width (exact) or infinite bounds.
-fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
-    let lo = bounds.small();
-    let hi_xb = bounds.large();
-    let (lo_bin, hi_bin) = match (lo, &hi_xb) {
-        (XBinary::Finite(l), XBinary::Finite(h)) => (l, h),
+fn estimate_precision_bits(prefix: &Prefix) -> Option<usize> {
+    let lo = prefix.lower();
+    let hi = prefix.upper();
+    let (lo_bin, hi_bin) = match (&lo, &hi) {
+        (XBinary::Finite(l), XBinary::Finite(h)) => (l.clone(), h.clone()),
         _ => return None,
     };
 
-    let width = hi_bin.sub(lo_bin);
+    let width = hi_bin.sub(&lo_bin);
     if width.mantissa().is_zero() {
         return None;
     }
@@ -852,6 +851,7 @@ pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binary::Bounds;
     use crate::computable::Computable;
     use crate::refinement::{XUsize, prefix_width_leq};
     use crate::test_utils::{
@@ -1273,10 +1273,10 @@ mod tests {
         let two_pi = two_pi_interval_at_precision(64);
         let lo = bin(0, 0);
         let hi = two_pi.lo().add(&bin(1, -60));
-        let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
+        let input_prefix = Prefix::from_lower_upper(XBinary::Finite(lo), XBinary::Finite(hi));
         let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
-        let pi_bounds = Bounds::new(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
-        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(5_i32))
+        let pi_prefix = Prefix::from_lower_upper(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
+        let result = sin_bounds(&input_prefix, &pi_prefix, &BigInt::from(5_i32))
             .expect("sin_bounds should succeed");
         let result_bounds = to_bounds(&result);
         let lower = unwrap_finite(result_bounds.small());
