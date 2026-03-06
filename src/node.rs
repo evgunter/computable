@@ -138,8 +138,8 @@ pub trait NodeOp: Send + Sync {
     /// must implement this — there is no default, so forgetting to implement
     /// it for a new operation is a compile error.
     ///
-    /// **Hard invariant**: If all children produce prefixes within their
-    /// respective budgets, the parent MUST be able to produce a prefix within
+    /// **Hard invariant**: If all children produce bounds within their
+    /// respective budgets, the parent MUST be able to produce bounds within
     /// `target_width`. The coordinator gates non-leaf dispatch on this — it
     /// will not dispatch a non-leaf refiner until all sub-refiner inputs meet
     /// their budgets.

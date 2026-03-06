@@ -422,8 +422,8 @@ impl RefinementGraph {
                             let inputs_ready = sub_refiner_indices[i].iter().all(|&sub_idx| {
                                 match refiner_budgets[sub_idx].as_ref() {
                                     Some(budget) => refiner_nodes[sub_idx]
-                                        .cached_prefix()
-                                        .is_some_and(|p| p.width() <= *budget),
+                                        .cached_bounds()
+                                        .is_some_and(|b| b.width() <= budget),
                                     None => true, // no budget constraint
                                 }
                             });
@@ -504,8 +504,8 @@ impl RefinementGraph {
                                             sub_refiner_indices[i].iter().all(|&sub_idx| {
                                                 match refiner_budgets[sub_idx].as_ref() {
                                                     Some(budget) => refiner_nodes[sub_idx]
-                                                        .cached_prefix()
-                                                        .is_some_and(|p| p.width() <= *budget),
+                                                        .cached_bounds()
+                                                        .is_some_and(|b| b.width() <= budget),
                                                     None => true,
                                                 }
                                             });
