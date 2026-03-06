@@ -468,19 +468,19 @@ impl RefinementGraph {
                     // index + exhaustion info so the caller can update bookkeeping
                     // arrays without borrow conflicts with the `outstanding` loop.
                     let apply_response = |message: RefinerMessage| -> Result<
-                        (usize, Option<ExhaustionReason>),
+                        (usize, Option<ExhaustionReason>, Vec<usize>),
                         ComputableError,
                     > {
                         match message {
                             RefinerMessage::Update(update) => {
                                 let idx = refiner_index[&update.node_id];
-                                self.apply_update(update)?;
-                                Ok((idx, None))
+                                let changed = self.apply_update(update)?;
+                                Ok((idx, None, changed))
                             }
                             RefinerMessage::Exhausted { update, reason } => {
                                 let idx = refiner_index[&update.node_id];
-                                self.apply_update(update)?;
-                                Ok((idx, Some(reason)))
+                                let changed = self.apply_update(update)?;
+                                Ok((idx, Some(reason), changed))
                             }
                             RefinerMessage::Error(error) => Err(error),
                         }
@@ -490,8 +490,9 @@ impl RefinementGraph {
                     // Not a closure to avoid holding a mutable borrow on
                     // `outstanding` across the straggler collection loop.
                     macro_rules! record_completion {
-                        ($idx:expr, $exhaustion:expr) => {{
+                        ($idx:expr, $exhaustion:expr, $changed:expr) => {{
                             let idx = $idx;
+                            let changed_nodes: &[usize] = &$changed;
                             outstanding[idx] = false;
                             steps[idx] = steps[idx].checked_add(1).unwrap_or_else(|| {
                                 unreachable!("steps <= MAX_REFINEMENT_ITERATIONS, cannot overflow")
@@ -522,26 +523,33 @@ impl RefinementGraph {
                                 dispatch_queue.push_back(idx);
                                 in_queue[idx] = true;
                             }
-                            // For non-leaf refiners: record that this
-                            // sub-refiner responded. Only mark for redispatch
-                            // when ALL sub-refiners have responded, so
-                            // compute_bounds reads fully-updated inputs.
-                            for j in 0..num_refiners {
-                                if j != idx && !is_leaf_refiner[j] {
-                                    if let Some(sub_pos) =
-                                        sub_refiner_indices[j].iter().position(|&s| s == idx)
-                                    {
-                                        if !sub_responded[j][sub_pos] {
-                                            sub_responded[j][sub_pos] = true;
-                                            sub_responded_count[j] = sub_responded_count[j]
-                                                .checked_add(1)
-                                                .unwrap_or_else(|| unreachable!());
-                                        }
-                                        if sub_responded_count[j] >= sub_refiner_indices[j].len() {
-                                            needs_redispatch[j] = true;
-                                            if !in_queue[j] {
-                                                dispatch_queue.push_back(j);
-                                                in_queue[j] = true;
+                            // Use the apply_update propagation path to
+                            // determine which non-leaf refiners had their
+                            // inputs changed. If a non-leaf refiner's node
+                            // was recomputed during propagation, its
+                            // compute_bounds read updated child bounds →
+                            // it should count toward that refiner's
+                            // sub-responded gate.
+                            for &changed_id in changed_nodes {
+                                if let Some(&j) = refiner_index.get(&changed_id) {
+                                    if j != idx && !is_leaf_refiner[j] {
+                                        if let Some(sub_pos) =
+                                            sub_refiner_indices[j].iter().position(|&s| s == idx)
+                                        {
+                                            if !sub_responded[j][sub_pos] {
+                                                sub_responded[j][sub_pos] = true;
+                                                sub_responded_count[j] = sub_responded_count[j]
+                                                    .checked_add(1)
+                                                    .unwrap_or_else(|| unreachable!());
+                                            }
+                                            if sub_responded_count[j]
+                                                >= sub_refiner_indices[j].len()
+                                            {
+                                                needs_redispatch[j] = true;
+                                                if !in_queue[j] {
+                                                    dispatch_queue.push_back(j);
+                                                    in_queue[j] = true;
+                                                }
                                             }
                                         }
                                     }
@@ -556,8 +564,8 @@ impl RefinementGraph {
                             Ok(msg) => msg,
                             Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
-                        let (idx, exhaustion) = apply_response(first)?;
-                        record_completion!(idx, exhaustion);
+                        let (idx, exhaustion, changed) = apply_response(first)?;
+                        record_completion!(idx, exhaustion, changed);
                         if precision_met(&self.root, tolerance_exp)? {
                             return self.root.get_bounds();
                         }
@@ -565,8 +573,8 @@ impl RefinementGraph {
 
                     // Drain any immediately available responses.
                     while let Ok(msg) = update_rx.try_recv() {
-                        let (idx, exhaustion) = apply_response(msg)?;
-                        record_completion!(idx, exhaustion);
+                        let (idx, exhaustion, changed) = apply_response(msg)?;
+                        record_completion!(idx, exhaustion, changed);
                         if precision_met(&self.root, tolerance_exp)? {
                             return self.root.get_bounds();
                         }
@@ -584,7 +592,11 @@ impl RefinementGraph {
         }
     }
 
-    fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
+    /// Applies a node update and propagates bounds changes upward.
+    /// Returns the set of node IDs that were changed by propagation
+    /// (excluding the directly-updated node).
+    fn apply_update(&self, update: NodeUpdate) -> Result<Vec<usize>, ComputableError> {
+        let mut changed_by_propagation = Vec::new();
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
             node.set_bounds(update.bounds);
@@ -603,12 +615,13 @@ impl RefinementGraph {
                 let next_bounds = parent.compute_bounds()?;
                 if parent.cached_bounds().as_ref() != Some(&next_bounds) {
                     parent.set_bounds(next_bounds);
+                    changed_by_propagation.push(*parent_id);
                     queue.push_back(*parent_id);
                 }
             }
         }
 
-        Ok(())
+        Ok(changed_by_propagation)
     }
 
     /// Computes per-refiner demand budgets by walking the graph top-down.
