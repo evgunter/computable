@@ -122,7 +122,7 @@ impl Computable {
     pub fn inv(self) -> Self {
         let node = Node::new(Arc::new(InvOp {
             inner: Arc::clone(&self.node),
-            newton_state: RwLock::new(None),
+            division_state: RwLock::new(None),
         }));
         Self { node }
     }
