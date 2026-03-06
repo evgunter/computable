@@ -39,4 +39,4 @@ bench_group! {
     }
 }
 
-bench_main!(sin);
+bench_main!(sin; valgrind_args: ["--fair-sched=yes"]);

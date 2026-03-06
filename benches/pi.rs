@@ -97,4 +97,4 @@ bench_group! {
     }
 }
 
-bench_main!(pi_refinement, pi_bounds, pi_arithmetic, sin_multiples);
+bench_main!(pi_refinement, pi_bounds, pi_arithmetic, sin_multiples; valgrind_args: ["--fair-sched=yes"]);
