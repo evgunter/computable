@@ -59,9 +59,9 @@ impl Computable {
         Self { node }
     }
 
-    /// Returns the current bounds for this computable.
-    pub fn bounds(&self) -> Result<Prefix, ComputableError> {
-        self.node.get_bounds()
+    /// Returns the current prefix for this computable.
+    pub fn prefix(&self) -> Result<Prefix, ComputableError> {
+        self.node.get_prefix()
     }
 
     /// Refines this computable until the bounds width is at most 2^(-tolerance_exp).
@@ -84,7 +84,7 @@ impl Computable {
         tolerance_exp: XUsize,
     ) -> Result<Prefix, ComputableError> {
         loop {
-            let prefix = self.node.get_bounds()?;
+            let prefix = self.node.get_prefix()?;
             if prefix_width_leq(&prefix, &tolerance_exp) {
                 return Ok(prefix);
             }
@@ -180,7 +180,7 @@ impl Computable {
     /// # Arguments
     /// * `exponent` - The power to raise to (n in x^n).
     ///
-    /// # Bounds Computation
+    /// # Prefix Computation
     /// - For n=0: returns constant 1 (including 0^0 = 1 by convention)
     /// - For odd n: x^n is monotonically increasing, so bounds are [lower^n, upper^n]
     /// - For even n: x^n has a minimum at 0
@@ -197,7 +197,7 @@ impl Computable {
             None => {
                 // x^0 = 1 for all x, including 0^0 = 1 by convention
                 // Check for infinite bounds - infinity^0 is an indeterminate form.
-                if let Ok(prefix) = self.node.get_bounds() {
+                if let Ok(prefix) = self.node.get_prefix() {
                     let has_infinite = matches!(prefix.lower(), XBinary::NegInf | XBinary::PosInf)
                         || matches!(prefix.upper(), XBinary::NegInf | XBinary::PosInf);
                     if has_infinite {
@@ -221,9 +221,9 @@ impl Computable {
         }
     }
 
-    /// Creates a constant computable with exact bounds.
+    /// Creates a constant computable with an exact prefix.
     pub fn constant(value: Binary) -> Self {
-        fn bounds(value: &Binary) -> Result<Prefix, ComputableError> {
+        fn prefix_fn(value: &Binary) -> Result<Prefix, ComputableError> {
             Ok(Prefix::exact(value.clone()))
         }
 
@@ -231,7 +231,7 @@ impl Computable {
             Ok(value)
         }
 
-        Computable::new(value, bounds, refine)
+        Computable::new(value, prefix_fn, refine)
     }
 }
 
@@ -305,11 +305,11 @@ mod tests {
     }
 
     #[test]
-    fn from_binary_matches_constant_bounds() {
+    fn from_binary_matches_constant_prefix() {
         let value = bin(3, 0);
         let computable: Computable = value.clone().into();
 
-        let bounds = computable.bounds().expect("bounds should succeed");
+        let bounds = computable.prefix().expect("bounds should succeed");
         assert_eq!(bounds, Prefix::exact(value));
     }
 

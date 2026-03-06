@@ -85,8 +85,8 @@ fn precision_bits_for_num_terms(num_terms: usize) -> usize {
 /// use computable::{pi, XUsize};
 ///
 /// let pi_val = pi();
-/// let bounds = pi_val.refine_to_default(XUsize::Finite(50))?;
-/// // bounds now contains pi to ~50 bits of precision
+/// let prefix = pi_val.refine_to_default(XUsize::Finite(50))?;
+/// // prefix now contains pi to ~50 bits of precision
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
 pub fn pi() -> Computable {
@@ -96,15 +96,15 @@ pub fn pi() -> Computable {
     Computable::from_node(node)
 }
 
-/// Returns bounds on pi with at least `precision_bits` bits of accuracy.
+/// Returns a tight interval on pi with at least `precision_bits` bits of accuracy.
 ///
 /// This is a helper function for use in sin.rs and other places that need
-/// pi bounds without creating a full Computable.
+/// pi bounds without creating a full Computable. Returns `(lo, hi)` as Binary.
 ///
 /// The returned bounds (pi_lo, pi_hi) satisfy:
 /// - pi_lo <= true_pi <= pi_hi
 /// - (pi_hi - pi_lo) <= 2^(-precision_bits) approximately
-pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
+pub fn pi_prefix_at_precision(precision_bits: usize) -> (Binary, Binary) {
     // Compute enough terms to achieve the desired precision.
     // For arctan(1/5), error after n terms is bounded by (1/5)^(2n+1)/(2n+1).
     // We need (2n+1)*log2(5) > precision_bits + 4, i.e. n > (precision_bits + 4) / (2*log2(5)) - 0.5.
@@ -115,7 +115,7 @@ pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
         precision_bits + bit_length(num_terms + 2) + bit_length(2 * num_terms + 1));
     let reciprocal_precision =
         precision_bits_for_num_terms(num_terms).max(rounding_error_precision);
-    compute_pi_bounds(num_terms, reciprocal_precision)
+    compute_pi_interval(num_terms, reciprocal_precision)
 }
 
 /// Pi computation operation using Machin's formula.
@@ -124,10 +124,10 @@ pub struct PiOp {
 }
 
 impl NodeOp for PiOp {
-    fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
         let num_terms = *self.num_terms.read();
         let precision_bits = precision_bits_for_num_terms(num_terms);
-        let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
+        let (pi_lo, pi_hi) = compute_pi_interval(num_terms, precision_bits);
         Ok(Prefix::from_lower_upper(
             XBinary::Finite(pi_lo),
             XBinary::Finite(pi_hi),
@@ -138,7 +138,7 @@ impl NodeOp for PiOp {
         let mut num_terms = self.num_terms.write();
 
         // Leap to the needed term count based on precision_bits.
-        // Same formula as pi_bounds_at_precision: n = (precision_bits + 10) / 4.
+        // Same formula as pi_prefix_at_precision: n = (precision_bits + 10) / 4.
         if precision_bits <= crate::MAX_COMPUTATION_BITS {
             let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
             if needed > *num_terms {
@@ -180,12 +180,12 @@ enum RoundDir {
 /// Therefore: pi = 16*arctan(1/5) - 4*arctan(1/239)
 ///
 /// Returns (lower_bound, upper_bound) where lower_bound <= pi <= upper_bound.
-fn compute_pi_bounds(num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
+fn compute_pi_interval(num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
     // Compute arctan(1/5) bounds
-    let (atan_5_lo, atan_5_hi) = arctan_recip_bounds(5, num_terms, precision_bits);
+    let (atan_5_lo, atan_5_hi) = arctan_recip_interval(5, num_terms, precision_bits);
 
     // Compute arctan(1/239) bounds
-    let (atan_239_lo, atan_239_hi) = arctan_recip_bounds(239, num_terms, precision_bits);
+    let (atan_239_lo, atan_239_hi) = arctan_recip_interval(239, num_terms, precision_bits);
 
     // pi = 16*arctan(1/5) - 4*arctan(1/239)
     //
@@ -222,7 +222,7 @@ fn compute_pi_bounds(num_terms: usize, precision_bits: usize) -> (Binary, Binary
 /// |error| <= |x|^(2n+1) / (2n+1) = 1 / ((2n+1) * k^(2n+1))
 ///
 /// Returns (lower_bound, upper_bound) for arctan(1/k).
-fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
+fn arctan_recip_interval(k: u64, num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
     let k_big = BigInt::from(k);
 
     if num_terms == 0 {
@@ -311,7 +311,7 @@ fn divide_one_by_bigint(
 #[cfg(test)]
 pub(crate) fn pi_interval_at_precision(precision_bits: usize) -> crate::finite_interval::FiniteInterval {
     use crate::finite_interval::FiniteInterval;
-    let (lo, hi) = pi_bounds_at_precision(precision_bits);
+    let (lo, hi) = pi_prefix_at_precision(precision_bits);
     FiniteInterval::new(lo, hi)
 }
 
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn pi_bounds_contain_true_pi() {
-        let (pi_lo, pi_hi) = compute_pi_bounds(20, precision_bits_for_num_terms(20));
+        let (pi_lo, pi_hi) = compute_pi_interval(20, precision_bits_for_num_terms(20));
         let pi_f64 = pi_f64_binary();
 
         // Check that bounds are ordered correctly
@@ -379,8 +379,8 @@ mod tests {
 
     #[test]
     fn pi_bounds_refine_to_high_precision() {
-        let (pi_lo_5, pi_hi_5) = compute_pi_bounds(5, precision_bits_for_num_terms(5));
-        let (pi_lo_20, pi_hi_20) = compute_pi_bounds(20, precision_bits_for_num_terms(20));
+        let (pi_lo_5, pi_hi_5) = compute_pi_interval(5, precision_bits_for_num_terms(5));
+        let (pi_lo_20, pi_hi_20) = compute_pi_interval(20, precision_bits_for_num_terms(20));
 
         let width_5 = pi_hi_5.sub(&pi_lo_5);
         let width_20 = pi_hi_20.sub(&pi_lo_20);
@@ -416,9 +416,9 @@ mod tests {
     }
 
     #[test]
-    fn pi_bounds_at_precision_helper() {
+    fn pi_prefix_at_precision_helper() {
         const PRECISION_BITS: usize = 50;
-        let (lo, hi) = pi_bounds_at_precision(PRECISION_BITS);
+        let (lo, hi) = pi_prefix_at_precision(PRECISION_BITS);
         let width = hi.sub(&lo);
 
         let precision_i64 = i64::try_from(PRECISION_BITS).expect("precision fits in i64");
@@ -437,8 +437,8 @@ mod tests {
     }
 
     #[test]
-    fn pi_bounds_at_precision_256_bits() {
-        let (lo, hi) = pi_bounds_at_precision(256);
+    fn pi_prefix_at_precision_256_bits() {
+        let (lo, hi) = pi_prefix_at_precision(256);
         let width = hi.sub(&lo);
 
         let threshold = bin(1, -255);

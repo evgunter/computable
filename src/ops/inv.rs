@@ -68,13 +68,13 @@ pub struct InvOp {
 }
 
 impl NodeOp for InvOp {
-    fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
         let state = self.newton_state.read();
 
         match &*state {
             None => {
                 // No state yet — return infinite bounds in the appropriate direction.
-                let existing = self.inner.get_bounds()?;
+                let existing = self.inner.get_prefix()?;
                 let lower = existing.lower();
                 let upper = existing.upper();
                 let zero = XBinary::zero();
@@ -106,7 +106,7 @@ impl NodeOp for InvOp {
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
-        let input_prefix = self.inner.get_bounds()?;
+        let input_prefix = self.inner.get_prefix()?;
         let mut state = self.newton_state.write();
 
         match &mut *state {
@@ -148,7 +148,7 @@ impl NodeOp for InvOp {
     /// [a,b] is 1/min_abs² (worst case at the value closest to zero).
     /// Child budget = target × min_abs².
     fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
-        let min_abs = match self.inner.cached_bounds() {
+        let min_abs = match self.inner.cached_prefix() {
             Some(p) => {
                 let (lo, hi) = p.abs();
                 std::cmp::min(lo, hi)
@@ -158,7 +158,7 @@ impl NodeOp for InvOp {
         target_width.mul(&min_abs).mul(&min_abs)
     }
 
-    fn budget_depends_on_bounds(&self) -> bool {
+    fn budget_depends_on_prefix(&self) -> bool {
         true
     }
 }
@@ -402,7 +402,7 @@ mod tests {
     fn inv_allows_infinite_bounds() {
         let value = interval_midpoint_computable(-1, 1);
         let inv = value.inv();
-        let prefix = inv.bounds().expect("bounds should succeed");
+        let prefix = inv.prefix().expect("bounds should succeed");
         assert_eq!(prefix, Prefix::unbounded());
     }
 

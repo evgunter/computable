@@ -56,11 +56,11 @@ pub struct NthRootOp {
     pub degree: NonZeroU32,
     /// Current bisection state: tracks the interval for the root.
     ///
-    /// This is `None` until the first `compute_bounds()` call, which initializes
+    /// This is `None` until the first `compute_prefix()` call, which initializes
     /// it from the input bounds. We use `Option` because initialization requires
-    /// calling `inner.get_bounds()` which can fail, but node construction (via
+    /// calling `inner.get_prefix()` which can fail, but node construction (via
     /// `nth_root()`) is not supposed to be fallible. By deferring initialization
-    /// to the first `compute_bounds()` call (which returns `Result`), we can
+    /// to the first `compute_prefix()` call (which returns `Result`), we can
     /// propagate errors through the normal Result path.
     ///
     /// Each refinement step halves this interval via bisection.
@@ -82,8 +82,8 @@ pub struct BisectionState {
 }
 
 impl NodeOp for NthRootOp {
-    fn compute_bounds(&self) -> Result<Prefix, ComputableError> {
-        let input_prefix = self.inner.get_bounds()?;
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
+        let input_prefix = self.inner.get_prefix()?;
 
         // Fast path: read lock to check if already initialized.
         {
@@ -105,14 +105,14 @@ impl NodeOp for NthRootOp {
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
-        // Ensure bisection state is initialized (compute_bounds is always called
+        // Ensure bisection state is initialized (compute_prefix is always called
         // before refine_step by the coordinator, but be defensive).
         {
             let state = self.bisection_state.read();
             if state.is_none() {
                 drop(state);
-                // Trigger initialization via compute_bounds.
-                self.compute_bounds()?;
+                // Trigger initialization via compute_prefix.
+                self.compute_prefix()?;
             }
         }
 
@@ -167,7 +167,7 @@ impl NodeOp for NthRootOp {
         if n == 1 {
             return target_width.clone();
         }
-        let min_abs = match self.inner.cached_bounds() {
+        let min_abs = match self.inner.cached_prefix() {
             Some(p) => {
                 let (lo, hi) = p.abs();
                 std::cmp::min(lo, hi)
@@ -178,7 +178,7 @@ impl NodeOp for NthRootOp {
         target_width.mul(&n_ux).mul(&min_abs)
     }
 
-    fn budget_depends_on_bounds(&self) -> bool {
+    fn budget_depends_on_prefix(&self) -> bool {
         self.degree.get() > 1
     }
 }
@@ -394,7 +394,7 @@ mod tests {
     fn sqrt_of_zero() {
         let zero = Computable::constant(bin(0, 0));
         let sqrt_zero = zero.nth_root(nz(2));
-        let prefix = sqrt_zero.bounds().expect("bounds should succeed");
+        let prefix = sqrt_zero.prefix().expect("bounds should succeed");
         let bounds = to_bounds(&prefix);
         let expected = bin(0, 0);
         let lower = unwrap_finite(bounds.small());
@@ -406,7 +406,7 @@ mod tests {
     fn sqrt_of_interval_overlapping_zero() {
         let interval = interval_noop_computable(-1, 4);
         let sqrt_interval = interval.nth_root(nz(2));
-        let prefix = sqrt_interval.bounds().expect("bounds should succeed");
+        let prefix = sqrt_interval.prefix().expect("bounds should succeed");
         let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
@@ -418,7 +418,7 @@ mod tests {
     fn cbrt_of_interval_overlapping_zero() {
         let interval = interval_noop_computable(-8, 27);
         let cbrt_interval = interval.nth_root(nz(3));
-        let prefix = cbrt_interval.bounds().expect("bounds should succeed");
+        let prefix = cbrt_interval.prefix().expect("bounds should succeed");
         let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());

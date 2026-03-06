@@ -144,7 +144,7 @@ impl RefinementGraph {
         tolerance_exp: &XUsize,
     ) -> Result<Prefix, ComputableError> {
         // Eagerly populate all bounds caches so we can identify exact-bounds refiners.
-        let root_prefix = self.root.get_bounds()?;
+        let root_prefix = self.root.get_prefix()?;
         if prefix_width_leq(&root_prefix, tolerance_exp) {
             return Ok(root_prefix);
         }
@@ -159,7 +159,7 @@ impl RefinementGraph {
             let mut refiner_handles = Vec::new();
             for node in &self.refiners {
                 let exact = node
-                    .cached_bounds()
+                    .cached_prefix()
                     .is_some_and(|b| b.width_exponent() == XExponent::NegInf);
                 if !exact {
                     refiner_handles.push(spawn_refiner(
@@ -217,7 +217,7 @@ impl RefinementGraph {
                 // Walk root-to-refiner paths to check if any op along the
                 // way has bounds-dependent budgets. We do this by walking
                 // the BFS used for budget propagation and tracking whether
-                // any ancestor had budget_depends_on_bounds.
+                // any ancestor had budget_depends_on_prefix.
                 let budget_is_static: Vec<bool> = {
                     let mut node_is_static: HashMap<usize, bool> = HashMap::new();
                     node_is_static.insert(self.root.id, true);
@@ -228,7 +228,7 @@ impl RefinementGraph {
                             continue;
                         };
                         let parent_static = node_is_static.get(&node_id).copied().unwrap_or(true);
-                        let child_static = parent_static && !node.op.budget_depends_on_bounds();
+                        let child_static = parent_static && !node.op.budget_depends_on_prefix();
                         for child in node.children() {
                             let entry = node_is_static.entry(child.id).or_insert(true);
                             // If ANY path is non-static, mark non-static.
@@ -261,7 +261,7 @@ impl RefinementGraph {
 
                 let precision_met =
                     |root: &Arc<Node>, tol: &XUsize| -> Result<bool, ComputableError> {
-                        let prefix = root.get_bounds()?;
+                        let prefix = root.get_prefix()?;
                         Ok(prefix_width_leq(&prefix, tol))
                     };
 
@@ -276,7 +276,7 @@ impl RefinementGraph {
                 loop {
                     // 1. Check if precision is already met.
                     if precision_met(&self.root, tolerance_exp)? {
-                        return self.root.get_bounds();
+                        return self.root.get_prefix();
                     }
 
                     // 2. Check if there's any remaining work (eligible or outstanding).
@@ -352,7 +352,7 @@ impl RefinementGraph {
                         }
                         let skip = refiner_budgets[i].as_ref().is_some_and(|budget| {
                             refiner_nodes[i]
-                                .cached_bounds()
+                                .cached_prefix()
                                 .is_some_and(|b| b.width() <= *budget)
                         });
                         if !skip {
@@ -386,7 +386,7 @@ impl RefinementGraph {
                                 let above_budget =
                                     !refiner_budgets[i].as_ref().is_some_and(|budget| {
                                         refiner_nodes[i]
-                                            .cached_bounds()
+                                            .cached_prefix()
                                             .is_some_and(|b| b.width() <= *budget)
                                     });
                                 if above_budget {
@@ -418,7 +418,7 @@ impl RefinementGraph {
                     //    re-dispatch (their inputs may have changed). The
                     //    responding refiner is only marked for re-dispatch if
                     //    its bounds actually improved — this prevents wasteful
-                    //    re-dispatches when compute_bounds reads stale inputs
+                    //    re-dispatches when compute_prefix reads stale inputs
                     //    from slow refiners that haven't responded yet.
 
                     // Process a response: apply the update and return the refiner
@@ -498,7 +498,7 @@ impl RefinementGraph {
                         let (idx, exhaustion) = apply_response(first)?;
                         record_completion!(idx, exhaustion);
                         if precision_met(&self.root, tolerance_exp)? {
-                            return self.root.get_bounds();
+                            return self.root.get_prefix();
                         }
                     }
 
@@ -507,7 +507,7 @@ impl RefinementGraph {
                         let (idx, exhaustion) = apply_response(msg)?;
                         record_completion!(idx, exhaustion);
                         if precision_met(&self.root, tolerance_exp)? {
-                            return self.root.get_bounds();
+                            return self.root.get_prefix();
                         }
                     }
                 }
@@ -526,7 +526,7 @@ impl RefinementGraph {
     fn apply_update(&self, update: NodeUpdate) -> Result<(), ComputableError> {
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
-            node.set_bounds(update.prefix);
+            node.set_prefix(update.prefix);
             queue.push_back(node.id);
         }
 
@@ -539,9 +539,9 @@ impl RefinementGraph {
                     .nodes
                     .get(parent_id)
                     .ok_or(ComputableError::RefinementChannelClosed)?;
-                let next_bounds = parent.compute_bounds()?;
-                if parent.cached_bounds().as_ref() != Some(&next_bounds) {
-                    parent.set_bounds(next_bounds);
+                let next_prefix = parent.compute_prefix()?;
+                if parent.cached_prefix().as_ref() != Some(&next_prefix) {
+                    parent.set_prefix(next_prefix);
                     queue.push_back(*parent_id);
                 }
             }
@@ -627,7 +627,7 @@ fn refiner_loop(
         match commands.recv() {
             Ok(RefineCommand::Step { precision_bits }) => match node.refine_step(precision_bits) {
                 Ok(true) => {
-                    let prefix = match node.compute_bounds() {
+                    let prefix = match node.compute_prefix() {
                         Ok(b) => b,
                         Err(e) => {
                             // Safe to discard: send fails only when the coordinator
@@ -636,7 +636,7 @@ fn refiner_loop(
                             break;
                         }
                     };
-                    node.set_bounds(prefix.clone());
+                    node.set_prefix(prefix.clone());
                     if updates
                         .send(RefinerMessage::Update(NodeUpdate {
                             node_id: node.id,
@@ -648,7 +648,7 @@ fn refiner_loop(
                     }
                 }
                 Ok(false) => {
-                    let prefix = match node.compute_bounds() {
+                    let prefix = match node.compute_prefix() {
                         Ok(b) => b,
                         Err(e) => {
                             // Safe to discard: send fails only when the coordinator
@@ -657,7 +657,7 @@ fn refiner_loop(
                             break;
                         }
                     };
-                    node.set_bounds(prefix.clone());
+                    node.set_prefix(prefix.clone());
                     // Safe to discard: send fails only when the coordinator
                     // has already dropped update_rx (i.e. it already has a result).
                     let _send = updates.send(RefinerMessage::Exhausted {
@@ -670,7 +670,7 @@ fn refiner_loop(
                     break;
                 }
                 Err(ComputableError::StateUnchanged) => {
-                    let prefix = node.cached_bounds().unwrap_or_else(Prefix::unbounded);
+                    let prefix = node.cached_prefix().unwrap_or_else(Prefix::unbounded);
                     // Safe to discard: send fails only when the coordinator
                     // has already dropped update_rx (i.e. it already has a result).
                     let _send = updates.send(RefinerMessage::Exhausted {
@@ -736,7 +736,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    fn interval_bounds(state: &Prefix) -> Prefix {
+    fn interval_prefix(state: &Prefix) -> Prefix {
         state.clone()
     }
 
@@ -826,7 +826,7 @@ mod tests {
         assert!(bounds.small() <= &expected && expected <= upper);
         assert!(prefix_width_leq(&prefix, &tolerance_exp));
 
-        let refined_prefix = computable.bounds().expect("bounds should succeed");
+        let refined_prefix = computable.prefix().expect("bounds should succeed");
         let refined_bounds = to_bounds(&refined_prefix);
         let refined_upper = refined_bounds.large();
         assert!(refined_bounds.small() <= &expected && expected <= refined_upper);
@@ -861,7 +861,7 @@ mod tests {
         let interval_state = Prefix::from_lower_upper(xbin(0, 0), xbin(4, 0));
         let computable = Computable::new(
             interval_state,
-            |inner_state| Ok(interval_bounds(inner_state)),
+            |inner_state| Ok(interval_prefix(inner_state)),
             interval_refine_strict,
         );
         let tolerance_exp = XUsize::Finite(1);
@@ -872,7 +872,7 @@ mod tests {
         let upper = bounds.large();
         assert!(bounds.small() < &upper);
         assert!(prefix_width_leq(&prefix, &tolerance_exp));
-        assert_eq!(computable.bounds().expect("bounds should succeed"), prefix);
+        assert_eq!(computable.prefix().expect("bounds should succeed"), prefix);
     }
 
     #[test]
@@ -880,7 +880,7 @@ mod tests {
         let interval_state = Prefix::from_lower_upper(xbin(0, 0), xbin(1, 0));
         let computable = Computable::new(
             interval_state,
-            |inner_state| Ok(interval_bounds(inner_state)),
+            |inner_state| Ok(interval_prefix(inner_state)),
             |inner_state: Prefix| {
                 let upper = inner_state.upper();
                 let worse_upper = unwrap_finite(&upper).add(&bin(1, 0));
@@ -907,7 +907,7 @@ mod tests {
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
-        let prefix = original.bounds().expect("bounds should succeed");
+        let prefix = original.prefix().expect("bounds should succeed");
         assert!(prefix_width_leq(&prefix, &tolerance_exp));
     }
 
@@ -969,7 +969,7 @@ mod tests {
         let reader = Arc::clone(&computable);
         let handle = thread::spawn(move || {
             for _ in 0_i32..8_i32 {
-                let prefix = reader.bounds().expect("bounds should succeed");
+                let prefix = reader.prefix().expect("bounds should succeed");
                 assert_width_nonnegative(&prefix);
             }
         });
@@ -1132,7 +1132,7 @@ mod tests {
             thread::spawn(move || {
                 reader_barrier.wait();
                 for _ in 0_i32..32_i32 {
-                    let prefix = reader_value.bounds().expect("bounds should succeed");
+                    let prefix = reader_value.prefix().expect("bounds should succeed");
                     assert_width_nonnegative(&prefix);
                 }
             })

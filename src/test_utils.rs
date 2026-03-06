@@ -107,7 +107,7 @@ pub fn interval_refine(state: Prefix) -> Result<Prefix, crate::error::Computable
 /// # Examples
 /// ```ignore
 /// let interval = interval_midpoint_computable(1, 3); // [1, 3], refines to midpoint 2
-/// let bounds = interval.bounds().expect("bounds should succeed");
+/// let bounds = interval.prefix().expect("bounds should succeed");
 /// ```
 pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
     let initial_prefix = Prefix::from_lower_upper(xbin(lower, 0), xbin(upper, 0));
@@ -129,7 +129,7 @@ pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
 /// # Examples
 /// ```ignore
 /// let interval = interval_noop_computable(1, 3); // [1, 3], never refines
-/// let bounds = interval.bounds().expect("bounds should succeed");
+/// let bounds = interval.prefix().expect("bounds should succeed");
 /// ```
 pub fn interval_noop_computable(lower: i64, upper: i64) -> Computable {
     let initial_prefix = Prefix::from_lower_upper(xbin(lower, 0), xbin(upper, 0));

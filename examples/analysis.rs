@@ -17,7 +17,7 @@ mod common;
 use std::num::NonZeroU32;
 use std::time::Instant;
 
-use computable::{Binary, Computable, Prefix, XBinary, XUsize, pi, pi_bounds_at_precision};
+use computable::{Binary, Computable, Prefix, XBinary, XUsize, pi, pi_prefix_at_precision};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use rand::rngs::StdRng;
@@ -101,7 +101,7 @@ fn complex_analysis(rng: &mut StdRng) {
         })
         .collect();
     let total = balanced_sum(terms);
-    let bounds = total.bounds().expect("bounds should succeed");
+    let bounds = total.prefix().expect("bounds should succeed");
     let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
     let comp_duration = comp_start.elapsed();
 
@@ -152,7 +152,7 @@ fn summation_analysis(rng: &mut StdRng) {
     terms.push(Computable::constant(Binary::from_f64(base).unwrap()));
     terms.extend(computable_inputs.iter().cloned());
     let total = balanced_sum(terms);
-    let bounds = total.bounds().expect("bounds should succeed");
+    let bounds = total.prefix().expect("bounds should succeed");
     let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
     let comp_duration = comp_start.elapsed();
 
@@ -161,7 +161,7 @@ fn summation_analysis(rng: &mut StdRng) {
     // True sum without base (computable, no cancellation)
     let baseless_sum_computable = {
         let sum = balanced_sum(computable_inputs.clone());
-        let b = sum.bounds().expect("bounds should succeed");
+        let b = sum.prefix().expect("bounds should succeed");
         let f = try_finite_bounds(&b).expect("bounds should be finite");
         f.midpoint()
     };
@@ -413,13 +413,13 @@ fn pi_analysis() {
         }
     }
 
-    // pi_bounds_at_precision
+    // pi_prefix_at_precision
     println!();
-    println!("== pi_bounds_at_precision ==");
+    println!("== pi_prefix_at_precision ==");
     println!();
     for &bits in precision_bits {
         let start = Instant::now();
-        let (lower, upper) = pi_bounds_at_precision(bits);
+        let (lower, upper) = pi_prefix_at_precision(bits);
         let duration = start.elapsed();
         let width = upper.sub(&lower);
         let sum = lower.add(&upper);

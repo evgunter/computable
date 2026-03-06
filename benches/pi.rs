@@ -9,7 +9,7 @@ use num_bigint::BigInt;
 use common::{bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
 use computable::Prefix;
-use computable::{Binary, Computable, pi, pi_bounds_at_precision};
+use computable::{Binary, Computable, pi, pi_prefix_at_precision};
 
 bench_group! {
     name: pi_refinement,
@@ -24,7 +24,7 @@ bench_group! {
 bench_group! {
     name: pi_bounds,
     fn bench_pi_bounds(bits) -> (Binary, Binary) {
-        black_box(pi_bounds_at_precision(bits))
+        black_box(pi_prefix_at_precision(bits))
     }
 }
 
