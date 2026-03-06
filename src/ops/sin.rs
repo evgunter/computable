@@ -1,16 +1,16 @@
 //! Sine operation using Taylor series with provably correct error bounds.
 //!
 //! This module implements the sine function using:
-//! - **Full FiniteInterval Propagation**: All pi-related errors tracked as intervals
+//! - **Full FiniteBounds Propagation**: All pi-related errors tracked as intervals
 //! - Range reduction to [-pi/2, pi/2] for efficient Taylor series convergence
 //! - Critical point detection for tight bounds on intervals containing extrema
 //! - Directed rounding for provably correct interval arithmetic
 //!
-//! ## Key Design Decision: Full FiniteInterval Propagation
+//! ## Key Design Decision: Full FiniteBounds Propagation
 //!
 //! The approach propagates full intervals `[lo, hi]` through every operation:
-//! - `reduce_to_pi_range(x)` returns an FiniteInterval instead of a Binary
-//! - `reduce_to_half_pi_range(x)` returns `(FiniteInterval, bool)`
+//! - `reduce_to_pi_range(x)` returns an FiniteBounds instead of a Binary
+//! - `reduce_to_half_pi_range(x)` returns `(FiniteBounds, bool)`
 //! - All arithmetic uses proper interval arithmetic:
 //!   - `[a,b] + [c,d] = [a+c, b+d]`
 //!   - `[a,b] - [c,d] = [a-d, b-c]` (note the swap!)
@@ -21,17 +21,16 @@
 
 use std::sync::Arc;
 
-use crate::prefix::Prefix;
-
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
+use crate::binary::UXBinary;
 use crate::binary::{
-    Binary, ReciprocalRounding, UBinary, UXBinary, XBinary, reciprocal_of_biguint,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, XBinary, reciprocal_of_biguint,
 };
+use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
-use crate::finite_interval::FiniteInterval;
 use crate::node::{Node, NodeOp};
 
 /// Sine operation with Taylor series refinement.
@@ -42,11 +41,11 @@ pub struct SinOp {
 }
 
 impl NodeOp for SinOp {
-    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
-        let input_prefix = self.inner.get_prefix()?;
-        let pi_prefix = self.pi_node.get_prefix()?;
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+        let input_bounds = self.inner.get_bounds()?;
+        let pi_bounds = self.pi_node.get_bounds()?;
         let num_terms = self.num_terms.read().clone();
-        sin_prefix(&input_prefix, &pi_prefix, &num_terms)
+        sin_bounds(&input_bounds, &pi_bounds, &num_terms)
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
@@ -64,8 +63,8 @@ impl NodeOp for SinOp {
 
         // Leap to match input precision when possible (complementary: handles
         // cases where inner bounds are still wide).
-        if let Ok(input_prefix) = self.inner.get_prefix()
-            && let Some(width_bits) = estimate_precision_bits(&input_prefix)
+        if let Ok(input_bounds) = self.inner.get_bounds()
+            && let Some(width_bits) = estimate_precision_bits(&input_bounds)
         {
             let needed_n = (width_bits / 3).max(1);
             let needed = BigInt::from(needed_n);
@@ -98,16 +97,16 @@ impl NodeOp for SinOp {
             return target_width.clone();
         }
         // Pi child: budget = target · pi_lower / max_abs(input).
-        let input_max_abs = match self.inner.cached_prefix() {
-            Some(p) => {
-                let (lo, hi) = p.abs();
+        let input_max_abs = match self.inner.cached_bounds() {
+            Some(b) => {
+                let (lo, hi) = b.abs();
                 std::cmp::max(lo, hi)
             }
             None => return UXBinary::zero(),
         };
-        let pi_lower = match self.pi_node.cached_prefix() {
-            Some(p) => {
-                let (lo, _hi) = p.abs();
+        let pi_lower = match self.pi_node.cached_bounds() {
+            Some(b) => {
+                let (lo, _hi) = b.abs();
                 lo
             }
             None => return UXBinary::zero(),
@@ -115,13 +114,13 @@ impl NodeOp for SinOp {
         target_width.mul(&pi_lower).div_floor(&input_max_abs)
     }
 
-    fn budget_depends_on_prefix(&self) -> bool {
+    fn budget_depends_on_bounds(&self) -> bool {
         true
     }
 }
 
 //=============================================================================
-// Main sin_prefix function with full interval propagation
+// Main sin_bounds function with full interval propagation
 //=============================================================================
 
 /// Computes sin bounds for an input interval using full interval propagation.
@@ -134,37 +133,37 @@ impl NodeOp for SinOp {
 /// 4. Detect if reduced interval straddles critical points (pi/2, -pi/2)
 /// 5. Compute Taylor series on reduced interval
 /// 6. Apply sign flips and clamp to [-1, 1]
-fn sin_prefix(
-    input_prefix: &Prefix,
-    pi_prefix: &Prefix,
+fn sin_bounds(
+    input_bounds: &Bounds,
+    pi_bounds: &Bounds,
     num_terms: &BigInt,
-) -> Result<Prefix, ComputableError> {
+) -> Result<Bounds, ComputableError> {
     let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
     let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
 
     // Extract finite bounds, or return [-1, 1] for any infinite bounds
-    let lower = input_prefix.lower();
-    let upper = input_prefix.upper();
-    let minus_one_to_one = || {
-        Prefix::from_lower_upper(
-            XBinary::Finite(Binary::new(BigInt::from(-1_i32), BigInt::zero())),
-            XBinary::Finite(Binary::new(BigInt::from(1_i32), BigInt::zero())),
-        )
-    };
-    let (lower_bin, upper_bin) = match (&lower, &upper) {
-        (XBinary::Finite(l), XBinary::Finite(u)) => (l.clone(), u.clone()),
+    let lower = input_bounds.small();
+    let upper = input_bounds.large();
+    let (lower_bin, upper_bin) = match (lower, &upper) {
+        (XBinary::Finite(l), XBinary::Finite(u)) => (l, u),
         _ => {
-            return Ok(minus_one_to_one());
+            return Ok(Bounds::new(
+                XBinary::Finite(neg_one),
+                XBinary::Finite(pos_one),
+            ));
         }
     };
 
     // Extract finite pi bounds, or return [-1, 1] if pi bounds are infinite
-    let pi_lo = pi_prefix.lower();
-    let pi_hi = pi_prefix.upper();
-    let pi_interval = match (&pi_lo, &pi_hi) {
-        (XBinary::Finite(lo), XBinary::Finite(hi)) => FiniteInterval::new(lo.clone(), hi.clone()),
+    let pi_lo = pi_bounds.small();
+    let pi_hi_xb = pi_bounds.large();
+    let pi_interval = match (pi_lo, &pi_hi_xb) {
+        (XBinary::Finite(lo), XBinary::Finite(hi)) => FiniteBounds::new(lo.clone(), hi.clone()),
         _ => {
-            return Ok(minus_one_to_one());
+            return Ok(Bounds::new(
+                XBinary::Finite(neg_one),
+                XBinary::Finite(pos_one),
+            ));
         }
     };
 
@@ -180,13 +179,13 @@ fn sin_prefix(
         half_pi_hi_val.mantissa().clone(),
         half_pi_hi_val.exponent() - BigInt::one(),
     );
-    let half_pi_interval = FiniteInterval::new(half_pi_lo, half_pi_hi);
+    let half_pi_interval = FiniteBounds::new(half_pi_lo, half_pi_hi);
 
     // Convert num_terms to usize (capped at reasonable limit)
     let n = num_terms.to_usize().unwrap_or(1).max(1);
 
     // Process each endpoint through range reduction with full interval tracking
-    let input_interval = FiniteInterval::new(lower_bin.clone(), upper_bin.clone());
+    let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
 
     // Check if the input interval is wide enough to contain a full period.
     // Use the lower bound of 2π for the comparison: if the input width exceeds even
@@ -195,10 +194,13 @@ fn sin_prefix(
     // width is between two_pi_lo and true 2π), but we never miss a case where
     // the width truly exceeds 2π. Over-approximation is always sound; under-approximation
     // would be a correctness bug.
-    let input_width = upper_bin.sub(&lower_bin);
+    let input_width = upper_bin.sub(lower_bin);
     if input_width >= *two_pi_interval.lo() {
         // Input spans at least one full period, sin ranges over all of [-1, 1]
-        return Ok(minus_one_to_one());
+        return Ok(Bounds::new(
+            XBinary::Finite(neg_one),
+            XBinary::Finite(pos_one),
+        ));
     }
 
     // Perform range reduction with full interval propagation
@@ -216,24 +218,24 @@ fn sin_prefix(
             interval,
             sign_flip,
         } => {
-            // FiniteInterval is fully within [-pi/2, pi/2], use Taylor series
-            let sin_prefix = compute_sin_on_monotonic_interval(&interval, n);
+            // FiniteBounds is fully within [-pi/2, pi/2], use Taylor series
+            let sin_bounds = compute_sin_on_monotonic_interval(&interval, n);
             if sign_flip {
-                (sin_prefix.hi().neg(), sin_prefix.lo().neg())
+                (sin_bounds.hi().neg(), sin_bounds.lo().neg())
             } else {
-                (sin_prefix.lo().clone(), sin_prefix.hi())
+                (sin_bounds.lo().clone(), sin_bounds.hi())
             }
         }
         ReductionResult::ContainsMax { sin_min } => {
-            // FiniteInterval contains pi/2 where sin = 1
+            // FiniteBounds contains pi/2 where sin = 1
             (sin_min, pos_one.clone())
         }
         ReductionResult::ContainsMin { sin_max } => {
-            // FiniteInterval contains -pi/2 where sin = -1
+            // FiniteBounds contains -pi/2 where sin = -1
             (neg_one.clone(), sin_max)
         }
         ReductionResult::ContainsBoth => {
-            // FiniteInterval contains both critical points
+            // FiniteBounds contains both critical points
             (neg_one.clone(), pos_one.clone())
         }
         ReductionResult::SpansMultipleBranches {
@@ -257,10 +259,9 @@ fn sin_prefix(
         result_hi
     };
 
-    Ok(Prefix::from_lower_upper(
-        XBinary::Finite(clamped_lo),
-        XBinary::Finite(clamped_hi),
-    ))
+    // Normalize to prefix form to prevent precision accumulation
+    let finite = FiniteBounds::new(clamped_lo, clamped_hi);
+    normalize_finite_to_bounds(&finite)
 }
 
 //=============================================================================
@@ -270,18 +271,18 @@ fn sin_prefix(
 /// Result of range reduction to [-pi/2, pi/2].
 #[derive(Debug)]
 enum ReductionResult {
-    /// FiniteInterval is fully in [-pi/2, pi/2], can use Taylor directly
+    /// FiniteBounds is fully in [-pi/2, pi/2], can use Taylor directly
     InRange {
-        interval: FiniteInterval,
+        interval: FiniteBounds,
         sign_flip: bool,
     },
-    /// FiniteInterval contains pi/2 (sin maximum), provides minimum sin value
+    /// FiniteBounds contains pi/2 (sin maximum), provides minimum sin value
     ContainsMax { sin_min: Binary },
-    /// FiniteInterval contains -pi/2 (sin minimum), provides maximum sin value
+    /// FiniteBounds contains -pi/2 (sin minimum), provides maximum sin value
     ContainsMin { sin_max: Binary },
-    /// FiniteInterval contains both critical points
+    /// FiniteBounds contains both critical points
     ContainsBoth,
-    /// FiniteInterval spans multiple branches after reduction
+    /// FiniteBounds spans multiple branches after reduction
     SpansMultipleBranches {
         overall_lo: Binary,
         overall_hi: Binary,
@@ -303,10 +304,10 @@ enum ReductionResult {
 /// of which k we pick. The choice of k only affects how close we land to [-π, π] —
 /// not whether the result is a valid enclosure.
 fn reduce_to_pi_range_interval(
-    input: &FiniteInterval,
-    two_pi: &FiniteInterval,
-    pi: &FiniteInterval,
-) -> FiniteInterval {
+    input: &FiniteBounds,
+    two_pi: &FiniteBounds,
+    pi: &FiniteBounds,
+) -> FiniteBounds {
     let two_pi_mid = two_pi.midpoint();
     let neg_pi_hi = pi.hi().neg();
 
@@ -363,10 +364,10 @@ fn reduce_to_pi_range_interval(
 /// - If interval straddles pi/2: contains maximum (sin = 1)
 /// - If interval straddles -pi/2: contains minimum (sin = -1)
 fn reduce_to_half_pi_range_interval(
-    input: &FiniteInterval,
-    two_pi: &FiniteInterval,
-    pi: &FiniteInterval,
-    half_pi: &FiniteInterval,
+    input: &FiniteBounds,
+    two_pi: &FiniteBounds,
+    pi: &FiniteBounds,
+    half_pi: &FiniteBounds,
     n: usize,
 ) -> ReductionResult {
     // First reduce to [-pi, pi]
@@ -436,12 +437,12 @@ fn reduce_to_half_pi_range_interval(
     if spans_max {
         // The interval contains pi/2 where sin = 1
         // Compute the minimum sin value at the endpoints
-        let sin_prefix_at_lo = compute_sin_prefix_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-        let sin_prefix_at_hi = compute_sin_prefix_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
-        let sin_min = if sin_prefix_at_lo.lo() < sin_prefix_at_hi.lo() {
-            sin_prefix_at_lo.lo().clone()
+        let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
+        let sin_min = if sin_bounds_at_lo.lo() < sin_bounds_at_hi.lo() {
+            sin_bounds_at_lo.lo().clone()
         } else {
-            sin_prefix_at_hi.lo().clone()
+            sin_bounds_at_hi.lo().clone()
         };
 
         return ReductionResult::ContainsMax { sin_min };
@@ -450,12 +451,12 @@ fn reduce_to_half_pi_range_interval(
     // Case 6: Straddles -pi/2 only (contains minimum)
     if spans_min {
         // The interval contains -pi/2 where sin = -1
-        let sin_prefix_at_lo = compute_sin_prefix_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-        let sin_prefix_at_hi = compute_sin_prefix_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
-        let sin_max = if sin_prefix_at_lo.hi() > sin_prefix_at_hi.hi() {
-            sin_prefix_at_lo.hi()
+        let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
+        let sin_max = if sin_bounds_at_lo.hi() > sin_bounds_at_hi.hi() {
+            sin_bounds_at_lo.hi()
         } else {
-            sin_prefix_at_hi.hi()
+            sin_bounds_at_hi.hi()
         };
 
         return ReductionResult::ContainsMin { sin_max };
@@ -468,9 +469,9 @@ fn reduce_to_half_pi_range_interval(
     let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
     let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
 
-    let sin_prefix_1 = compute_sin_prefix_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-    let sin_prefix_2 = compute_sin_prefix_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
-    let combined = sin_prefix_1.join(&sin_prefix_2);
+    let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
+    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
+    let combined = sin_bounds_1.join(&sin_bounds_2);
 
     ReductionResult::SpansMultipleBranches {
         overall_lo: combined.lo().clone().max(neg_one),
@@ -486,16 +487,16 @@ fn reduce_to_half_pi_range_interval(
 ///
 /// When x falls within the uncertainty interval of a branch boundary (half_pi or -half_pi),
 /// both possible branches are evaluated and the union of their bounds is returned.
-fn compute_sin_prefix_for_point_with_pi(
+fn compute_sin_bounds_for_point_with_pi(
     x: &Binary,
     n: usize,
-    pi: &FiniteInterval,
-    half_pi: &FiniteInterval,
-) -> FiniteInterval {
+    pi: &FiniteBounds,
+    half_pi: &FiniteBounds,
+) -> FiniteBounds {
     let neg_half_pi = half_pi.interval_neg(); // [-pi/2_hi, -pi/2_lo]
 
     // For the transformation, we use the full interval to get proper bounds
-    let x_interval = FiniteInterval::point(x.clone());
+    let x_interval = FiniteBounds::point(x.clone());
 
     // Determine which branch(es) x could be in using interval bounds.
     // We use conservative comparisons:
@@ -517,8 +518,8 @@ fn compute_sin_prefix_for_point_with_pi(
     } else if definitely_below_neg_half_pi {
         // x is definitively in [-pi, -pi/2), transform: sin(x) = -sin(pi + x)
         let reduced_interval = pi.interval_add(&x_interval);
-        let sin_prefix = compute_sin_on_monotonic_interval(&reduced_interval, n);
-        FiniteInterval::new(sin_prefix.hi().neg(), sin_prefix.lo().neg())
+        let sin_bounds = compute_sin_on_monotonic_interval(&reduced_interval, n);
+        FiniteBounds::new(sin_bounds.hi().neg(), sin_bounds.lo().neg())
     } else if x >= half_pi.lo() {
         // x is in the boundary region around half_pi: [half_pi.lo, half_pi.hi]
         // Need to consider both the center branch and the upper branch
@@ -542,9 +543,9 @@ fn compute_sin_prefix_for_point_with_pi(
 
         // Lower branch: transform sin(x) = -sin(pi + x)
         let lower_reduced = pi.interval_add(&x_interval);
-        let lower_sin_prefix = compute_sin_on_monotonic_interval(&lower_reduced, n);
+        let lower_sin_bounds = compute_sin_on_monotonic_interval(&lower_reduced, n);
         let lower_bounds =
-            FiniteInterval::new(lower_sin_prefix.hi().neg(), lower_sin_prefix.lo().neg());
+            FiniteBounds::new(lower_sin_bounds.hi().neg(), lower_sin_bounds.lo().neg());
 
         // Take the union of bounds from both branches
         center_bounds.join(&lower_bounds)
@@ -658,7 +659,7 @@ fn truncate_precision_directed(
 ///
 /// Since sin is monotonically increasing on [-pi/2, pi/2], we can simply
 /// evaluate at the endpoints.
-fn compute_sin_on_monotonic_interval(interval: &FiniteInterval, n: usize) -> FiniteInterval {
+fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> FiniteBounds {
     // sin is monotonic increasing on [-pi/2, pi/2]
     // So: sin([a, b]) = [sin(a)_lo, sin(b)_hi]
     //
@@ -673,10 +674,10 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteInterval, n: usize) -> Fin
     let truncated_hi =
         truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
 
-    let (sin_lo_bounds_lo, _) = taylor_sin_interval(&truncated_lo, n, target_precision);
-    let (_, sin_hi_bounds_hi) = taylor_sin_interval(&truncated_hi, n, target_precision);
+    let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n, target_precision);
+    let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n, target_precision);
 
-    FiniteInterval::new(sin_lo_bounds_lo, sin_hi_bounds_hi)
+    FiniteBounds::new(sin_lo_bounds_lo, sin_hi_bounds_hi)
 }
 
 /// Rounding direction for directed rounding in interval arithmetic.
@@ -698,7 +699,7 @@ enum RoundingDirection {
 /// partial sums simultaneously, then derives the error bound from the loop's final
 /// power/factorial state. This eliminates 2/3 of the expensive BigInt power and
 /// factorial multiplications compared to running three independent loops.
-fn taylor_sin_interval(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
+fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
     if n == 0 {
         // No terms: error bound is |x|^1 / 1! = |x|
         let abs_x = x.magnitude().to_binary();
@@ -819,19 +820,19 @@ fn divide_by_factorial_directed(
     value.mul(&reciprocal)
 }
 
-/// Estimates the number of precision bits in a `Prefix` interval.
+/// Estimates the number of precision bits in a `Bounds` interval.
 ///
 /// Returns `Some(bits)` where `bits ≈ -log2(width)` for finite bounds with
 /// nonzero width. Returns `None` for zero-width (exact) or infinite bounds.
-fn estimate_precision_bits(prefix: &Prefix) -> Option<usize> {
-    let lo = prefix.lower();
-    let hi = prefix.upper();
-    let (lo_bin, hi_bin) = match (&lo, &hi) {
-        (XBinary::Finite(l), XBinary::Finite(h)) => (l.clone(), h.clone()),
+fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
+    let lo = bounds.small();
+    let hi_xb = bounds.large();
+    let (lo_bin, hi_bin) = match (lo, &hi_xb) {
+        (XBinary::Finite(l), XBinary::Finite(h)) => (l, h),
         _ => return None,
     };
 
-    let width = hi_bin.sub(&lo_bin);
+    let width = hi_bin.sub(lo_bin);
     if width.mantissa().is_zero() {
         return None;
     }
@@ -847,147 +848,201 @@ fn estimate_precision_bits(prefix: &Prefix) -> Option<usize> {
 
 // Test helpers - exposed for integration tests
 #[cfg(test)]
-pub fn taylor_sin_interval_test(x: &Binary, n: usize) -> (Binary, Binary) {
-    taylor_sin_interval(x, n, n.checked_mul(10).expect("n * 10 does not overflow"))
+pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
+    taylor_sin_bounds(x, n, n.checked_mul(10).expect("n * 10 does not overflow"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::computable::Computable;
-    use crate::refinement::{XUsize, prefix_width_leq};
-    use crate::test_utils::{
-        assert_bounds_compatible_with_expected, bin, interval_midpoint_computable, to_bounds,
-        unwrap_finite, xbin,
-    };
+    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite, xbin};
+
+    fn assert_bounds_compatible_with_expected(
+        bounds: &Bounds,
+        expected: &Binary,
+        tolerance_exp: &XUsize,
+    ) {
+        let lower = unwrap_finite(bounds.small());
+        let upper_xb = bounds.large();
+        let upper = unwrap_finite(&upper_xb);
+
+        assert!(lower <= *expected && *expected <= upper);
+        assert!(bounds_width_leq(bounds, tolerance_exp));
+    }
 
     #[test]
     fn sin_of_zero() {
         let zero = Computable::constant(bin(0, 0));
         let sin_zero = zero.sin();
         let epsilon = XUsize::Finite(8);
-        let prefix = sin_zero
+        let bounds = sin_zero
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-        assert_bounds_compatible_with_expected(&prefix, &bin(0, 0), &epsilon);
+
+        // sin(0) = 0
+        let expected = bin(0, 0);
+        assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
     }
 
     #[test]
     fn sin_of_pi_over_2() {
+        // pi/2 ~= 1.5707963...
+        // We approximate it as 3217/2048 ~= 1.5708...
         let pi_over_2 = Computable::constant(bin(3217, -11));
         let sin_pi_2 = pi_over_2.sin();
         let epsilon = XUsize::Finite(6);
-        let prefix = sin_pi_2
+        let bounds = sin_pi_2
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-        let bounds = to_bounds(&prefix);
+
+        // sin(pi/2) = 1
         let expected_f64 = (std::f64::consts::FRAC_PI_2).sin();
         let expected_binary = XBinary::from_f64(expected_f64)
             .expect("expected value should convert to extended binary");
         let expected = unwrap_finite(&expected_binary);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
+
+        // sin(pi/2) should be very close to 1
         assert!(lower <= expected && expected <= upper);
     }
 
     #[test]
     fn sin_of_pi() {
+        // pi ~= 3.14159...
+        // We approximate it as 6434/2048 ~= 3.1416...
         let pi_approx = Computable::constant(bin(6434, -11));
         let sin_pi = pi_approx.sin();
         let epsilon = XUsize::Finite(6);
-        let prefix = sin_pi
+        let bounds = sin_pi
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-        let bounds = to_bounds(&prefix);
+
+        // sin(pi) ~= 0 (should be close to 0)
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-        assert!(lower >= bin(-1, -4));
-        assert!(upper <= bin(1, -4));
+
+        // sin(pi) should be very close to 0
+        let small_bound = bin(1, -4);
+        let neg_small_bound = bin(-1, -4);
+        assert!(lower >= neg_small_bound);
+        assert!(upper <= small_bound);
     }
 
     #[test]
     fn sin_of_negative_pi_over_2() {
+        // -pi/2 ~= -1.5707963...
         let neg_pi_over_2 = Computable::constant(bin(-3217, -11));
         let sin_neg_pi_2 = neg_pi_over_2.sin();
         let epsilon = XUsize::Finite(6);
-        let prefix = sin_neg_pi_2
+        let bounds = sin_neg_pi_2
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-        let bounds = to_bounds(&prefix);
+
+        // sin(-pi/2) = -1
         let expected_f64 = (-std::f64::consts::FRAC_PI_2).sin();
         let expected_binary = XBinary::from_f64(expected_f64)
             .expect("expected value should convert to extended binary");
         let expected = unwrap_finite(&expected_binary);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
+
+        // sin(-pi/2) should be very close to -1
         assert!(lower <= expected && expected <= upper);
     }
 
     #[test]
-    fn sin_prefix_always_in_minus_one_to_one() {
+    fn sin_bounds_always_in_minus_one_to_one() {
+        // Test with a large value that exercises argument reduction
         let large_value = Computable::constant(bin(100, 0));
         let sin_large = large_value.sin();
-        let prefix = sin_large.prefix().expect("bounds should succeed");
-        let bounds = to_bounds(&prefix);
+        let bounds = sin_large.bounds().expect("bounds should succeed");
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-        assert!(lower >= bin(-1, 0));
-        assert!(upper <= bin(1, 0));
+
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+
+        assert!(lower >= neg_one);
+        assert!(upper <= one);
     }
 
     #[test]
     fn sin_of_small_value() {
-        let small = Computable::constant(bin(1, -4));
+        // For small x, sin(x) ~= x
+        let small = Computable::constant(bin(1, -4)); // 1/16 = 0.0625
         let sin_small = small.sin();
         let epsilon = XUsize::Finite(8);
-        let prefix = sin_small
+        let bounds = sin_small
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-        let bounds = to_bounds(&prefix);
+
+        // sin(0.0625) ~= 0.0624593...
         let expected = XBinary::from_f64(0.0625_f64.sin())
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
+
         assert!(lower <= expected_value && expected_value <= upper);
     }
 
     #[test]
     fn sin_interval_spanning_maximum() {
-        let computable = interval_midpoint_computable(1, 2);
+        // An interval that spans pi/2 (where sin has maximum)
+        let computable = interval_midpoint_computable(1, 2); // [1, 2] includes pi/2 ~= 1.57
         let sin_interval = computable.sin();
-        let prefix = sin_interval.prefix().expect("bounds should succeed");
-        let bounds = to_bounds(&prefix);
+        let bounds = sin_interval.bounds().expect("bounds should succeed");
+
         let upper = unwrap_finite(&bounds.large());
-        assert!(upper >= bin(1, -1));
+
+        // The upper bound should be close to 1 since the interval contains pi/2
+        assert!(upper >= bin(1, -1)); // Upper bound should be at least 0.5
     }
 
     #[test]
     fn sin_with_infinite_input_bounds() {
-        let unbounded = Computable::new(0usize, |_| Ok(Prefix::unbounded()), |state| Ok(state + 1));
+        let unbounded = Computable::new(
+            0usize,
+            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |state| Ok(state + 1),
+        );
         let sin_unbounded = unbounded.sin();
-        let prefix = sin_unbounded.prefix().expect("bounds should succeed");
-        let bounds = to_bounds(&prefix);
+        let bounds = sin_unbounded.bounds().expect("bounds should succeed");
+
+        // sin of unbounded input should be [-1, 1]
         assert_eq!(bounds.small(), &xbin(-1, 0));
         assert_eq!(&bounds.large(), &xbin(1, 0));
     }
 
     #[test]
     fn sin_expression_with_arithmetic() {
-        let x = Computable::constant(bin(1, 0));
+        // Test sin(x) + cos-like expression: sin(x)^2 + sin(x + pi/2)^2 should be close to 1
+        // Here we just test that sin works in expressions
+        let x = Computable::constant(bin(1, 0)); // x = 1
         let sin_x = x.clone().sin();
         let two = Computable::constant(bin(2, 0));
-        let expr = sin_x.clone() * two;
+        let expr = sin_x.clone() * two; // 2 * sin(1)
+
         let epsilon = XUsize::Finite(8);
-        let prefix = expr
+        let bounds = expr
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-        let bounds = to_bounds(&prefix);
+
+        // 2 * sin(1) ~= 2 * 0.8414... ~= 1.6829...
         let expected = XBinary::from_f64(2.0 * 1.0_f64.sin())
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
+
         assert!(lower <= expected_value && expected_value <= upper);
     }
 
@@ -1009,7 +1064,7 @@ mod tests {
 
         for x in &test_cases {
             // Compute Taylor bounds with directed rounding
-            let (lower, upper) = taylor_sin_interval_test(x, 10);
+            let (lower, upper) = taylor_sin_bounds_test(x, 10);
 
             // Verify bounds are ordered correctly
             assert!(
@@ -1041,8 +1096,8 @@ mod tests {
         // Verify that bounds get tighter as we add more terms
         let x = bin(1, 0); // 1.0
 
-        let (lower5, upper5) = taylor_sin_interval_test(&x, 5);
-        let (lower10, upper10) = taylor_sin_interval_test(&x, 10);
+        let (lower5, upper5) = taylor_sin_bounds_test(&x, 5);
+        let (lower10, upper10) = taylor_sin_bounds_test(&x, 10);
 
         let width5 = upper5.sub(&lower5);
         let width10 = upper10.sub(&lower10);
@@ -1064,8 +1119,8 @@ mod tests {
         let x = bin(1, -2); // 0.25
         let neg_x = bin(-1, -2); // -0.25
 
-        let (lower_x, upper_x) = taylor_sin_interval_test(&x, 10);
-        let (lower_neg_x, upper_neg_x) = taylor_sin_interval_test(&neg_x, 10);
+        let (lower_x, upper_x) = taylor_sin_bounds_test(&x, 10);
+        let (lower_neg_x, upper_neg_x) = taylor_sin_bounds_test(&neg_x, 10);
 
         // sin(-x) = -sin(x), so bounds should be negated and swapped
         // lower(-x) should equal -upper(x)
@@ -1089,11 +1144,11 @@ mod tests {
 
     #[test]
     fn directed_rounding_lower_bound_is_lower() {
-        // Verify that the lower bound is <= the upper bound from taylor_sin_interval
+        // Verify that the lower bound is <= the upper bound from taylor_sin_bounds
         let x = bin(1, 0); // 1.0
         let n = 5;
 
-        let (lower, upper) = taylor_sin_interval_test(&x, n);
+        let (lower, upper) = taylor_sin_bounds_test(&x, n);
 
         // The lower bound should be <= upper bound
         assert!(
@@ -1106,24 +1161,37 @@ mod tests {
 
     #[test]
     fn sin_of_large_multiple_of_pi() {
-        let x = Computable::constant(bin(100, 0));
+        // Test sin(100) which requires significant range reduction
+        // This exercises the pi error propagation
+        let x = Computable::constant(bin(100, 0)); // 100
         let sin_x = x.sin();
         let epsilon = XUsize::Finite(4);
-        let prefix = sin_x
+        let bounds = sin_x
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-        let bounds = to_bounds(&prefix);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 
-        assert!(lower >= bin(-1, 0), "lower bound should be >= -1");
-        assert!(upper <= bin(1, 0), "upper bound should be <= 1");
+        // Verify bounds are within [-1, 1]
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+        assert!(lower >= neg_one, "lower bound should be >= -1");
+        assert!(upper <= one, "upper bound should be <= 1");
 
+        // sin(100) ~= -0.5063...
+        // Our bounds should be close to this value
+        // Due to pi approximation errors accumulated over 16 periods,
+        // we allow some tolerance in the bounds
         let expected_approx = -0.5063_f64;
         let expected_binary = XBinary::from_f64(expected_approx)
             .expect("expected value should convert to extended binary");
         let expected_value = unwrap_finite(&expected_binary);
-        let tolerance = bin(1, -2);
+
+        // Check that bounds are in a reasonable range around the expected value
+        // The accumulated pi error for k=16 periods means our result could differ
+        // from the mathematical value. We verify the bounds are reasonable.
+        let tolerance = bin(1, -2); // Allow 0.25 tolerance for large k
         assert!(
             lower <= expected_value.add(&tolerance) && expected_value.sub(&tolerance) <= upper,
             "sin(100) bounds [{}, {}] should be within tolerance of expected value {}",
@@ -1135,21 +1203,24 @@ mod tests {
 
     #[test]
     fn sin_pi_bounds_contain_zero() {
-        use super::super::pi::pi_prefix_at_precision;
+        // Use our pi implementation for a more precise test
+        use super::super::pi::pi_bounds_at_precision;
 
-        let (pi_lo, pi_hi) = pi_prefix_at_precision(64);
+        let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
         let pi_mid = pi_lo.add(&pi_hi);
         let pi_approx = Binary::new(pi_mid.mantissa().clone(), pi_mid.exponent() - BigInt::one());
 
         let sin_pi = Computable::constant(pi_approx).sin();
         let epsilon = XUsize::Finite(10);
-        let prefix = sin_pi
+        let bounds = sin_pi
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-        let bounds = to_bounds(&prefix);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
         let zero = bin(0, 0);
+
+        // sin(pi) = 0, bounds should contain zero
         assert!(
             lower <= zero && zero <= upper,
             "sin(pi) bounds [{}, {}] should contain zero",
@@ -1160,22 +1231,28 @@ mod tests {
 
     #[test]
     fn sin_of_one_to_512_bit_precision() {
+        // Verify that the adaptive-precision fix allows sin to converge well
+        // beyond the old 64-bit cap. We request 512-bit precision (epsilon = 2^-512).
+        // sin(1) ≈ 0.8414709848... is in [-pi/2, pi/2], so it exercises both
+        // compute_sin_on_monotonic_interval and divide_by_factorial_directed directly.
         let one = Computable::constant(bin(1, 0));
         let sin_one = one.sin();
         let epsilon = XUsize::Finite(512);
-        let prefix = sin_one
+        // Need many Taylor terms for 512-bit accuracy; allow up to 1024 refinement steps.
+        let bounds = sin_one
             .refine_to::<1024>(epsilon)
             .expect("refine_to 512-bit precision should succeed");
 
+        // Width must be at most 2^-512
         assert!(
-            prefix_width_leq(&prefix, &epsilon),
+            bounds_width_leq(&bounds, &epsilon),
             "width should be <= 2^-512"
         );
 
-        let bounds = to_bounds(&prefix);
+        // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-        let midpoint = FiniteInterval::new(lower, upper).midpoint();
+        let midpoint = FiniteBounds::new(lower, upper).midpoint();
         let expected_f64 = 1.0_f64.sin();
         let expected_bin =
             unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
@@ -1197,19 +1274,23 @@ mod tests {
 
     #[test]
     fn sin_extremely_large_input() {
-        let large = Computable::constant(bin(1, 20));
+        // Correctness invariant for large inputs: 2^20 ≈ 1_048_576 (k ≈ 166_886).
+        let large = Computable::constant(bin(1, 20)); // 2^20 = 1_048_576
         let sin_large = large.sin();
         let epsilon = XUsize::Finite(4);
-        let prefix = sin_large
+        let bounds = sin_large
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for very large input");
-        let bounds = to_bounds(&prefix);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 
-        assert!(lower >= bin(-1, 0), "lower bound {} should be >= -1", lower);
-        assert!(upper <= bin(1, 0), "upper bound {} should be <= 1", upper);
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+        assert!(lower >= neg_one, "lower bound {} should be >= -1", lower);
+        assert!(upper <= one, "upper bound {} should be <= 1", upper);
 
+        // sin(2^20) ≈ -0.24271... — verify bounds contain this
         let expected_f64 = (1048576.0_f64).sin();
         let expected =
             unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
@@ -1224,34 +1305,42 @@ mod tests {
 
     #[test]
     fn sin_very_large_input_2_pow_30() {
+        // Correctness invariant: 2^30 ≈ 1 billion, k ≈ 170 million
         let large = Computable::constant(bin(1, 30));
         let sin_large = large.sin();
         let epsilon = XUsize::Finite(4);
-        let prefix = sin_large
+        let bounds = sin_large
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for 2^30 input");
-        let bounds = to_bounds(&prefix);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-        assert!(lower >= bin(-1, 0), "lower bound should be >= -1");
-        assert!(upper <= bin(1, 0), "upper bound should be <= 1");
+
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+        assert!(lower >= neg_one, "lower bound should be >= -1");
+        assert!(upper <= one, "upper bound should be <= 1");
     }
 
     #[test]
     fn sin_negative_large_input() {
+        // Correctness invariant: large negative input -10000
         let x = Computable::constant(bin(-10000, 0));
         let sin_x = x.sin();
         let epsilon = XUsize::Finite(4);
-        let prefix = sin_x
+        let bounds = sin_x
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for large negative input");
-        let bounds = to_bounds(&prefix);
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
 
-        assert!(lower >= bin(-1, 0), "lower bound should be >= -1");
-        assert!(upper <= bin(1, 0), "upper bound should be <= 1");
+        let neg_one = bin(-1, 0);
+        let one = bin(1, 0);
+        assert!(lower >= neg_one, "lower bound should be >= -1");
+        assert!(upper <= one, "upper bound should be <= 1");
 
+        // sin(-10000) ≈ 0.30561... — verify bounds contain this
         let expected_f64 = (-10000.0_f64).sin();
         let expected =
             unwrap_finite(&XBinary::from_f64(expected_f64).expect("expected value should convert"));
@@ -1266,43 +1355,70 @@ mod tests {
 
     #[test]
     fn sin_midpoint_correctness_uses_lo_bound() {
-        use super::super::pi::{pi_prefix_at_precision, two_pi_interval_at_precision};
+        // Regression test for sin-midpoint-correctness: verify that the full-period
+        // check uses the lower bound of 2π (conservative direction).
+        //
+        // We directly call sin_bounds with an interval whose width is slightly
+        // above the lower bound of 2π. The result should be [-1, 1] because
+        // the interval might span a full period.
+        use super::super::pi::{pi_bounds_at_precision, two_pi_interval_at_precision};
 
         let two_pi = two_pi_interval_at_precision(64);
+        // Create an interval [0, two_pi_lo + epsilon]: width > two_pi_lo
         let lo = bin(0, 0);
         let hi = two_pi.lo().add(&bin(1, -60));
-        let input_prefix = Prefix::from_lower_upper(XBinary::Finite(lo), XBinary::Finite(hi));
-        let (pi_lo, pi_hi) = pi_prefix_at_precision(64);
-        let pi_prefix = Prefix::from_lower_upper(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
-        let result = sin_prefix(&input_prefix, &pi_prefix, &BigInt::from(5_i32))
-            .expect("sin_prefix should succeed");
-        let result_bounds = to_bounds(&result);
-        let lower = unwrap_finite(result_bounds.small());
-        let upper = unwrap_finite(&result_bounds.large());
+        let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
+        let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
+        let pi_bounds = Bounds::new(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
+        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(5_i32))
+            .expect("sin_bounds should succeed");
+
+        // Because the width >= two_pi_lo, the conservative check should trigger
+        // and return [-1, 1] (possibly slightly widened by simplification).
+        let lower = unwrap_finite(result.small());
+        let upper = unwrap_finite(&result.large());
+
+        // The key property: the bounds must be at least as wide as [-1, 1]
         assert!(lower <= bin(-1, 0), "lower bound {} should be <= -1", lower);
         assert!(upper >= bin(1, 0), "upper bound {} should be >= 1", upper);
     }
 
     #[test]
     fn sin_interval_straddling_both_critical_points() {
+        // Correctness invariant: [-2, 2] straddles both +pi/2 and -pi/2.
         let computable = interval_midpoint_computable(-2, 2);
         let sin_x = computable.sin();
-        let prefix = sin_x.prefix().expect("bounds should succeed");
-        let bounds = to_bounds(&prefix);
+        let bounds = sin_x.bounds().expect("bounds should succeed");
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-        assert!(lower <= bin(-1, 0), "lower bound {} should be <= -1", lower);
-        assert!(upper >= bin(1, 0), "upper bound {} should be >= 1", upper);
+
+        // The interval contains both pi/2 (sin=1) and -pi/2 (sin=-1),
+        // so the bounds must cover [-1, 1].
+        assert!(
+            lower <= bin(-1, 0),
+            "lower bound {} should be <= -1 (interval straddles both critical points)",
+            lower
+        );
+        assert!(
+            upper >= bin(1, 0),
+            "upper bound {} should be >= 1 (interval straddles both critical points)",
+            upper
+        );
     }
 
     #[test]
     fn sin_wide_interval_near_period_boundary() {
+        // Regression: [-3, 3] straddles both ±pi/2. The old code's Case 4
+        // (ContainsMax) fired first, producing a lower bound above -1.
         let computable = interval_midpoint_computable(-3, 3);
         let sin_x = computable.sin();
-        let prefix = sin_x.prefix().expect("bounds should succeed");
-        let bounds = to_bounds(&prefix);
+        let bounds = sin_x.bounds().expect("bounds should succeed");
+
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
+
+        // Width ~6 covers both ±pi/2, so bounds must include [-1, 1]
         assert!(lower <= bin(-1, 0), "lower bound should be <= -1");
         assert!(upper >= bin(1, 0), "upper bound should be >= 1");
     }

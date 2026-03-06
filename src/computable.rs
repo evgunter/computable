@@ -10,12 +10,12 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use num_traits::One;
 
+use crate::binary::Bounds;
 use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
-use crate::prefix::Prefix;
-use crate::refinement::{RefinementGraph, XUsize, prefix_width_leq};
+use crate::refinement::{RefinementGraph, XUsize, bounds_width_leq};
 
 use parking_lot::RwLock;
 
@@ -45,7 +45,7 @@ impl Computable {
     pub fn new<X, B, F>(state: X, bounds: B, refine: F) -> Self
     where
         X: Eq + Clone + Send + Sync + 'static,
-        B: Fn(&X) -> Result<Prefix, ComputableError> + Send + Sync + 'static,
+        B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
         F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
     {
         let base_node_struct = TypedBaseNode::new(state, bounds, refine);
@@ -59,9 +59,9 @@ impl Computable {
         Self { node }
     }
 
-    /// Returns the current prefix for this computable.
-    pub fn prefix(&self) -> Result<Prefix, ComputableError> {
-        self.node.get_prefix()
+    /// Returns the current bounds for this computable.
+    pub fn bounds(&self) -> Result<Bounds, ComputableError> {
+        self.node.get_bounds()
     }
 
     /// Refines this computable until the bounds width is at most 2^(-tolerance_exp).
@@ -82,11 +82,11 @@ impl Computable {
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
         &self,
         tolerance_exp: XUsize,
-    ) -> Result<Prefix, ComputableError> {
+    ) -> Result<Bounds, ComputableError> {
         loop {
-            let prefix = self.node.get_prefix()?;
-            if prefix_width_leq(&prefix, &tolerance_exp) {
-                return Ok(prefix);
+            let bounds = self.node.get_bounds()?;
+            if bounds_width_leq(&bounds, &tolerance_exp) {
+                return Ok(bounds);
             }
 
             let mut state_guard = self.node.refinement.state.lock();
@@ -114,7 +114,7 @@ impl Computable {
     }
 
     /// Refines this computable using the default maximum iterations.
-    pub fn refine_to_default(&self, tolerance_exp: XUsize) -> Result<Prefix, ComputableError> {
+    pub fn refine_to_default(&self, tolerance_exp: XUsize) -> Result<Bounds, ComputableError> {
         self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(tolerance_exp)
     }
 
@@ -178,7 +178,7 @@ impl Computable {
     /// # Arguments
     /// * `exponent` - The power to raise to (n in x^n).
     ///
-    /// # Prefix Computation
+    /// # Bounds Computation
     /// - For n=0: returns constant 1 (including 0^0 = 1 by convention)
     /// - For odd n: x^n is monotonically increasing, so bounds are [lower^n, upper^n]
     /// - For even n: x^n has a minimum at 0
@@ -195,9 +195,9 @@ impl Computable {
             None => {
                 // x^0 = 1 for all x, including 0^0 = 1 by convention
                 // Check for infinite bounds - infinity^0 is an indeterminate form.
-                if let Ok(prefix) = self.node.get_prefix() {
-                    let has_infinite = matches!(prefix.lower(), XBinary::NegInf | XBinary::PosInf)
-                        || matches!(prefix.upper(), XBinary::NegInf | XBinary::PosInf);
+                if let Ok(bounds) = self.node.get_bounds() {
+                    let has_infinite = matches!(bounds.small(), XBinary::NegInf | XBinary::PosInf)
+                        || matches!(&bounds.large(), XBinary::NegInf | XBinary::PosInf);
                     if has_infinite {
                         crate::detected_computable_with_infinite_value!(
                             "input has infinite bounds for x^0 (infinity^0 is an indeterminate form)"
@@ -219,17 +219,20 @@ impl Computable {
         }
     }
 
-    /// Creates a constant computable with an exact prefix.
+    /// Creates a constant computable with exact bounds.
     pub fn constant(value: Binary) -> Self {
-        fn prefix_fn(value: &Binary) -> Result<Prefix, ComputableError> {
-            Ok(Prefix::exact(value.clone()))
+        fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
+            Ok(Bounds::new(
+                XBinary::Finite(value.clone()),
+                XBinary::Finite(value.clone()),
+            ))
         }
 
         fn refine(value: Binary) -> Result<Binary, ComputableError> {
             Ok(value)
         }
 
-        Computable::new(value, prefix_fn, refine)
+        Computable::new(value, bounds, refine)
     }
 }
 
@@ -295,7 +298,7 @@ impl std::ops::Div for Computable {
 mod tests {
     use super::*;
     use crate::refinement::XUsize;
-    use crate::test_utils::{bin, epsilon_as_binary, to_bounds, unwrap_finite};
+    use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
         Computable::constant(bin(i64::try_from(value_int).expect("value fits in i64"), 0))
@@ -303,12 +306,15 @@ mod tests {
     }
 
     #[test]
-    fn from_binary_matches_constant_prefix() {
+    fn from_binary_matches_constant_bounds() {
         let value = bin(3, 0);
         let computable: Computable = value.clone().into();
 
-        let bounds = computable.prefix().expect("bounds should succeed");
-        assert_eq!(bounds, Prefix::exact(value));
+        let bounds = computable.bounds().expect("bounds should succeed");
+        assert_eq!(
+            bounds,
+            Bounds::new(XBinary::Finite(value.clone()), XBinary::Finite(value))
+        );
     }
 
     #[test]
@@ -318,11 +324,10 @@ mod tests {
         let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
 
         let tolerance_exp = XUsize::Finite(12);
-        let prefix = expr
+        let bounds = expr
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
-        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
         let upper = unwrap_finite(&upper_xb);
@@ -345,11 +350,10 @@ mod tests {
         let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
 
         let tolerance_exp = XUsize::Finite(12);
-        let prefix = expr
+        let bounds = expr
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
-        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
         let upper = unwrap_finite(&upper_xb);
