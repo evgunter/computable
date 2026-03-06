@@ -10,7 +10,7 @@
 //! The module also provides:
 //! - [`BinaryError`] and [`XBinaryError`]: Error types for binary operations
 //! - [`ReciprocalRounding`]: Rounding modes for reciprocal computation
-//! - [`reciprocal_rounded_abs_extended`]: Reciprocal computation function
+//! - [`reciprocal_with_remainder`], [`extend_reciprocal`]: Reciprocal computation with remainder carry
 //!
 //! # Architecture
 //!
@@ -45,7 +45,10 @@ mod xbinary;
 // Re-export all public types
 pub use binary_impl::Binary;
 pub use error::{BinaryError, XBinaryError};
-pub use reciprocal::{ReciprocalRounding, reciprocal_of_biguint, reciprocal_rounded_abs_extended};
+pub use reciprocal::{
+    ReciprocalRounding, ReciprocalWithRemainder, extend_reciprocal, reciprocal_of_biguint,
+    reciprocal_with_remainder,
+};
 pub use ubinary::UBinary;
 pub use uxbinary::UXBinary;
 pub use xbinary::XBinary;
