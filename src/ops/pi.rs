@@ -3,12 +3,14 @@
 //! This module implements pi as a Computable number using:
 //! - Machin's formula: pi/4 = 4*arctan(1/5) - arctan(1/239)
 //! - Taylor series for arctan with rigorous error bounds
-//! - Directed rounding for interval arithmetic
+//! - InvOp (Newton-Raphson) for incremental reciprocal refinement
 //!
 //! ## Key Design Decisions
 //!
-//! 1. **Full Interval Propagation**: Every intermediate computation tracks [lo, hi] bounds
-//! 2. **Directed Rounding**: Lower bounds round down, upper bounds round up
+//! 1. **InvOp-backed reciprocals**: Each Taylor term `1/((2i+1)*k^(2i+1))` is an
+//!    InvOp node. Existing approximations are refined incrementally (precision doubles
+//!    per N-R step) rather than recomputed from scratch.
+//! 2. **Full Interval Propagation**: Every intermediate computation tracks [lo, hi] bounds
 //! 3. **Error Bound Tracking**: Taylor truncation error is computed conservatively
 //! 4. **Dynamic Precision**: Pi bounds can be refined to arbitrary precision
 
@@ -20,9 +22,13 @@ use parking_lot::RwLock;
 use crate::binary::{Binary, ReciprocalRounding, UXBinary, XBinary, reciprocal_of_biguint};
 use crate::computable::Computable;
 use crate::error::ComputableError;
-use crate::node::{Node, NodeOp};
+use crate::node::{BaseNode, Node, NodeOp, TypedBaseNode};
 use crate::prefix::Prefix;
+use crate::refinement::{XUsize, prefix_width_leq};
 use crate::sane::Sane;
+
+use super::BaseOp;
+use super::InvOp;
 
 /// Initial number of Taylor series terms for pi computation.
 pub(crate) const INITIAL_PI_TERMS: usize = 10;
@@ -88,9 +94,7 @@ fn precision_bits_for_num_terms(num_terms: usize) -> usize {
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
 pub fn pi() -> Computable {
-    let node = Node::new(Arc::new(PiOp {
-        num_terms: RwLock::new(INITIAL_PI_TERMS),
-    }));
+    let node = Node::new(Arc::new(PiOp::new(INITIAL_PI_TERMS)));
     Computable::from_node(node)
 }
 
@@ -117,15 +121,217 @@ pub fn pi_prefix_at_precision(precision_bits: usize) -> (Binary, Binary) {
 }
 
 /// Pi computation operation using Machin's formula.
+///
+/// Internally stores InvOp nodes for each Taylor series term. These are
+/// driven manually by `compute_prefix` (not as graph children, since the
+/// term count is dynamic).
 pub struct PiOp {
-    pub num_terms: RwLock<usize>,
+    state: RwLock<PiState>,
+}
+
+struct PiState {
+    num_terms: usize,
+    atan5_terms: Vec<Arc<Node>>,
+    atan239_terms: Vec<Arc<Node>>,
+    /// 5^(2*num_terms+1), ready for the next term or error bound
+    k5_power: BigInt,
+    /// 239^(2*num_terms+1), ready for the next term or error bound
+    k239_power: BigInt,
+}
+
+impl PiOp {
+    pub fn new(num_terms: usize) -> Self {
+        PiOp {
+            state: RwLock::new(PiState::new(num_terms)),
+        }
+    }
+}
+
+impl PiState {
+    fn new(n: usize) -> Self {
+        let k5 = BigInt::from(5_i64);
+        let k239 = BigInt::from(239_i64);
+        let k5_sq = &k5 * &k5;
+        let k239_sq = &k239 * &k239;
+
+        let mut atan5_terms = Vec::with_capacity(n);
+        let mut atan239_terms = Vec::with_capacity(n);
+
+        let mut k5_power = k5; // 5^1
+        let mut k239_power = k239; // 239^1
+
+        for i in 0..n {
+            let coeff = BigInt::from(i as i64) * 2_i64 + 1_i64;
+
+            let denom5 = &coeff * &k5_power;
+            atan5_terms.push(make_inv_node(denom5));
+
+            let denom239 = &coeff * &k239_power;
+            atan239_terms.push(make_inv_node(denom239));
+
+            k5_power = &k5_power * &k5_sq;
+            k239_power = &k239_power * &k239_sq;
+        }
+
+        PiState {
+            num_terms: n,
+            atan5_terms,
+            atan239_terms,
+            k5_power,
+            k239_power,
+        }
+    }
+
+    fn extend_to(&mut self, n: usize) {
+        if n <= self.num_terms {
+            return;
+        }
+
+        let k5_sq = BigInt::from(25_i64);
+        let k239_sq = BigInt::from(239_i64 * 239_i64);
+
+        for i in self.num_terms..n {
+            let coeff = BigInt::from(i as i64) * 2_i64 + 1_i64;
+
+            let denom5 = &coeff * &self.k5_power;
+            self.atan5_terms.push(make_inv_node(denom5));
+
+            let denom239 = &coeff * &self.k239_power;
+            self.atan239_terms.push(make_inv_node(denom239));
+
+            self.k5_power = &self.k5_power * &k5_sq;
+            self.k239_power = &self.k239_power * &k239_sq;
+        }
+
+        self.num_terms = n;
+    }
+}
+
+/// Creates an InvOp node that computes `1/denominator` using Newton-Raphson.
+fn make_inv_node(denominator: BigInt) -> Arc<Node> {
+    let binary = Binary::new(denominator, BigInt::from(0_i32));
+    let base: Arc<dyn BaseNode> = Arc::new(TypedBaseNode::new(
+        binary,
+        |v: &Binary| Ok(Prefix::exact(v.clone())),
+        |v: Binary| Ok(v),
+    ));
+    let constant_node = Node::new(Arc::new(BaseOp { base }));
+    Node::new(Arc::new(InvOp {
+        inner: constant_node,
+        newton_state: RwLock::new(None),
+    }))
+}
+
+/// Drives an InvOp node until its prefix width is at most `2^(-target_width_bits)`.
+///
+/// `refine_precision` is passed to `refine_step` as the seed precision hint.
+/// It must be large enough that the InvOp's initial reciprocal seed is nonzero
+/// (i.e., larger than `log2(denominator)`).
+fn refine_node_to_precision(
+    node: &Arc<Node>,
+    target_width_bits: usize,
+    refine_precision: usize,
+) -> Result<(), ComputableError> {
+    const MAX_ITERS: usize = 64;
+    for _ in 0..MAX_ITERS {
+        let prefix = node.get_prefix()?;
+        if prefix_width_leq(&prefix, &XUsize::Finite(target_width_bits)) {
+            return Ok(());
+        }
+        node.refine_step(refine_precision)?;
+        let new_prefix = node.compute_prefix()?;
+        node.set_prefix(new_prefix);
+    }
+    Err(ComputableError::MaxRefinementIterations { max: MAX_ITERS })
+}
+
+/// Sums arctan Taylor terms from InvOp nodes, applying sign alternation and error bounds.
+///
+/// Each `terms[i]` is an InvOp node computing `1/((2i+1)*k^(2i+1))`.
+/// `k_power` is `k^(2*num_terms+1)` for the truncation error bound.
+fn sum_arctan_terms(
+    terms: &[Arc<Node>],
+    num_terms: usize,
+    precision_bits: usize,
+    k_power: &BigInt,
+) -> Result<(Binary, Binary), ComputableError> {
+    // The InvOp seed precision must exceed the denominator's bit length,
+    // otherwise floor(2^p / denom) = 0 and N-R is stuck at zero.
+    // k_power = k^(2*num_terms+1) bounds all term denominators.
+    let k_power_bits = crate::sane::bits_as_usize(k_power.magnitude().bits());
+    let refine_precision = precision_bits.max(k_power_bits + 10);
+
+    let mut sum_lo = Binary::zero();
+    let mut sum_hi = Binary::zero();
+
+    for (i, node) in terms.iter().take(num_terms).enumerate() {
+        refine_node_to_precision(node, precision_bits, refine_precision)?;
+
+        let prefix = node.get_prefix()?;
+        let lo = match prefix.lower() {
+            XBinary::Finite(b) => b,
+            _ => return Err(ComputableError::InfiniteBounds),
+        };
+        let hi = match prefix.upper() {
+            XBinary::Finite(b) => b,
+            _ => return Err(ComputableError::InfiniteBounds),
+        };
+
+        if i % 2 == 0 {
+            // Positive term: sum_lo += lo, sum_hi += hi
+            sum_lo = sum_lo.add(&lo);
+            sum_hi = sum_hi.add(&hi);
+        } else {
+            // Negative term: sum_lo -= hi, sum_hi -= lo
+            sum_lo = sum_lo.sub(&hi);
+            sum_hi = sum_hi.sub(&lo);
+        }
+    }
+
+    // Taylor truncation error: 1 / ((2n+1) * k^(2n+1))
+    let error_coeff = BigInt::from(crate::sane_arithmetic!(num_terms; 2 * num_terms + 1));
+    let error_denom = &error_coeff * k_power;
+    let error = reciprocal_of_biguint(
+        error_denom.magnitude(),
+        precision_bits,
+        ReciprocalRounding::Ceil,
+    );
+
+    Ok((sum_lo.sub(&error), sum_hi.add(&error)))
 }
 
 impl NodeOp for PiOp {
     fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
-        let num_terms = *self.num_terms.read();
+        let state = self.state.read();
+        let num_terms = state.num_terms;
         let precision_bits = precision_bits_for_num_terms(num_terms);
-        let (pi_lo, pi_hi) = compute_pi_interval(num_terms, precision_bits);
+
+        // Compute arctan(1/5) bounds via InvOp nodes
+        let (atan5_lo, atan5_hi) =
+            sum_arctan_terms(&state.atan5_terms, num_terms, precision_bits, &state.k5_power)?;
+
+        // Compute arctan(1/239) bounds via InvOp nodes
+        let (atan239_lo, atan239_hi) = sum_arctan_terms(
+            &state.atan239_terms,
+            num_terms,
+            precision_bits,
+            &state.k239_power,
+        )?;
+
+        // pi = 16*arctan(1/5) - 4*arctan(1/239)
+        let sixteen = Binary::new(BigInt::from(1_i32), BigInt::from(4_i32)); // 2^4 = 16
+        let four = Binary::new(BigInt::from(1_i32), BigInt::from(2_i32)); // 2^2 = 4
+
+        let term1_lo = atan5_lo.mul(&sixteen);
+        let term1_hi = atan5_hi.mul(&sixteen);
+
+        let term2_lo = atan239_lo.mul(&four);
+        let term2_hi = atan239_hi.mul(&four);
+
+        // Interval subtraction: [term1_lo, term1_hi] - [term2_lo, term2_hi]
+        let pi_lo = term1_lo.sub(&term2_hi);
+        let pi_hi = term1_hi.sub(&term2_lo);
+
         Ok(Prefix::from_lower_upper(
             XBinary::Finite(pi_lo),
             XBinary::Finite(pi_hi),
@@ -133,20 +339,20 @@ impl NodeOp for PiOp {
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
-        let mut num_terms = self.num_terms.write();
+        let mut state = self.state.write();
 
         // Leap to the needed term count based on precision_bits.
-        // Same formula as pi_prefix_at_precision: n = (precision_bits + 10) / 4.
         if precision_bits <= crate::MAX_COMPUTATION_BITS {
             let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
-            if needed > *num_terms {
-                *num_terms = needed;
+            if needed > state.num_terms {
+                state.extend_to(needed);
                 return Ok(true);
             }
         }
 
-        // Fall through: double the number of terms (existing behavior)
-        *num_terms = (*num_terms).saturating_mul(2).max(1_usize);
+        // Fall through: double the number of terms
+        let new_count = state.num_terms.saturating_mul(2).max(1_usize);
+        state.extend_to(new_count);
         Ok(true)
     }
 
