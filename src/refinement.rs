@@ -189,7 +189,6 @@ impl RefinementGraph {
                 let mut all_state_unchanged = true;
                 let mut steps = vec![0usize; num_refiners];
                 let mut outstanding = vec![false; num_refiners];
-                let mut outstanding_count = 0usize;
                 let mut eligible_count = num_refiners;
 
                 // Build node_id → refiner index mapping for routing responses.
@@ -309,7 +308,7 @@ impl RefinementGraph {
                     //    phase, and before the loop via the pre-spawn check at the
                     //    top of refine_to. No need to re-check here.)
                     let any_eligible = eligible_count > 0;
-                    let any_outstanding = outstanding_count > 0;
+                    let any_outstanding = outstanding.iter().any(|&o| o);
 
                     if !any_eligible && !any_outstanding {
                         let all_exhausted = active.iter().all(|&a| !a);
@@ -388,10 +387,6 @@ impl RefinementGraph {
                                 .send(RefineCommand::Step { precision_bits })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             outstanding[i] = true;
-                            outstanding_count =
-                                outstanding_count.checked_add(1).unwrap_or_else(|| {
-                                    unreachable!("outstanding_count <= num_refiners")
-                                });
                             needs_redispatch[i] = false;
                             // Reset sub-refiner tracking for non-leaf refiners.
                             // Keep exhausted sub-refiners marked as responded
@@ -424,7 +419,7 @@ impl RefinementGraph {
                     // it (its dependencies have all responded or been skipped,
                     // so there's nothing to wait for). If no such refiner
                     // exists, it's a true stall.
-                    if dispatched == 0 && outstanding_count == 0 {
+                    if dispatched == 0 && !outstanding.iter().any(|&o| o) {
                         let mut any_forced = false;
                         for i in 0..num_refiners {
                             if active[i]
@@ -499,9 +494,6 @@ impl RefinementGraph {
                             let idx = $idx;
                             let changed_nodes: &[usize] = &$changed;
                             outstanding[idx] = false;
-                            outstanding_count = outstanding_count
-                                .checked_sub(1)
-                                .unwrap_or_else(|| unreachable!("outstanding_count underflow"));
                             steps[idx] = steps[idx].checked_add(1).unwrap_or_else(|| {
                                 unreachable!("steps <= MAX_REFINEMENT_ITERATIONS, cannot overflow")
                             });
