@@ -115,6 +115,7 @@ jobs:
       - name: Build main binaries
         if: github.event_name == 'pull_request'
         run: |
+          git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git worktree add /tmp/main-build "${{ github.event.pull_request.base.sha }}"
           cd /tmp/main-build
           cargo bench --features time-bench --no-run 2>&1
