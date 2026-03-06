@@ -125,32 +125,20 @@ impl NodeOp for NthRootOp {
             return Ok(false);
         }
 
-        // Perform bisection steps until width_exponent ≤ target.
-        // Each bisection step halves the interval (1 bit improvement).
-        // Cap at 256 steps to prevent runaway.
-        let mut steps_taken = 0usize;
-        loop {
-            let degree = self.degree.get();
-            let target = &s.target;
-            let result =
-                bisection_step_normalized(&s.bounds, |mid| binary_pow(mid, degree).cmp(target));
+        // One bisection step per dispatch. Each step halves the interval
+        // (1 bit improvement), which always produces a visible Prefix change.
+        // The coordinator handles iteration count and re-dispatches.
+        let degree = self.degree.get();
+        let target = &s.target;
+        let result =
+            bisection_step_normalized(&s.bounds, |mid| binary_pow(mid, degree).cmp(target));
 
-            match result {
-                PrefixBisectionResult::Narrowed(new_bounds) => {
-                    s.bounds = new_bounds;
-                }
-                PrefixBisectionResult::Exact(mid) => {
-                    s.exact_value = Some(mid);
-                    return Ok(true);
-                }
+        match result {
+            PrefixBisectionResult::Narrowed(new_bounds) => {
+                s.bounds = new_bounds;
             }
-
-            steps_taken = steps_taken.saturating_add(1);
-
-            // Check if we've reached the target width exponent
-            let current_exp = s.bounds.width_exponent_i64();
-            if current_exp <= target_width_exp || steps_taken >= 256 {
-                break;
+            PrefixBisectionResult::Exact(mid) => {
+                s.exact_value = Some(mid);
             }
         }
         Ok(true)
