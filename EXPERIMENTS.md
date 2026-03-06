@@ -299,3 +299,43 @@ precision where computation dominates, sin shows -7 to -22% improvement.
 Benchmarks with few refiners and low precision show small regression from
 the event-loop's per-iteration overhead. This is the fixed cost of the
 architecture, offset by parallelism benefits invisible to valgrind.
+
+## Experiment 12: Per-refiner precision_bits + incremental arctan caching
+
+The dispatch code was forwarding the raw root tolerance to all refiners as
+`precision_bits`, ignoring their individual propagated budgets. When a
+refiner's budget was tighter than the root tolerance (e.g., pi feeding into
+a multiplication), PiOp's leap formula underestimated needed terms, the
+doubling fallback fired, and `compute_prefix` recomputed the entire Taylor
+series from scratch each call.
+
+### Changes
+1. **Per-refiner precision_bits** (`refinement.rs`): Derive `precision_bits`
+   from each refiner's propagated budget via `budget_to_precision_bits()`,
+   falling back to global tolerance for unreachable refiners.
+2. **Remove doubling fallback** (`pi.rs`): With correct per-refiner budgets,
+   the leap formula always produces `needed > num_terms` when dispatched.
+   Replaced with `unreachable!`.
+3. **Incremental arctan caching** (`pi.rs`): `ArctanCache` stores partial
+   Taylor sums and power-of-k state. `compute_prefix` extends from cached
+   state in O(delta) instead of recomputing from scratch. Caches are
+   invalidated only when precision requirements exceed cached precision.
+
+### Criterion wall-clock results (macOS, vs main branch)
+
+| Benchmark | bits=1 | bits=4 | bits=16 | bits=64 | bits=256 |
+|-----------|--------|--------|---------|---------|----------|
+| pi_refinement | -11% | -9% | -15% | -7% | **-21%** |
+| 2*pi | -13% | -6% | -3% | -10% | **-23%** |
+| pi/2 | ~0% | ~0% | -4% | -7% | **-12%** |
+| pi² | ~0% | -7% | ~0% | -10% | **-11%** |
+| 1/pi | **-14%** | **-18%** | **-21%** | **-26%** | -7% |
+| sin(pi) | ~0% | ~0% | -3% | **-17%** | **-20%** |
+| sin(2pi) | ~0% | ~0% | **-15%** | -6% | ~0% |
+| sin(10pi) | ~0% | ~0% | +3% | **-20%** | ~0% |
+| sin(100pi) | ~0% | ~0% | +1% | +4% | ~0% |
+
+No statistically significant regressions. Largest improvements at higher
+precision where the incremental caching avoids the most redundant work.
+The `1/pi` benchmark improved up to -26% because InvOp's budget propagation
+now correctly informs PiOp's precision target.
