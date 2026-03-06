@@ -161,7 +161,7 @@ impl PiState {
         let mut k239_power = k239; // 239^1
 
         for i in 0..n {
-            let coeff = BigInt::from(i as i64) * 2_i64 + 1_i64;
+            let coeff = BigInt::from(i) * 2_i64 + 1_i64;
 
             let denom5 = &coeff * &k5_power;
             atan5_terms.push(make_inv_node(denom5));
@@ -191,7 +191,7 @@ impl PiState {
         let k239_sq = BigInt::from(239_i64 * 239_i64);
 
         for i in self.num_terms..n {
-            let coeff = BigInt::from(i as i64) * 2_i64 + 1_i64;
+            let coeff = BigInt::from(i) * 2_i64 + 1_i64;
 
             let denom5 = &coeff * &self.k5_power;
             self.atan5_terms.push(make_inv_node(denom5));
@@ -259,7 +259,7 @@ fn sum_arctan_terms(
     // otherwise floor(2^p / denom) = 0 and N-R is stuck at zero.
     // k_power = k^(2*num_terms+1) bounds all term denominators.
     let k_power_bits = crate::sane::bits_as_usize(k_power.magnitude().bits());
-    let refine_precision = precision_bits.max(k_power_bits + 10);
+    let refine_precision = precision_bits.max(k_power_bits.saturating_add(10));
 
     let mut sum_lo = Binary::zero();
     let mut sum_hi = Binary::zero();
@@ -270,11 +270,11 @@ fn sum_arctan_terms(
         let prefix = node.get_prefix()?;
         let lo = match prefix.lower() {
             XBinary::Finite(b) => b,
-            _ => return Err(ComputableError::InfiniteBounds),
+            XBinary::NegInf | XBinary::PosInf => return Err(ComputableError::InfiniteBounds),
         };
         let hi = match prefix.upper() {
             XBinary::Finite(b) => b,
-            _ => return Err(ComputableError::InfiniteBounds),
+            XBinary::NegInf | XBinary::PosInf => return Err(ComputableError::InfiniteBounds),
         };
 
         if i % 2 == 0 {
@@ -307,8 +307,12 @@ impl NodeOp for PiOp {
         let precision_bits = precision_bits_for_num_terms(num_terms);
 
         // Compute arctan(1/5) bounds via InvOp nodes
-        let (atan5_lo, atan5_hi) =
-            sum_arctan_terms(&state.atan5_terms, num_terms, precision_bits, &state.k5_power)?;
+        let (atan5_lo, atan5_hi) = sum_arctan_terms(
+            &state.atan5_terms,
+            num_terms,
+            precision_bits,
+            &state.k5_power,
+        )?;
 
         // Compute arctan(1/239) bounds via InvOp nodes
         let (atan239_lo, atan239_hi) = sum_arctan_terms(
