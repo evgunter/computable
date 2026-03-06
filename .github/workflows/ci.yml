@@ -118,7 +118,10 @@ jobs:
           git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git worktree add /tmp/main-build "${{ github.event.pull_request.base.sha }}"
           cd /tmp/main-build
-          cargo bench --features time-bench --no-run 2>&1
+          if ! cargo bench --features time-bench --no-run 2>&1; then
+            echo "::warning::Base branch does not support time-bench feature, skipping comparison"
+            exit 0
+          fi
           mkdir -p "${{ github.workspace }}/main-bins"
           BENCHES="integer_roots inv sin pi asymmetric_convergence summation complex"
           for bench in $BENCHES; do
@@ -133,8 +136,12 @@ jobs:
           mkdir -p results
           SWEEP="integer_roots inv sin pi asymmetric_convergence"
           NO_SWEEP="summation complex"
+          HAS_MAIN=false
+          if [ -d main-bins ] && [ -n "$(ls -A main-bins 2>/dev/null)" ]; then
+            HAS_MAIN=true
+          fi
 
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "$HAS_MAIN" = "true" ]; then
             for bench in $SWEEP; do
               for bits in 1 4 16 64 256; do
                 hyperfine --export-json "results/${bench}_${bits}.json" \
@@ -185,7 +192,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 .github/scripts/compare_time_benchmarks.py \
-            --mode pr --results-dir results \
-            --pr ${{ github.event.pull_request.number }} \
-            --repo ${{ github.repository }}
+          if [ -d main-bins ] && [ -n "$(ls -A main-bins 2>/dev/null)" ]; then
+            python3 .github/scripts/compare_time_benchmarks.py \
+              --mode pr --results-dir results \
+              --pr ${{ github.event.pull_request.number }} \
+              --repo ${{ github.repository }}
+          else
+            echo "Skipping comparison: main binaries not available (base branch may lack time-bench feature)"
+          fi
