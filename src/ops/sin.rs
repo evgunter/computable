@@ -32,6 +32,7 @@ use crate::binary::{
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::sane::{XIsize, XUsize};
 
 /// Sine operation with Taylor series refinement.
 pub struct SinOp {
@@ -48,15 +49,14 @@ impl NodeOp for SinOp {
         sin_bounds(&input_bounds, &pi_bounds, &num_terms)
     }
 
-    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
-        // Convert target exponent to precision bits (absolute value).
-        let precision_bits = usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
-
         // Leap based on coordinator's precision target.
-        // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.
-        if precision_bits <= crate::MAX_COMPUTATION_BITS {
+        if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits()
+            && precision_bits <= crate::MAX_COMPUTATION_BITS
+        {
+            // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.
             let needed_n = (precision_bits / 3).max(1);
             let needed = BigInt::from(needed_n);
             if needed > *num_terms {
@@ -879,7 +879,8 @@ pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
 mod tests {
     use super::*;
     use crate::computable::Computable;
-    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::refinement::bounds_width_leq;
+    use crate::sane::XUsize;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite, xbin};
 
     fn assert_bounds_compatible_with_expected(

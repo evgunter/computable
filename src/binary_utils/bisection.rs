@@ -96,13 +96,6 @@ impl PrefixBounds {
         Binary::new(&self.mantissa * 2 + 1, self.exponent.clone() - 1)
     }
 
-    /// Returns the width exponent as i64.
-    ///
-    /// The width is `2^exponent`, so this returns the exponent directly.
-    pub fn width_exponent_i64(&self) -> i64 {
-        use num_traits::ToPrimitive;
-        self.exponent.to_i64().unwrap_or(i64::MAX)
-    }
 }
 
 /// Result of a prefix bisection step.
