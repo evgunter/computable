@@ -415,15 +415,14 @@ impl RefinementGraph {
                         // inputs wastes work (e.g., SinOp with wide pi
                         // bounds triggers expensive Taylor series for [-1,1]).
                         if !is_leaf_refiner[i] {
-                            let inputs_ready =
-                                sub_refiner_indices[i].iter().all(|&sub_idx| {
-                                    match refiner_budgets[sub_idx].as_ref() {
-                                        Some(budget) => refiner_nodes[sub_idx]
-                                            .cached_prefix()
-                                            .is_some_and(|p| p.width() <= *budget),
-                                        None => true, // no budget constraint
-                                    }
-                                });
+                            let inputs_ready = sub_refiner_indices[i].iter().all(|&sub_idx| {
+                                match refiner_budgets[sub_idx].as_ref() {
+                                    Some(budget) => refiner_nodes[sub_idx]
+                                        .cached_prefix()
+                                        .is_some_and(|p| p.width() <= *budget),
+                                    None => true, // no budget constraint
+                                }
+                            });
                             if !inputs_ready {
                                 // Reset sub-responded tracking so future
                                 // sub-refiner responses re-trigger enqueue.
