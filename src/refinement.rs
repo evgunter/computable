@@ -235,6 +235,18 @@ impl RefinementGraph {
                     .iter()
                     .map(|subs| subs.is_empty())
                     .collect();
+                // Reverse index: for each refiner, which parent non-leaf
+                // refiners contain it as a sub-refiner (and at what position).
+                // Used to notify parents when a sub-refiner is budget-skipped.
+                let parent_refiner_indices: Vec<Vec<(usize, usize)>> = {
+                    let mut parents = vec![Vec::new(); num_refiners];
+                    for (j, subs) in sub_refiner_indices.iter().enumerate() {
+                        for (pos, &sub_idx) in subs.iter().enumerate() {
+                            parents[sub_idx].push((j, pos));
+                        }
+                    }
+                    parents
+                };
                 // Walk root-to-refiner paths to check if any op along the
                 // way has bounds-dependent budgets. We do this by walking
                 // the BFS used for budget propagation and tracking whether
@@ -367,6 +379,12 @@ impl RefinementGraph {
                     };
                     let mut dispatched = 0usize;
 
+                    // Collect non-leaf refiners whose inputs aren't ready
+                    // yet. Re-enqueued after the dispatch drain so they're
+                    // reconsidered on the next main loop iteration (not
+                    // re-popped infinitely within this drain).
+                    let mut deferred: Vec<usize> = Vec::new();
+
                     while let Some(i) = dispatch_queue.pop_front() {
                         in_queue[i] = false;
                         if !active[i]
@@ -381,35 +399,86 @@ impl RefinementGraph {
                                 .cached_bounds()
                                 .is_some_and(|b| b.width() <= budget)
                         });
-                        if !skip {
-                            refiner_handles[i]
-                                .sender
-                                .send(RefineCommand::Step { precision_bits })
-                                .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
-                            outstanding[i] = true;
-                            needs_redispatch[i] = false;
-                            // Reset sub-refiner tracking for non-leaf refiners.
-                            // Keep exhausted sub-refiners marked as responded
-                            // (they won't respond again, so clearing them
-                            // would make the gate unreachable).
-                            if !is_leaf_refiner[i] {
-                                sub_responded_count[i] = 0;
-                                for (k, flag) in sub_responded[i].iter_mut().enumerate() {
-                                    let sub_idx = sub_refiner_indices[i][k];
-                                    if active[sub_idx] {
-                                        *flag = false;
-                                    } else {
-                                        // Exhausted sub-refiner: keep as responded.
-                                        sub_responded_count[i] =
-                                            sub_responded_count[i].saturating_add(1);
+                        if skip {
+                            // Budget-skipped refiner won't send a response.
+                            // Notify parent non-leaf refiners so their
+                            // sub_responded gate can open.
+                            for &(j, pos) in &parent_refiner_indices[i] {
+                                if !is_leaf_refiner[j] && !sub_responded[j][pos] {
+                                    sub_responded[j][pos] = true;
+                                    sub_responded_count[j] = sub_responded_count[j]
+                                        .checked_add(1)
+                                        .unwrap_or_else(|| unreachable!());
+                                    if sub_responded_count[j] >= sub_refiner_indices[j].len() {
+                                        needs_redispatch[j] = true;
+                                        if !in_queue[j] {
+                                            dispatch_queue.push_back(j);
+                                            in_queue[j] = true;
+                                        }
                                     }
                                 }
                             }
-                            dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
-                                unreachable!(
-                                    "dispatched <= refiner_handles.len(), cannot overflow usize"
-                                )
+                            continue;
+                        }
+                        // Input-readiness gate: don't dispatch non-leaf
+                        // refiners until all sub-refiners' bounds are within
+                        // their propagated budgets. Dispatching with wide
+                        // inputs wastes work (e.g., SinOp Taylor series on
+                        // wide pi bounds produces useless [-1,1]).
+                        // Critically: do NOT reset sub_responded — sub-refiners
+                        // are still making progress and will re-trigger
+                        // enqueue via record_completion when they respond.
+                        if !is_leaf_refiner[i] {
+                            let inputs_ready = sub_refiner_indices[i].iter().all(|&sub_idx| {
+                                if !active[sub_idx] {
+                                    return true;
+                                }
+                                refiner_budgets[sub_idx].as_ref().map_or(true, |budget| {
+                                    refiner_nodes[sub_idx]
+                                        .cached_bounds()
+                                        .is_some_and(|b| b.width() <= budget)
+                                })
                             });
+                            if !inputs_ready {
+                                deferred.push(i);
+                                continue;
+                            }
+                        }
+                        refiner_handles[i]
+                            .sender
+                            .send(RefineCommand::Step { precision_bits })
+                            .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
+                        outstanding[i] = true;
+                        needs_redispatch[i] = false;
+                        // Reset sub-refiner tracking for non-leaf refiners.
+                        // Keep exhausted sub-refiners marked as responded
+                        // (they won't respond again, so clearing them
+                        // would make the gate unreachable).
+                        if !is_leaf_refiner[i] {
+                            sub_responded_count[i] = 0;
+                            for (k, flag) in sub_responded[i].iter_mut().enumerate() {
+                                let sub_idx = sub_refiner_indices[i][k];
+                                if active[sub_idx] {
+                                    *flag = false;
+                                } else {
+                                    // Exhausted sub-refiner: keep as responded.
+                                    sub_responded_count[i] =
+                                        sub_responded_count[i].saturating_add(1);
+                                }
+                            }
+                        }
+                        dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
+                            unreachable!(
+                                "dispatched <= refiner_handles.len(), cannot overflow usize"
+                            )
+                        });
+                    }
+
+                    // Re-enqueue deferred non-leaf refiners for next iteration.
+                    for i in deferred {
+                        if !in_queue[i] {
+                            dispatch_queue.push_back(i);
+                            in_queue[i] = true;
                         }
                     }
 
