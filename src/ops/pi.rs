@@ -274,7 +274,7 @@ impl NodeOp for PiOp {
             }
         }
 
-        // Current state already satisfies the requested precision — no refinement needed.
+        // Current state already satisfies the requested precision — no change needed.
         Ok(false)
     }
 
