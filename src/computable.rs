@@ -64,6 +64,15 @@ impl Computable {
         self.node.get_bounds()
     }
 
+    /// Returns the current prefix (power-of-2 width interval) for this computable.
+    ///
+    /// A [`Prefix`](crate::Prefix) represents the known precision as a binary prefix
+    /// where the width is always a power of 2. This is the native representation used
+    /// by the refinement system. For exact bounds, use [`bounds()`](Self::bounds).
+    pub fn prefix(&self) -> Result<crate::prefix::Prefix, ComputableError> {
+        self.node.get_prefix()
+    }
+
     /// Refines this computable until the bounds width is at most 2^(-tolerance_exp).
     ///
     /// # Arguments

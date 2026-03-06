@@ -25,6 +25,15 @@ there are a few ways the implementation diverges from this abstraction; see [dev
 - there is a function (`Computable::refine_to`) which takes a computable number $(x, b, f)$ and a precision $\epsilon$ and applies $f$ to $x$ until $b_u(f^n(x)) - b_\ell(f^n(x)) \leq \epsilon$ (where $n$ is the number of applications required).
 - computable numbers may be composed using arithmetic operations via the standard operators (`+`, `-`, `*`, `/`, unary `-`) and `Computable::inv`.
 for example, given computable numbers $C_0 = (x_0, b_0, f_0)$ and $C_1 = (x_1, b_1, f_1)$, $$C_0 + C_1 = ((x_0, x_1), (x, y) \mapsto (b_{0\ell}(x) + b_{1\ell}(y), b_{0u}(x) + b_{1u}(y)), (x, y) \mapsto (f_0(x), f_1(y)))$$
+- additionally: `Computable::sin`, `Computable::nth_root`, `Computable::pow`, and `pi()` for transcendental and power operations.
+
+## interval representation
+
+the system uses two interval representations internally:
+- **`Bounds`**: exact arbitrary-precision intervals `[lower, upper]` where width can be any value. used for arithmetic operations to preserve full precision.
+- **`Prefix`**: power-of-2 width intervals where the width is always $2^k$ for some integer $k$. used by the refinement dispatch system because it enables efficient precision comparison (just compare exponents) and guarantees visible progress on each refinement step.
+
+each node in the computation graph caches both representations. arithmetic operations read exact `Bounds` to avoid precision loss from rounding; the refinement coordinator reads `Prefix` for dispatch decisions.
 
 # deviations from the formalism
 
