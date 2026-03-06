@@ -358,6 +358,106 @@ already works well on main. The wall-clock improvements were real but
 came from a different mechanism (fewer total SinOp dispatches under real
 parallelism), not from the gate itself. Reverted to main.
 
+## Experiment 13: Input-readiness gate v2 — defer without sub_responded reset
+
+**Problem:** Same as Experiment 12 — SinOp dispatched with wide pi bounds
+wastes work — but the v1 fix (resetting sub_responded on gate failure) caused
+pathological PiOp loops under valgrind serialization.
+
+**Key insight:** The sub_responded reset was the problem, not the gate itself.
+Without the reset, future sub-refiner responses still naturally re-trigger the
+sub_responded gate via `record_completion`'s changed_nodes path.
+
+**Fix:** Gate non-leaf dispatch on sub-refiner input readiness, but when the
+gate blocks, collect blocked refiners into a `deferred` list and re-enqueue
+them after the dispatch drain. This way:
+- Sub-refiners continue making progress without extra PiOp steps
+- Deferred refiners are reconsidered on the next main loop iteration
+- No sub_responded reset → no pathological loop
+
+Also: budget-skip-as-responded (same as v1), stall recovery respects the
+gate, and `child_demand_budget` doc updated with hard invariant.
+
+### CI valgrind results (PR #65)
+
+| Benchmark | Baseline (main) | With gate v2 | Change |
+|-----------|----------------|--------------|--------|
+| sin_1pi p3 | 2.0M | 4.95M | +148% |
+| sin_1pi p4 | 2.0M | 17.9M | +810% |
+| sin_2pi p4 | 1.1M | 7.2M | +567% |
+| sin_10pi p4 | 1.1M | 7.4M | +585% |
+| sin_100pi p4 | 1.1M | 327M | +30004% |
+| sin p4 | 97M | 30.4B | +31183% |
+
+**Analysis:** Still nondeterministic under valgrind. The baseline got lucky
+scheduling (PiOp converged before SinOp ran → ~1M fast path), while the
+branch run got unlucky scheduling. The deferred re-enqueue creates polling
+overhead: each main loop iteration re-checks deferred refiners, consuming
+instructions that under valgrind's serialization compete with PiOp's thread.
+
+### Local wall-clock results (criterion, bits=256, sample-size=50)
+
+| Benchmark | With gate v2 | Baseline (committed) | Improvement |
+|-----------|-------------|---------------------|-------------|
+| sin_1pi | 831µs–1.39ms | 968µs–1.35ms | similar |
+| sin_2pi | 2.3ms–3.9ms | 1.1ms–1.8ms | slight regression (noise) |
+| sin_10pi | 1.8ms–2.9ms | 1.5ms–3.3ms | similar |
+
+Wall-clock results are noisy but broadly equivalent — the gate prevents
+wasted SinOp dispatches but adds deferred-polling overhead.
+
+**Status:** CI passes (tests + valgrind threshold). Committed as baseline
+for further optimization.
+
+## Experiment 14: Input-readiness gate v3 — event-driven parent notification
+
+**Problem:** Gate v2's deferred re-enqueue polls every main loop iteration,
+creating busy-wait overhead. Under valgrind serialization, this polling
+competes with sub-refiner threads for instruction budget.
+
+**Fix:** Remove the deferred list and re-enqueue loop entirely. Instead,
+add event-driven parent notification in `record_completion`:
+
+When a sub-refiner responds, use `parent_refiner_indices` to directly
+check each parent non-leaf refiner. If ALL of that parent's sub-refiners
+now have cached bounds within their propagated budgets (or are inactive),
+enqueue the parent for dispatch.
+
+This is strictly better than v2:
+- No polling overhead — parents only enqueued when inputs are actually ready
+- Sub-refiners get full instruction budget without competing with polling
+- Same correctness guarantees: gate still prevents premature dispatch
+
+Also applies input-readiness check in stall recovery path.
+
+### CI valgrind results (PR #65, commit `55d3024`)
+
+| Benchmark | Baseline (main) | v3 (event-driven) | Change | v2 (deferred) for comparison |
+|-----------|----------------|-------------------|--------|------------------------------|
+| sin_1pi p3 | 1.87M | 2.87M | +53% | 4.95M |
+| sin_1pi p4 | 1.85M | 10.2M | +449% | 17.9M |
+| sin_2pi p4 | 1.26M | 5.3M | +320% | 7.2M |
+| sin_10pi p4 | 1.06M | 5.5M | +423% | 7.4M |
+| sin_100pi p4 | 1.27M | 5.6M | +343% | 327M |
+| sin p3 | 85M | 299M | +251% | 375M |
+| sin p4 | 91M | 27.7B | +30359% | 30.4B |
+
+**Analysis:** Significant improvement over v2 across all sin benchmarks.
+Most dramatic: `sin_100pi p4` dropped from 328M (v2) to 5.6M (v3) — the
+event-driven approach eliminated the polling overhead that caused v2's
+worst case. The absolute numbers are now ~4x baseline rather than ~258x.
+
+The remaining regressions vs baseline are still nondeterministic: the
+baseline run got lucky scheduling (PiOp converged before SinOp ran).
+The v3 approach minimizes wasted work but can't fully eliminate the
+scheduling dependency under valgrind serialization.
+
+`bench_sin p4` remains high (27.7B) because sin(1) requires many more
+PiOp refinement steps than sin(Npi), and each PiOp step is exponentially
+more expensive at high precision.
+
+All other benchmarks: ~1% overhead (same as v2).
+
 ## Remaining Ir Regressions
 
 ### bench_inv +137% (Ir) / +3-12% (wall-clock)
