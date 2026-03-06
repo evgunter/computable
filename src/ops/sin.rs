@@ -157,7 +157,30 @@ fn sin_bounds(
         }
     };
 
-    // Extract finite pi bounds, or return [-1, 1] if pi bounds are infinite
+    // Convert num_terms to usize (capped at reasonable limit)
+    let n = num_terms.to_usize().unwrap_or(1).max(1);
+
+    // Range reduction subtracts k * 2π from the input, introducing error
+    // proportional to max_abs(input) * width(π). When input is 0 this
+    // product is 0 * anything = 0 (Exact in UXBinary), so π's precision
+    // is irrelevant. Check the product, not π's precision in isolation.
+    let (input_abs_lo, input_abs_hi) = input_bounds.abs();
+    let input_max_abs = std::cmp::max(input_abs_lo, input_abs_hi);
+    let pi_error_contribution = input_max_abs.mul(pi_bounds.width());
+
+    if pi_error_contribution.is_zero() {
+        // Pi contributes no error to range reduction — the product
+        // max_abs(input) * width(π) is exact zero (e.g. input is zero).
+        // Compute sin directly via Taylor series; no range reduction needed.
+        let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
+        let sin_result = compute_sin_on_monotonic_interval(&input_interval, n);
+        let clamped_lo = std::cmp::max(sin_result.lo().clone(), neg_one);
+        let clamped_hi = std::cmp::min(sin_result.hi(), pos_one);
+        let finite = FiniteBounds::new(clamped_lo, clamped_hi);
+        return normalize_finite_to_bounds(&finite);
+    }
+
+    // Pi's precision affects the result — extract finite bounds or bail.
     let pi_lo = pi_bounds.small();
     let pi_hi_xb = pi_bounds.large();
     let pi_interval = match (pi_lo, &pi_hi_xb) {
@@ -183,9 +206,6 @@ fn sin_bounds(
         half_pi_hi_val.exponent() - BigInt::one(),
     );
     let half_pi_interval = FiniteBounds::new(half_pi_lo, half_pi_hi);
-
-    // Convert num_terms to usize (capped at reasonable limit)
-    let n = num_terms.to_usize().unwrap_or(1).max(1);
 
     // Process each endpoint through range reduction with full interval tracking
     let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
@@ -887,6 +907,47 @@ mod tests {
         // sin(0) = 0
         let expected = bin(0, 0);
         assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+    }
+
+    #[test]
+    fn sin_of_zero_exact() {
+        let zero = Computable::constant(bin(0, 0));
+        let sin_zero = zero.sin();
+
+        // sin(0) = 0 exactly — should converge to exact bounds
+        let bounds = sin_zero
+            .refine_to_default(XUsize::Inf)
+            .expect("sin(0) should converge to exact zero");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+        assert_eq!(lower, bin(0, 0), "sin(0) lower bound should be exactly 0");
+        assert_eq!(upper, bin(0, 0), "sin(0) upper bound should be exactly 0");
+    }
+
+    #[test]
+    fn sin_bounds_zero_input_ignores_pi_precision() {
+        // sin(0) = 0 regardless of pi's precision. The budget system correctly
+        // gives pi an infinite budget when the input is zero (since 0 * pi = 0),
+        // so pi may never be refined. sin_bounds must handle this by returning
+        // exact zero before consulting pi_bounds.
+        let input_bounds = Bounds::new(xbin(0, 0), xbin(0, 0));
+        let pi_bounds = Bounds::new(XBinary::NegInf, XBinary::PosInf);
+
+        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(10_i32))
+            .expect("sin_bounds should succeed");
+        let lower = unwrap_finite(result.small());
+        let upper = unwrap_finite(&result.large());
+        assert_eq!(
+            lower,
+            bin(0, 0),
+            "sin(0) should be 0 regardless of pi precision"
+        );
+        assert_eq!(
+            upper,
+            bin(0, 0),
+            "sin(0) should be 0 regardless of pi precision"
+        );
     }
 
     #[test]
