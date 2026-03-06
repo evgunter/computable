@@ -137,6 +137,17 @@ pub trait NodeOp: Send + Sync {
     /// still allowing this node to meet the target. Every non-leaf NodeOp
     /// must implement this — there is no default, so forgetting to implement
     /// it for a new operation is a compile error.
+    ///
+    /// **Hard invariant**: If all children produce prefixes within their
+    /// respective budgets, the parent MUST be able to produce a prefix within
+    /// `target_width`. The coordinator gates non-leaf dispatch on this — it
+    /// will not dispatch a non-leaf refiner until all sub-refiner inputs meet
+    /// their budgets.
+    ///
+    /// Budgets must err on the side of **too loose** (too conservative). A
+    /// too-tight budget may cause stalls: children meet their budgets but the
+    /// parent cannot meet its own, leaving the coordinator unable to make
+    /// progress.
     fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary;
 
     /// Whether this op's `child_demand_budget` depends on cached prefix.
