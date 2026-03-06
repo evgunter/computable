@@ -102,7 +102,7 @@ impl NodeOp for NthRootOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: i64) -> Result<bool, ComputableError> {
         // Ensure bisection state is initialized (compute_bounds is always called
         // before refine_step by the coordinator, but be defensive).
         {

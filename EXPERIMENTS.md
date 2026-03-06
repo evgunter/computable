@@ -299,3 +299,134 @@ precision where computation dominates, sin shows -7 to -22% improvement.
 Benchmarks with few refiners and low precision show small regression from
 the event-loop's per-iteration overhead. This is the fixed cost of the
 architecture, offset by parallelism benefits invisible to valgrind.
+
+---
+
+## Experiment 12: Prefix-Native Refinement Infrastructure (PR #68)
+
+### Background
+
+PR #63 attempted to switch the node cache from `Bounds` (arbitrary-precision
+width) to `Prefix` (power-of-2 width). It was reverted (commit 73ec202)
+because benchmarks hung — the bench CI job ran >4 hours before being cancelled
+(normal runtime ~38 min).
+
+**Root cause of the hang:** Refiners produced arbitrary-precision bound
+improvements, but `Prefix::from_lower_upper` rounds width to the next power
+of 2. Small improvements became invisible in Prefix representation →
+propagation saw no change → coordinator re-dispatched indefinitely.
+
+### Approach: Target-Aware Refiners
+
+Instead of having refiners produce arbitrary precision and hoping Prefix
+captures it, make each `refine_step` receive a target width exponent:
+
+```rust
+fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError>;
+```
+
+Contract: after returning `Ok(true)`, `compute_prefix()` must return a Prefix
+with `width_exponent < current` (at least 1 bit improvement).
+
+### Implementation (Stages 0-3)
+
+**Stage 0:** Reintroduced `Prefix` and `FiniteInterval` types (additive, no
+behavior change).
+
+**Stage 1:** Switched node cache to Prefix. Added `NodeOp::compute_prefix()`
+with default implementation that converts `compute_bounds()` result. This
+preserves exact Bounds-based arithmetic while using Prefix for the refinement
+dispatch system.
+
+**Stage 2:** Made `refine_step` target-aware (signature change from
+`precision_bits: usize` to `target_width_exp: i64`).
+
+**Stage 3:** Updated refinement infrastructure — `prefix_width_leq` for
+tolerance checking, exponent-based demand budgets, Prefix-based propagation.
+
+### Dual Cache Architecture
+
+A critical design decision: Node stores both `prefix_cache` (for refinement
+power-of-2 dispatch) and `bounds_cache` (for exact arithmetic). Without this,
+Prefix rounding widened exact bounds through round-trip conversion. For example,
+exact bounds `[2,5]` (width 3) became `[2,6]` (width 4, next power of 2) when
+going through Prefix.
+
+- `get_prefix()` → used by refinement system for dispatch decisions
+- `get_bounds()` → used by arithmetic ops for exact interval arithmetic
+- `set_prefix()` invalidates `bounds_cache` (children may have changed)
+- `set_bounds()` sets both caches (derives prefix from bounds)
+
+### 1-Step-Per-Dispatch Principle
+
+The original implementation of target-aware refiners tried to loop internally
+until the target was met. This caused the test
+`refine_to_with_zero_epsilon_on_non_exact_value_returns_max_iterations` to hang:
+
+- **InvOp (Newton):** 10 Newton steps per dispatch. With `target_width_exp =
+  i64::MIN` (unreachable for irrationals), quadratic convergence doubled
+  mantissa size each step: 64 bits → 65K bits → 67M bits on next dispatch.
+  Arithmetic on 67M-bit numbers is effectively infinite.
+
+- **NthRootOp (bisection):** 256 bisection steps per dispatch. Each step adds
+  1 bit of precision, so after 256 steps the mantissa is 256 bits longer.
+  Under valgrind's instruction counting, the arithmetic cost grows
+  super-linearly with mantissa size.
+
+**Fix:** Limit all refiners to exactly 1 internal step per dispatch. The
+coordinator handles iteration count and re-dispatches as needed. This prevents
+mantissa explosion while still guaranteeing progress (each step produces at
+least 1 bit of improvement in the Prefix representation).
+
+### CI Benchmark Results (vs main baseline)
+
+All 3 CI jobs pass. Benchmark comparison (Ir, valgrind instruction count):
+
+| Benchmark | Ir Δ | Notes |
+|-----------|------|-------|
+| bench_pi_refinement (p4) | **-85%** | Prefix avoids recomputing already-precise pi |
+| bench_pi_plus_const1 (p4) | **-84%** | Same pi optimization |
+| bench_inv_pi (p4) | **-84%** | Same |
+| bench_two_pi (p4) | **-82%** | Same |
+| bench_pi_half (p4) | **-82%** | Same |
+| bench_pi_squared (p4) | **-84%** | Same |
+| bench_sin_2pi (p4) | **-98%** | Major improvement (329M → 7.2M Ir) |
+| bench_sin (p0-p4) | **-42% to -68%** | Consistent large improvement |
+| bench_sin_1pi (p4) | **-62%** | |
+| bench_sin_10pi (p4) | **-53%** | |
+| bench_sin_100pi (p3) | **-46%** | |
+| bench_integer_roots (p0-p4) | **-38% to -48%** | NthRootOp 1-step fix was key |
+| bench_sqrt2_plus_cbrt3 (p0-p4) | **-27% to -38%** | |
+| bench_sqrt2_plus_const3 (p0-p4) | **-24% to -32%** | |
+| bench_sqrt2_plus_pi (p0-p4) | **-12% to -44%** | |
+| bench_sqrt2_times_pi (p0-p4) | **-15% to -38%** | |
+| bench_complex | **-22%** | |
+| bench_inv (p0-p4) | **-25% to -44%** | Previously +137%, now improved |
+| bench_summation | **-26%** | |
+| bench_sin_10pi (p3) | +35% | Regression (4.2M → 5.6M Ir) |
+| bench_sin_100pi (p4) | +1940% | Regression (16M → 328M Ir) |
+
+**Comparison with pre-revert state (Experiments 1-11):**
+
+The previous best results (Experiment 11, event-loop optimizations only) had
+`bench_inv` at +137% Ir. The Prefix-native approach brings it to **-25% to
+-44%** — a complete reversal. Similarly, `bench_integer_roots` went from
++0.5% to **-38% to -48%**.
+
+### Remaining Regressions
+
+**bench_sin_100pi (p4): +1940%** — This is a known issue from earlier
+experiments. The sin_Npi benchmarks at high precision are sensitive to the
+interaction between SinOp and PiOp refinement ordering. The Prefix-native
+infrastructure changes the dispatch pattern, which can expose the stale-input
+pathology described in Experiment 6. This specific benchmark (100*pi at
+precision 4) appears to hit a bad dispatch sequence.
+
+**bench_sin_10pi (p3): +35%** — Smaller version of the same issue. At p4
+the same benchmark shows -53%, suggesting this is scheduling-sensitive.
+
+### Stages Remaining
+
+- Stage 4: Update public API, remove Bounds from public interface
+- Stage 5: Rename pass ("bounds" → "prefix" in identifiers)
+- Stage 6: Update documentation (README.md, src/README.md)

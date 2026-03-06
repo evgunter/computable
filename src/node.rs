@@ -215,8 +215,6 @@ pub struct Node {
     pub op: Arc<dyn NodeOp>,
     /// Prefix cache for the refinement system (power-of-2 width).
     pub prefix_cache: RwLock<Option<Prefix>>,
-    /// Exact bounds cache for arithmetic operations.
-    bounds_cache: RwLock<Option<Bounds>>,
     pub refinement: RefinementSync,
 }
 
@@ -227,7 +225,6 @@ impl Node {
             id: NODE_IDS.fetch_add(1, Ordering::Relaxed),
             op,
             prefix_cache: RwLock::new(None),
-            bounds_cache: RwLock::new(None),
             refinement: RefinementSync::new(),
         })
     }
@@ -237,19 +234,14 @@ impl Node {
         self.prefix_cache.read().clone()
     }
 
-    /// Returns cached bounds if already computed.
+    /// Returns bounds derived from cached prefix, if available.
     pub fn cached_bounds(&self) -> Option<Bounds> {
-        self.bounds_cache.read().clone()
+        self.cached_prefix().map(|p| p.to_bounds())
     }
 
-    /// Returns exact bounds, computing and caching if needed.
+    /// Returns bounds, computing and caching prefix if needed.
     pub fn get_bounds(&self) -> Result<Bounds, ComputableError> {
-        if let Some(bounds) = self.cached_bounds() {
-            return Ok(bounds);
-        }
-        let bounds = self.op.compute_bounds()?;
-        self.set_bounds(bounds.clone());
-        Ok(bounds)
+        Ok(self.get_prefix()?.to_bounds())
     }
 
     /// Returns cached prefix, computing and caching if needed.
@@ -266,25 +258,6 @@ impl Node {
         {
             let mut cache = self.prefix_cache.write();
             *cache = Some(prefix);
-        }
-        // Invalidate bounds cache — bounds derived from children may be stale.
-        {
-            let mut cache = self.bounds_cache.write();
-            *cache = None;
-        }
-        self.refinement.notify_bounds_updated();
-    }
-
-    /// Sets the exact bounds cache and derives prefix from it.
-    pub fn set_bounds(&self, bounds: Bounds) {
-        let prefix = Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
-        {
-            let mut cache = self.prefix_cache.write();
-            *cache = Some(prefix);
-        }
-        {
-            let mut cache = self.bounds_cache.write();
-            *cache = Some(bounds);
         }
         self.refinement.notify_bounds_updated();
     }

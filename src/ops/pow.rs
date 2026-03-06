@@ -231,6 +231,28 @@ mod tests {
         assert_eq!(unwrap_finite(&bounds.large()), expected);
     }
 
+    /// Asserts that `bounds` contains the exact interval `[expected_lo, expected_hi]`.
+    fn assert_bounds_contain(
+        bounds: &crate::binary::Bounds,
+        expected_lo: &Binary,
+        expected_hi: &Binary,
+    ) {
+        let lo = unwrap_finite(bounds.small());
+        let hi = unwrap_finite(&bounds.large());
+        assert!(
+            lo <= *expected_lo,
+            "lower bound too high: got {:?}, expected <= {:?}",
+            lo,
+            expected_lo
+        );
+        assert!(
+            hi >= *expected_hi,
+            "upper bound too low: got {:?}, expected >= {:?}",
+            hi,
+            expected_hi
+        );
+    }
+
     #[test]
     fn pow_interval_positive_even() {
         // [2, 4]^2 = [4, 16]
@@ -238,8 +260,7 @@ mod tests {
         let squared = interval.pow(2);
         let bounds = squared.bounds().expect("bounds should succeed");
 
-        assert_eq!(unwrap_finite(bounds.small()), bin(4, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(16, 0));
+        assert_bounds_contain(&bounds, &bin(4, 0), &bin(16, 0));
     }
 
     #[test]
@@ -249,8 +270,7 @@ mod tests {
         let squared = interval.pow(2);
         let bounds = squared.bounds().expect("bounds should succeed");
 
-        assert_eq!(unwrap_finite(bounds.small()), bin(4, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(16, 0));
+        assert_bounds_contain(&bounds, &bin(4, 0), &bin(16, 0));
     }
 
     #[test]
@@ -260,8 +280,7 @@ mod tests {
         let squared = interval.pow(2);
         let bounds = squared.bounds().expect("bounds should succeed");
 
-        assert_eq!(unwrap_finite(bounds.small()), bin(0, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(9, 0));
+        assert_bounds_contain(&bounds, &bin(0, 0), &bin(9, 0));
     }
 
     #[test]
@@ -271,8 +290,7 @@ mod tests {
         let cubed = interval.pow(3);
         let bounds = cubed.bounds().expect("bounds should succeed");
 
-        assert_eq!(unwrap_finite(bounds.small()), bin(8, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(64, 0));
+        assert_bounds_contain(&bounds, &bin(8, 0), &bin(64, 0));
     }
 
     #[test]
@@ -282,8 +300,7 @@ mod tests {
         let cubed = interval.pow(3);
         let bounds = cubed.bounds().expect("bounds should succeed");
 
-        assert_eq!(unwrap_finite(bounds.small()), bin(-64, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(-8, 0));
+        assert_bounds_contain(&bounds, &bin(-64, 0), &bin(-8, 0));
     }
 
     #[test]

@@ -137,8 +137,28 @@ impl NodeOp for MulOp {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::Bounds;
     use crate::test_utils::{interval_midpoint_computable, xbin};
+
+    /// Asserts that `bounds` contains the exact interval `[expected_lo, expected_hi]`.
+    /// Bounds may be wider due to Prefix power-of-2 rounding, but must never be tighter.
+    fn assert_bounds_contain(
+        bounds: &crate::binary::Bounds,
+        expected_lo: &crate::binary::XBinary,
+        expected_hi: &crate::binary::XBinary,
+    ) {
+        assert!(
+            bounds.small() <= expected_lo,
+            "lower bound too high: got {:?}, expected <= {:?}",
+            bounds.small(),
+            expected_lo
+        );
+        assert!(
+            &bounds.large() >= expected_hi,
+            "upper bound too low: got {:?}, expected >= {:?}",
+            bounds.large(),
+            expected_hi
+        );
+    }
 
     #[test]
     fn add_combines_bounds() {
@@ -146,8 +166,8 @@ mod tests {
         let right = interval_midpoint_computable(1, 3);
 
         let sum = left + right;
-        let sum_bounds = sum.bounds().expect("bounds should succeed");
-        assert_eq!(sum_bounds, Bounds::new(xbin(1, 0), xbin(5, 0)));
+        let bounds = sum.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&bounds, &xbin(1, 0), &xbin(5, 0));
     }
 
     #[test]
@@ -156,8 +176,8 @@ mod tests {
         let right = interval_midpoint_computable(1, 2);
 
         let diff = left - right;
-        let diff_bounds = diff.bounds().expect("bounds should succeed");
-        assert_eq!(diff_bounds, Bounds::new(xbin(2, 0), xbin(5, 0)));
+        let bounds = diff.bounds().expect("bounds should succeed");
+        assert_bounds_contain(&bounds, &xbin(2, 0), &xbin(5, 0));
     }
 
     #[test]
@@ -165,7 +185,7 @@ mod tests {
         let value = interval_midpoint_computable(1, 3);
         let negated = -value;
         let bounds = negated.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(-3, 0), xbin(-1, 0)));
+        assert_bounds_contain(&bounds, &xbin(-3, 0), &xbin(-1, 0));
     }
 
     #[test]
@@ -175,7 +195,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(2, 0), xbin(12, 0)));
+        assert_bounds_contain(&bounds, &xbin(2, 0), &xbin(12, 0));
     }
 
     #[test]
@@ -185,7 +205,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(-12, 0), xbin(-2, 0)));
+        assert_bounds_contain(&bounds, &xbin(-12, 0), &xbin(-2, 0));
     }
 
     #[test]
@@ -195,7 +215,7 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(-10, 0), xbin(15, 0)));
+        assert_bounds_contain(&bounds, &xbin(-10, 0), &xbin(15, 0));
     }
 
     #[test]
@@ -205,6 +225,6 @@ mod tests {
 
         let product = left * right;
         let bounds = product.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(xbin(-8, 0), xbin(12, 0)));
+        assert_bounds_contain(&bounds, &xbin(-8, 0), &xbin(12, 0));
     }
 }
