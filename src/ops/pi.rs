@@ -298,12 +298,7 @@ impl NodeOp for PiOp {
 impl PiOp {
     /// Extends the cache to `num_terms`, or recreates it if the precision requirement
     /// exceeds the cached precision.
-    fn ensure_cache(
-        cache: &mut ArctanCache,
-        k: u64,
-        num_terms: usize,
-        needed_precision: usize,
-    ) {
+    fn ensure_cache(cache: &mut ArctanCache, k: u64, num_terms: usize, needed_precision: usize) {
         if cache.precision_bits < needed_precision || cache.num_terms > num_terms {
             *cache = ArctanCache::new(k, needed_precision);
             cache.add_terms(num_terms);
@@ -618,8 +613,14 @@ mod tests {
         // Build from scratch: 30 terms
         let (scratch_lo, scratch_hi) = arctan_recip_interval(5, 30, precision_bits);
 
-        assert_eq!(inc_lo, scratch_lo, "incremental lower bound should match from-scratch");
-        assert_eq!(inc_hi, scratch_hi, "incremental upper bound should match from-scratch");
+        assert_eq!(
+            inc_lo, scratch_lo,
+            "incremental lower bound should match from-scratch"
+        );
+        assert_eq!(
+            inc_hi, scratch_hi,
+            "incremental upper bound should match from-scratch"
+        );
     }
 
     #[test]
