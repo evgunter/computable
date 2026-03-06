@@ -150,9 +150,9 @@ The event-loop architecture provides large wall-clock improvements for
 expressions with asymmetric convergence (sqrt2×pi, integer_roots) that the
 Ir metric cannot capture.
 
-## Final CI Results (leaf-refiner check, latest)
+## CI Results (leaf-refiner check era, before further optimization)
 
-| Benchmark | Original regression | Final Ir Δ | Status |
+| Benchmark | Original regression | Ir Δ at this point | Status |
 |-----------|-------------------|------------|--------|
 | bench_sin (p3) | +105% | **-22%** | Fixed |
 | bench_sin (p4) | +235% | **-7%** | Fixed |
@@ -204,16 +204,98 @@ InvOps), this eliminates the O(100) scan per response entirely.
 | inv bits=256 | 3.53ms | 5.79ms | 3.96ms | **+12%** |
 | sin bits=64 | 57ms | 42.2ms | 43.7ms | **-23%** |
 
-**Status:** PR #58 created, awaiting CI. Expecting significant Ir improvement
-for inv (the dominant cost was the wasted BFS, not structural overhead).
+**CI Result (PR #59):** sqrt2_times_pi improved from +73% to **-49%** vs
+first-merge baseline. inv neutral vs first-merge (improvement was in
+eliminating the BFS, not the Ir delta vs the already-cached baseline).
 
-## Remaining Ir Regressions (expected after Experiment 8)
+## Experiment 9: Budget refresh gating for leaf-only expressions
 
-### bench_sin low precision +15-26%
-At low precision (bits=1,4), the total work is tiny and the event-loop's
-fixed per-iteration overhead is proportionally large. At higher precision
-where actual computation dominates, sin shows -7 to -22% improvement.
+The wave-boundary budget refresh fired ~256 times for sqrt2*pi (MulOp makes
+`any_budget_dynamic = true`) even though both refiners are leaves. Leaf
+refiners always self-redispatch; budget loosening doesn't change their dispatch.
 
-### Small constant overhead (+5-16%)
-Benchmarks with few refiners and low precision show +5-16% from the event-loop's
-per-iteration overhead. This is the fixed cost of the architecture.
+**Fix:** Only refresh at wave boundaries if there are active non-leaf refiners
+with dynamic budgets. For leaf-only expressions (inv, sqrt2*pi), this
+eliminates all redundant BFS walks.
+
+## Experiment 10: Dispatch queue + per-iteration overhead reduction
+
+Investigation of inv +137% Ir found 75-100x more dispatch scans than the old
+round model (one per loop iteration vs one per round). Three fixes:
+
+1. **Dispatch queue** (VecDeque): replace O(N) full scan with O(1) amortized
+   queue drain. Only refiners with `needs_redispatch` recently set are checked.
+2. **Remove top-of-loop precision_met**: redundant (already checked per-response
+   in collection phase and pre-loop). Eliminates ~1500 `root.get_bounds()` calls.
+3. **eligible_count counter**: replace O(N) `any_eligible` scan with O(1) counter.
+
+**Bug found:** Dispatch queue had duplicate entries (no dedup guard). Non-leaf
+refiners got enqueued multiple times by successive PiOp responses. Fixed with
+`in_queue: Vec<bool>` guard. But this was fragile — the fundamental issue was
+that non-leaf refiners were marked for redispatch after ANY single sub-refiner
+responded, not after ALL had responded.
+
+## Experiment 11: All-sub-refiners-responded gate
+
+Root cause of the recurring sin_Npi valgrind regressions: SinOp (non-leaf)
+was dispatched after just ONE PiOp responded, with partially-updated inputs.
+Under some valgrind schedules this caused the +4249% pathology, under others
+it didn't — making the behavior fragile and binary-change-sensitive.
+
+**Fix:** Track per-sub-refiner response status. For each non-leaf refiner,
+maintain which of its sub-refiners have responded since its last dispatch.
+Only mark for redispatch when ALL have responded. This is deterministic —
+completely independent of thread scheduling order.
+
+Edge cases handled:
+- **Dedup sub_refiner_indices** for shared subexpressions (DAG case)
+- **Exhausted sub-refiners** keep their "responded" status across dispatch
+  resets (they won't respond again; clearing would make the gate unreachable)
+- **Stall recovery** force-enables non-leaf refiners when all sub-refiners
+  are budget-skipped (the gate can't open normally in that case)
+
+**CI Result:** sin_10pi p4 at **-0.08%**, sin_2pi p4 at **-0.08%**,
+sin_100pi p4 at **-0.08%**. All sin_Npi at precision_4 within ±0.2% of
+original baseline. No catastrophic regressions across any scheduling order.
+
+## Final CI Results (all optimizations, vs original pre-merge baseline)
+
+| Benchmark | Original regression | Final Ir Δ | Status |
+|-----------|-------------------|------------|--------|
+| bench_sin (p3) | +105% | **-22%** | Fixed |
+| bench_sin (p4) | +235% | **-7%** | Fixed |
+| bench_sin_1pi (p4) | +3977% | **-26%** | Fixed |
+| bench_sin_10pi (p4) | +87% | **~0%** | Fixed |
+| bench_sin_100pi (p4) | +86% | **~0%** | Fixed |
+| bench_sin_2pi (p4) | +86% | **~0%** | Fixed |
+| bench_sin_2pi (p3) | +59% | +11% | Partially fixed |
+| bench_sqrt2_times_pi (p3-4) | +42-49% | **-9 to -10%** | Fixed |
+| bench_sqrt2_plus_cbrt3 (p0-4) | -8-15% | **-6 to -22%** | Improved |
+| bench_sqrt2_plus_const3 (p1-4) | +0-5% | **-7 to -13%** | Improved |
+| bench_sqrt2_plus_pi (p2-4) | +3-5% | **-8 to -12%** | Improved |
+| bench_complex | ~0% | **-8%** | Improved |
+| bench_inv (p3-4) | +120% | +137% | Ir regressed (wall-clock +3-12%) |
+| bench_inv (p0-2) | +15% | +19% | Small Ir regression |
+| bench_sin (p0-1) | +97-174% | +7-14% | Partially fixed |
+| bench_integer_roots | -1.5% | +0.5% | Neutral |
+| Various small (pi_half etc.) | — | +5-10% | Event-loop fixed overhead |
+
+## Remaining Ir Regressions
+
+### bench_inv +137% (Ir) / +3-12% (wall-clock)
+The per-iteration overhead of the event loop (dispatch queue check, eligibility
+check, precision_met per response) accumulates across ~1500 responses for 100
+InvOp refiners. Under valgrind's serialized threads this is amplified; real
+wall-clock impact is +3-12% due to thread parallelism. Further optimization
+would require reducing the per-response overhead in the collection phase
+(e.g., avoiding the `outstanding.iter().any()` scan, or batching responses
+more aggressively).
+
+### bench_sin low precision +7-14% (Ir)
+Event-loop fixed overhead dominates when total work is tiny. At higher
+precision where computation dominates, sin shows -7 to -22% improvement.
+
+### Small constant overhead (+5-10%)
+Benchmarks with few refiners and low precision show small regression from
+the event-loop's per-iteration overhead. This is the fixed cost of the
+architecture, offset by parallelism benefits invisible to valgrind.
