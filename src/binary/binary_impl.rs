@@ -154,8 +154,7 @@ impl Binary {
         if shift.is_zero() {
             return mantissa.clone();
         }
-        let chunk_limit = BigUint::from(usize::MAX);
-        shift_mantissa_chunked::<BigInt>(mantissa, shift, &chunk_limit)
+        shift_mantissa_chunked::<BigInt>(mantissa, shift, usize::MAX)
     }
 
     /// Compares two binary values with potentially different exponents.

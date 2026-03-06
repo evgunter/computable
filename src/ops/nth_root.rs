@@ -103,6 +103,7 @@ impl NodeOp for NthRootOp {
         Ok(bounds)
     }
 
+    // TODO: investigate using target_width_exp to leap bisection toward the target precision
     fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
         // Ensure bisection state is initialized (compute_bounds is always called
         // before refine_step by the coordinator, but be defensive).

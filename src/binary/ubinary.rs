@@ -154,8 +154,7 @@ impl UBinary {
         if shift.is_zero() {
             return mantissa.clone();
         }
-        let chunk_limit = BigUint::from(usize::MAX);
-        shift_mantissa_chunked::<BigUint>(mantissa, shift, &chunk_limit)
+        shift_mantissa_chunked::<BigUint>(mantissa, shift, usize::MAX)
     }
 }
 

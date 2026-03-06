@@ -393,7 +393,9 @@ impl RefinementGraph {
                                     } else {
                                         // Exhausted sub-refiner: keep as responded.
                                         sub_responded_count[i] =
-                                            sub_responded_count[i].saturating_add(1);
+                                            sub_responded_count[i].checked_add(1).unwrap_or_else(|| {
+                                                unreachable!("sub_responded_count bounded by sub_refiner_indices[i].len()")
+                                            });
                                     }
                                 }
                             }
@@ -493,12 +495,16 @@ impl RefinementGraph {
                             // when it exhausts or hits the step limit.
                             if let Some(reason) = $exhaustion {
                                 active[idx] = false;
-                                eligible_count = eligible_count.saturating_sub(1);
+                                eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
+                                    unreachable!("eligible_count > 0: each refiner decrements at most once")
+                                });
                                 if !matches!(reason, ExhaustionReason::StateUnchanged) {
                                     all_state_unchanged = false;
                                 }
                             } else if steps[idx] >= MAX_REFINEMENT_ITERATIONS {
-                                eligible_count = eligible_count.saturating_sub(1);
+                                eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
+                                    unreachable!("eligible_count > 0: each refiner decrements at most once")
+                                });
                             }
                             // Leaf responding refiner: always re-dispatch
                             // (self-improving, independent of other refiners).
@@ -726,7 +732,9 @@ fn refiner_loop(
                                 break;
                             }
                             // Prefix didn't change — do another refine step
-                            extra_steps = extra_steps.saturating_add(1);
+                            extra_steps = extra_steps.checked_add(1).unwrap_or_else(|| {
+                                unreachable!("extra_steps bounded by loop break at 16")
+                            });
                         }
                         Ok(false) => {
                             let prefix = match node.compute_prefix() {

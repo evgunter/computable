@@ -49,6 +49,7 @@ pub use reciprocal::{ReciprocalRounding, reciprocal_of_biguint, reciprocal_round
 pub use ubinary::UBinary;
 pub use uxbinary::UXBinary;
 pub use xbinary::XBinary;
+pub(crate) use shift::shift_mantissa_chunked;
 
 // BigInt/BigUint trait implementations for ordered_pair compatibility
 use num_bigint::{BigInt, BigUint};

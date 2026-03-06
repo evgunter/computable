@@ -42,7 +42,7 @@ fn bit_length(x: Sane) -> Sane {
     let bits = usize::BITS
         .checked_sub(x.0.leading_zeros())
         .unwrap_or_else(|| unreachable!("leading_zeros() is always <= usize::BITS"));
-    Sane(usize::try_from(bits).unwrap_or(0))
+    Sane(crate::sane::bits_as_usize(u64::from(bits)))
 }
 
 /// Computes the intermediate reciprocal precision needed for `num_terms` Taylor series terms.
@@ -149,7 +149,8 @@ impl NodeOp for PiOp {
         }
 
         // Fall through: double the number of terms (handles Inf / large targets)
-        *num_terms = (*num_terms).saturating_mul(2).max(1_usize);
+        let current = *num_terms;
+        *num_terms = crate::sane_arithmetic!(current; current * 2).max(1_usize);
         Ok(true)
     }
 
