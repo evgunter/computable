@@ -235,17 +235,6 @@ impl RefinementGraph {
                     .iter()
                     .map(|subs| subs.is_empty())
                     .collect();
-                // Reverse index: for each refiner, which parent non-leaf
-                // refiners contain it as a sub-refiner (and at what position).
-                let parent_refiner_indices: Vec<Vec<(usize, usize)>> = {
-                    let mut parents = vec![Vec::new(); num_refiners];
-                    for (j, subs) in sub_refiner_indices.iter().enumerate() {
-                        for (pos, &sub_idx) in subs.iter().enumerate() {
-                            parents[sub_idx].push((j, pos));
-                        }
-                    }
-                    parents
-                };
                 // Walk root-to-refiner paths to check if any op along the
                 // way has bounds-dependent budgets. We do this by walking
                 // the BFS used for budget propagation and tracking whether
@@ -392,59 +381,7 @@ impl RefinementGraph {
                                 .cached_bounds()
                                 .is_some_and(|b| b.width() <= budget)
                         });
-                        if skip {
-                            // Budget-skipped refiner won't send a response.
-                            // Notify parent non-leaf refiners that this
-                            // sub-refiner is "done" so their gate can open.
-                            for &(j, pos) in &parent_refiner_indices[i] {
-                                if !is_leaf_refiner[j] && !sub_responded[j][pos] {
-                                    sub_responded[j][pos] = true;
-                                    sub_responded_count[j] = sub_responded_count[j]
-                                        .checked_add(1)
-                                        .unwrap_or_else(|| unreachable!());
-                                    if sub_responded_count[j] >= sub_refiner_indices[j].len() {
-                                        needs_redispatch[j] = true;
-                                        if !in_queue[j] {
-                                            dispatch_queue.push_back(j);
-                                            in_queue[j] = true;
-                                        }
-                                    }
-                                }
-                            }
-                            continue;
-                        }
-                        // Input-readiness gate: don't dispatch non-leaf
-                        // refiners until all sub-refiners' bounds are within
-                        // their propagated budgets. Dispatching with wide
-                        // inputs wastes work (e.g., SinOp with wide pi
-                        // bounds triggers expensive Taylor series for [-1,1]).
-                        if !is_leaf_refiner[i] {
-                            let inputs_ready = sub_refiner_indices[i].iter().all(|&sub_idx| {
-                                match refiner_budgets[sub_idx].as_ref() {
-                                    Some(budget) => refiner_nodes[sub_idx]
-                                        .cached_bounds()
-                                        .is_some_and(|b| b.width() <= budget),
-                                    None => true, // no budget constraint
-                                }
-                            });
-                            if !inputs_ready {
-                                // Reset sub-responded tracking so future
-                                // sub-refiner responses re-trigger enqueue.
-                                needs_redispatch[i] = false;
-                                sub_responded_count[i] = 0;
-                                for (k, flag) in sub_responded[i].iter_mut().enumerate() {
-                                    let sub_idx = sub_refiner_indices[i][k];
-                                    if active[sub_idx] {
-                                        *flag = false;
-                                    } else {
-                                        sub_responded_count[i] =
-                                            sub_responded_count[i].saturating_add(1);
-                                    }
-                                }
-                                continue;
-                            }
-                        }
-                        {
+                        if !skip {
                             refiner_handles[i]
                                 .sender
                                 .send(RefineCommand::Step { precision_bits })
@@ -496,23 +433,6 @@ impl RefinementGraph {
                                             .is_some_and(|b| b.width() <= budget)
                                     });
                                 if above_budget {
-                                    // Don't force non-leaf refiners whose
-                                    // inputs aren't ready — same gate as
-                                    // normal dispatch.
-                                    if !is_leaf_refiner[i] {
-                                        let inputs_ready =
-                                            sub_refiner_indices[i].iter().all(|&sub_idx| {
-                                                match refiner_budgets[sub_idx].as_ref() {
-                                                    Some(budget) => refiner_nodes[sub_idx]
-                                                        .cached_bounds()
-                                                        .is_some_and(|b| b.width() <= budget),
-                                                    None => true,
-                                                }
-                                            });
-                                        if !inputs_ready {
-                                            continue;
-                                        }
-                                    }
                                     needs_redispatch[i] = true;
                                     if !in_queue[i] {
                                         dispatch_queue.push_back(i);

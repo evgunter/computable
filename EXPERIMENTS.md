@@ -327,7 +327,36 @@ responses can re-trigger enqueue. Sub-refiners with no budget constraint
 | sin_2pi | **-98.3%** |
 | sin_10pi | **-98.1%** |
 
-CI valgrind results: pending (PR #65).
+### CI valgrind results (PR #65): REVERTED
+
+Wall-clock improvements were dramatic, but valgrind (Ir) showed massive
+regressions against the new main baseline (which already handles sin_Npi
+well after the Bounds revert):
+
+| Benchmark | Baseline (main) | With gate | Change |
+|-----------|----------------|-----------|--------|
+| sin_1pi p4 | 2.0M | 22.5M | **+1048%** |
+| sin_2pi p4 | 1.1M | 7.2M | **+567%** |
+| sin_10pi p4 | 1.1M | 323M | **+29715%** |
+| sin p4 | 97M | 30.4B | **+31169%** |
+
+**Root cause of failure:** Under valgrind's serialized scheduling, the
+sub-responded reset on gate failure creates a pathological loop:
+1. PiOp responds (partially tightened, not yet within budget)
+2. SinOp's sub_responded gate opens → enqueued
+3. Input-readiness fails → sub_responded reset → skip
+4. PiOp dispatched again (leaf, self-re-dispatches) → responds → goto 2
+
+Each cycle forces an extra PiOp step (exponentially expensive). The gate
+doesn't prevent SinOp dispatch — it just makes PiOp run many more times
+while SinOp waits. Under real parallelism (wall-clock) this is hidden by
+concurrent execution, but under valgrind's serialization it's catastrophic.
+
+**Conclusion:** The input-readiness gate is the wrong abstraction for this
+problem. The existing all-sub-refiners-responded gate (Experiment 11)
+already works well on main. The wall-clock improvements were real but
+came from a different mechanism (fewer total SinOp dispatches under real
+parallelism), not from the gate itself. Reverted to main.
 
 ## Remaining Ir Regressions
 
