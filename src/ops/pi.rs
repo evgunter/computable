@@ -170,7 +170,8 @@ impl ArctanCache {
 
     fn add_terms(&mut self, count: usize) {
         let start = self.num_terms;
-        for i in start..start.checked_add(count).expect("term count overflow") {
+        let end = crate::sane_arithmetic!(start, count; start + count);
+        for i in start..end {
             let coeff = BigInt::from(i) * 2_i64 + 1_i64;
             let denominator = &coeff * &self.k_power;
             let is_positive_term = i % 2 == 0;
@@ -192,7 +193,7 @@ impl ArctanCache {
 
             self.k_power = &self.k_power * &self.k_squared;
         }
-        self.num_terms = start.checked_add(count).expect("term count overflow");
+        self.num_terms = end;
     }
 
     /// Returns (lower_bound, upper_bound) for arctan(1/k), including truncation error.
@@ -303,7 +304,10 @@ impl PiOp {
             *cache = ArctanCache::new(k, needed_precision);
             cache.add_terms(num_terms);
         } else if cache.num_terms < num_terms {
-            cache.add_terms(num_terms - cache.num_terms);
+            // Safe: guard ensures cache.num_terms < num_terms.
+            #[allow(clippy::arithmetic_side_effects)]
+            let delta = num_terms - cache.num_terms;
+            cache.add_terms(delta);
         }
     }
 }
