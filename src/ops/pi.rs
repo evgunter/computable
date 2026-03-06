@@ -87,11 +87,19 @@ fn precision_bits_for_num_terms(num_terms: usize) -> usize {
 /// // prefix now contains pi to ~50 bits of precision
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
+/// Creates a pi computation node for use in other ops (e.g., sin).
+pub(crate) fn pi_node() -> Arc<Node> {
+    Node::new(Arc::new(PiOp {
+        state: RwLock::new(PiState {
+            num_terms: INITIAL_PI_TERMS,
+            arctan_5: ArctanCache::empty(5),
+            arctan_239: ArctanCache::empty(239),
+        }),
+    }))
+}
+
 pub fn pi() -> Computable {
-    let node = Node::new(Arc::new(PiOp {
-        num_terms: RwLock::new(INITIAL_PI_TERMS),
-    }));
-    Computable::from_node(node)
+    Computable::from_node(pi_node())
 }
 
 /// Returns a tight interval on pi with at least `precision_bits` bits of accuracy.
@@ -116,16 +124,136 @@ pub fn pi_prefix_at_precision(precision_bits: usize) -> (Binary, Binary) {
     compute_pi_interval(num_terms, reciprocal_precision)
 }
 
+/// Cached intermediate state for an arctan(1/k) Taylor series computation.
+///
+/// Stores partial sums and the power-of-k state so that additional terms
+/// can be appended in O(delta) instead of recomputing from scratch.
+struct ArctanCache {
+    sum_lo: Binary,
+    sum_hi: Binary,
+    /// k^(2*num_terms+1), ready for the next term's denominator.
+    k_power: BigInt,
+    k_squared: BigInt,
+    num_terms: usize,
+    precision_bits: usize,
+}
+
+impl ArctanCache {
+    /// Creates an empty cache for arctan(1/k). No terms are computed;
+    /// `precision_bits` is set to 0 so the first `ensure_cache` call
+    /// will recreate with the real precision and add terms.
+    fn empty(k: u64) -> Self {
+        let k_big = BigInt::from(k);
+        let k_squared = &k_big * &k_big;
+        Self {
+            sum_lo: Binary::zero(),
+            sum_hi: Binary::zero(),
+            k_power: k_big,
+            k_squared,
+            num_terms: 0,
+            precision_bits: 0,
+        }
+    }
+
+    fn new(k: u64, precision_bits: usize) -> Self {
+        let k_big = BigInt::from(k);
+        let k_squared = &k_big * &k_big;
+        Self {
+            sum_lo: Binary::zero(),
+            sum_hi: Binary::zero(),
+            k_power: k_big,
+            k_squared,
+            num_terms: 0,
+            precision_bits,
+        }
+    }
+
+    fn add_terms(&mut self, count: usize) {
+        let start = self.num_terms;
+        for i in start..start.checked_add(count).expect("term count overflow") {
+            let coeff = BigInt::from(i) * 2_i64 + 1_i64;
+            let denominator = &coeff * &self.k_power;
+            let is_positive_term = i % 2 == 0;
+
+            let term_lo = divide_one_by_bigint(
+                &denominator,
+                RoundDir::Down,
+                is_positive_term,
+                self.precision_bits,
+            );
+            let term_hi = divide_one_by_bigint(
+                &denominator,
+                RoundDir::Up,
+                is_positive_term,
+                self.precision_bits,
+            );
+            self.sum_lo = self.sum_lo.add(&term_lo);
+            self.sum_hi = self.sum_hi.add(&term_hi);
+
+            self.k_power = &self.k_power * &self.k_squared;
+        }
+        self.num_terms = start.checked_add(count).expect("term count overflow");
+    }
+
+    /// Returns (lower_bound, upper_bound) for arctan(1/k), including truncation error.
+    fn interval(&self) -> (Binary, Binary) {
+        if self.num_terms == 0 {
+            let error = reciprocal_of_biguint(
+                // k_power is k^1 at num_terms=0
+                self.k_power.magnitude(),
+                self.precision_bits,
+                ReciprocalRounding::Ceil,
+            );
+            return (error.neg(), error);
+        }
+        let n = self.num_terms;
+        let error_coeff = BigInt::from(crate::sane_arithmetic!(n; 2 * n + 1));
+        let error_denom = &error_coeff * &self.k_power;
+        let error = reciprocal_of_biguint(
+            error_denom.magnitude(),
+            self.precision_bits,
+            ReciprocalRounding::Ceil,
+        );
+        (self.sum_lo.sub(&error), self.sum_hi.add(&error))
+    }
+}
+
 /// Pi computation operation using Machin's formula.
 pub struct PiOp {
-    pub num_terms: RwLock<usize>,
+    state: RwLock<PiState>,
+}
+
+struct PiState {
+    num_terms: usize,
+    arctan_5: ArctanCache,
+    arctan_239: ArctanCache,
 }
 
 impl NodeOp for PiOp {
     fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
-        let num_terms = *self.num_terms.read();
-        let precision_bits = precision_bits_for_num_terms(num_terms);
-        let (pi_lo, pi_hi) = compute_pi_interval(num_terms, precision_bits);
+        let mut state = self.state.write();
+        let num_terms = state.num_terms;
+        let needed_precision = precision_bits_for_num_terms(num_terms);
+
+        // Extend or recreate arctan caches.
+        Self::ensure_cache(&mut state.arctan_5, 5, num_terms, needed_precision);
+        let (atan_5_lo, atan_5_hi) = state.arctan_5.interval();
+
+        Self::ensure_cache(&mut state.arctan_239, 239, num_terms, needed_precision);
+        let (atan_239_lo, atan_239_hi) = state.arctan_239.interval();
+
+        // pi = 16*arctan(1/5) - 4*arctan(1/239)
+        let sixteen = Binary::new(BigInt::from(1_i32), BigInt::from(4_i32));
+        let four = Binary::new(BigInt::from(1_i32), BigInt::from(2_i32));
+
+        let term1_lo = atan_5_lo.mul(&sixteen);
+        let term1_hi = atan_5_hi.mul(&sixteen);
+        let term2_lo = atan_239_lo.mul(&four);
+        let term2_hi = atan_239_hi.mul(&four);
+
+        let pi_lo = term1_lo.sub(&term2_hi);
+        let pi_hi = term1_hi.sub(&term2_lo);
+
         Ok(Prefix::from_lower_upper(
             XBinary::Finite(pi_lo),
             XBinary::Finite(pi_hi),
@@ -133,21 +261,25 @@ impl NodeOp for PiOp {
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
-        let mut num_terms = self.num_terms.write();
+        let mut state = self.state.write();
 
         // Leap to the needed term count based on precision_bits.
         // Same formula as pi_prefix_at_precision: n = (precision_bits + 10) / 4.
         if precision_bits <= crate::MAX_COMPUTATION_BITS {
             let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
-            if needed > *num_terms {
-                *num_terms = needed;
+            if needed > state.num_terms {
+                state.num_terms = needed;
                 return Ok(true);
             }
         }
 
-        // Fall through: double the number of terms (existing behavior)
-        *num_terms = (*num_terms).saturating_mul(2).max(1_usize);
-        Ok(true)
+        // With per-refiner budgets, the leap formula always produces needed > num_terms
+        // when the coordinator dispatches (otherwise the refiner would have been skipped).
+        // TODO: investigate whether the dispatch logic can be tightened to avoid this path entirely.
+        unreachable!(
+            "PiOp doubling fallback should never fire: precision_bits={}, num_terms={}",
+            precision_bits, state.num_terms
+        )
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
@@ -160,6 +292,24 @@ impl NodeOp for PiOp {
 
     fn child_demand_budget(&self, _target_width: &UXBinary, _child_index: usize) -> UXBinary {
         unreachable!("PiOp has no children")
+    }
+}
+
+impl PiOp {
+    /// Extends the cache to `num_terms`, or recreates it if the precision requirement
+    /// exceeds the cached precision.
+    fn ensure_cache(
+        cache: &mut ArctanCache,
+        k: u64,
+        num_terms: usize,
+        needed_precision: usize,
+    ) {
+        if cache.precision_bits < needed_precision || cache.num_terms > num_terms {
+            *cache = ArctanCache::new(k, needed_precision);
+            cache.add_terms(num_terms);
+        } else if cache.num_terms < num_terms {
+            cache.add_terms(num_terms - cache.num_terms);
+        }
     }
 }
 
@@ -453,6 +603,38 @@ mod tests {
         // Verify bounds still contain pi
         let pi_f64 = pi_f64_binary();
         assert!(hi >= pi_f64, "upper bound should be >= f64 pi");
+    }
+
+    #[test]
+    fn arctan_cache_incremental_matches_from_scratch() {
+        let precision_bits = precision_bits_for_num_terms(30);
+
+        // Build incrementally: 10 terms, then extend to 30
+        let mut cache = ArctanCache::new(5, precision_bits);
+        cache.add_terms(10);
+        cache.add_terms(20);
+        let (inc_lo, inc_hi) = cache.interval();
+
+        // Build from scratch: 30 terms
+        let (scratch_lo, scratch_hi) = arctan_recip_interval(5, 30, precision_bits);
+
+        assert_eq!(inc_lo, scratch_lo, "incremental lower bound should match from-scratch");
+        assert_eq!(inc_hi, scratch_hi, "incremental upper bound should match from-scratch");
+    }
+
+    #[test]
+    fn arctan_cache_incremental_matches_239() {
+        let precision_bits = precision_bits_for_num_terms(25);
+
+        let mut cache = ArctanCache::new(239, precision_bits);
+        cache.add_terms(5);
+        cache.add_terms(20);
+        let (inc_lo, inc_hi) = cache.interval();
+
+        let (scratch_lo, scratch_hi) = arctan_recip_interval(239, 25, precision_bits);
+
+        assert_eq!(inc_lo, scratch_lo);
+        assert_eq!(inc_hi, scratch_hi);
     }
 
     #[test]

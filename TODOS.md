@@ -1,5 +1,17 @@
 # TODOs - Ranked by Ease of Completion
 
+## Tier 0: Easy (Unblocked)
+
+### <a id="op-constructors"></a>op-constructors: Give ops proper constructors so callers don't couple to internal structure
+**File:** `src/computable.rs`
+`Computable::sin` currently calls `pi_node()` because constructing a `PiOp` directly would require knowing its internal fields. The same pattern applies to other ops (`SinOp`, `InvOp`, `NthRootOp`) — `computable.rs` reaches into their internal `RwLock` fields. Each op should expose a constructor (e.g., `PiOp::new()`, `SinOp::new(inner, pi_node)`) that encapsulates initialization, so callers only depend on the public API.
+
+### <a id="pi-unreachable-path"></a>pi-unreachable-path: Investigate whether PiOp's unreachable fallback can be eliminated
+**File:** `src/ops/pi.rs`
+With per-refiner budgets, the leap formula in `PiOp::refine_step` always produces `needed > num_terms` when the coordinator dispatches (otherwise the refiner is skipped). The doubling fallback is now `unreachable!`. Investigate whether the dispatch logic can be tightened to avoid this dead path entirely — e.g., by having the coordinator not dispatch a leaf refiner whose budget-derived precision would not advance it.
+
+---
+
 ## Tier 1: Medium (Unblocked)
 
 ### <a id="kill-slow-refiners"></a>kill-slow-refiners: Kill outstanding refiners once precision is achieved

@@ -357,7 +357,7 @@ impl RefinementGraph {
                             }
                         }
                     }
-                    let precision_bits = match tolerance_exp {
+                    let global_precision_bits = match tolerance_exp {
                         XUsize::Finite(n) => *n,
                         XUsize::Inf => usize::MAX,
                     };
@@ -378,6 +378,9 @@ impl RefinementGraph {
                                 .is_some_and(|b| b.width() <= *budget)
                         });
                         if !skip {
+                            let precision_bits = refiner_budgets[i]
+                                .as_ref()
+                                .map_or(global_precision_bits, budget_to_precision_bits);
                             refiner_handles[i]
                                 .sender
                                 .send(RefineCommand::Step { precision_bits })
@@ -658,6 +661,49 @@ impl RefinementGraph {
         }
 
         budgets
+    }
+}
+
+/// Converts a `UXBinary` budget width to a `precision_bits` value.
+///
+/// A budget represents a target width for a refiner's prefix interval.
+/// Smaller width → more precision bits needed.
+///
+/// - `Inf` → `0` (infinite width, no precision needed)
+/// - `Finite` with zero mantissa → `usize::MAX` (zero width, infinite precision)
+/// - `Finite(m * 2^e)` where the MSB position is non-negative → `0` (budget ≥ 1)
+/// - `Finite(m * 2^e)` otherwise → `-(e + bit_length(m) - 1)`, validated via `bits_as_usize`
+///
+/// # Panics
+///
+/// Panics via `detected_computable_would_exhaust_memory!` if the resulting
+/// precision exceeds `MAX_COMPUTATION_BITS` (same as all computation-size values).
+fn budget_to_precision_bits(budget: &UXBinary) -> usize {
+    use num_traits::{ToPrimitive, Zero};
+
+    match budget {
+        UXBinary::Inf => 0,
+        UXBinary::Finite(ub) => {
+            if ub.mantissa().is_zero() {
+                return usize::MAX;
+            }
+            // value = mantissa * 2^exponent
+            // MSB position = exponent + bits(mantissa) - 1
+            // precision_bits = -MSB_position (smaller value → more precision)
+            let mantissa_bits = BigInt::from(ub.mantissa().bits());
+            let msb_position = ub.exponent() + &mantissa_bits - BigInt::from(1);
+            let neg_msb = -msb_position;
+            // Budget >= 1 means MSB position >= 0, so no precision needed.
+            if neg_msb.sign() != num_bigint::Sign::Plus {
+                return 0;
+            }
+            let precision = neg_msb.to_u64().unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "budget_to_precision_bits: precision exceeds u64"
+                );
+            });
+            crate::sane::bits_as_usize(precision)
+        }
     }
 }
 

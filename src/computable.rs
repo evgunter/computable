@@ -13,7 +13,7 @@ use num_traits::One;
 use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
-use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
+use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PowOp, SinOp};
 use crate::prefix::Prefix;
 use crate::refinement::{RefinementGraph, XUsize, prefix_width_leq};
 
@@ -135,9 +135,9 @@ impl Computable {
     /// The error bound |x|^(2n+1)/(2n+1)! is also computed conservatively (rounded up)
     /// to ensure the true value is always contained within the returned bounds.
     pub fn sin(self) -> Self {
-        let pi_node = Node::new(Arc::new(PiOp {
-            num_terms: RwLock::new(crate::ops::pi::INITIAL_PI_TERMS),
-        }));
+        // TODO: PiOp (and other ops) should expose a constructor so callers
+        // don't need to reach into internal structure. See TODOS.md #op-constructors.
+        let pi_node = crate::ops::pi::pi_node();
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
             pi_node,
