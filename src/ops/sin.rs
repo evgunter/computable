@@ -48,8 +48,12 @@ impl NodeOp for SinOp {
         sin_bounds(&input_bounds, &pi_bounds, &num_terms)
     }
 
-    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
+
+        // Convert target exponent to precision bits (absolute value).
+        let precision_bits =
+            usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
 
         // Leap based on coordinator's precision target.
         // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.

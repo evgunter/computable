@@ -102,7 +102,7 @@ impl NodeOp for NthRootOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
         // Ensure bisection state is initialized (compute_bounds is always called
         // before refine_step by the coordinator, but be defensive).
         {
@@ -125,18 +125,32 @@ impl NodeOp for NthRootOp {
             return Ok(false);
         }
 
-        // Perform one bisection step
-        let degree = self.degree.get();
-        let target = &s.target;
-        let result =
-            bisection_step_normalized(&s.bounds, |mid| binary_pow(mid, degree).cmp(target));
+        // Perform bisection steps until width_exponent ≤ target.
+        // Each bisection step halves the interval (1 bit improvement).
+        // Cap at 256 steps to prevent runaway.
+        let mut steps_taken = 0usize;
+        loop {
+            let degree = self.degree.get();
+            let target = &s.target;
+            let result =
+                bisection_step_normalized(&s.bounds, |mid| binary_pow(mid, degree).cmp(target));
 
-        match result {
-            PrefixBisectionResult::Narrowed(new_bounds) => {
-                s.bounds = new_bounds;
+            match result {
+                PrefixBisectionResult::Narrowed(new_bounds) => {
+                    s.bounds = new_bounds;
+                }
+                PrefixBisectionResult::Exact(mid) => {
+                    s.exact_value = Some(mid);
+                    return Ok(true);
+                }
             }
-            PrefixBisectionResult::Exact(mid) => {
-                s.exact_value = Some(mid);
+
+            steps_taken = steps_taken.saturating_add(1);
+
+            // Check if we've reached the target width exponent
+            let current_exp = s.bounds.width_exponent_i64();
+            if current_exp <= target_width_exp || steps_taken >= 256 {
+                break;
             }
         }
         Ok(true)

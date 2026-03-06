@@ -104,16 +104,18 @@ impl NodeOp for InvOp {
         }
     }
 
-    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.newton_state.write();
 
         match &mut *state {
             None => {
-                // Cap seed precision: usize::MAX (from Inf targets) would exhaust
-                // memory. Use MIN_SEED_PRECISION_BITS as fallback for unreasonable values.
-                let seed_precision = if precision_bits <= crate::MAX_COMPUTATION_BITS {
-                    precision_bits.max(MIN_SEED_PRECISION_BITS)
+                // Convert target to seed precision. Use absolute value of target
+                // (negative exponent = high precision). Cap at MAX_COMPUTATION_BITS.
+                let raw_precision =
+                    usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
+                let seed_precision = if raw_precision <= crate::MAX_COMPUTATION_BITS {
+                    raw_precision.max(MIN_SEED_PRECISION_BITS)
                 } else {
                     MIN_SEED_PRECISION_BITS
                 };
@@ -124,10 +126,12 @@ impl NodeOp for InvOp {
                 // Read current inner bounds and update denominators.
                 update_denominators(s, &input_bounds)?;
 
-                // One N-R step on each endpoint.
-                // TODO: With a high-precision seed, the N-R doubling may overshoot
-                // significantly. Consider capping at precision_bits rather than
-                // unconditionally doubling.
+                // One Newton step per dispatch. Newton doubles precision each
+                // step (quadratic convergence), so one step always produces a
+                // visible Prefix change. The coordinator handles iteration
+                // count. Doing multiple steps risks astronomical mantissa
+                // growth when the target is unreachable (e.g. i64::MIN for
+                // irrational values).
                 newton_step(&mut s.lo, &s.abs_upper);
                 newton_step(&mut s.hi, &s.abs_lower);
                 Ok(true)

@@ -134,10 +134,14 @@ impl NodeOp for PiOp {
         normalize_finite_to_bounds(&finite)
     }
 
-    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
-        // Leap to the needed term count based on precision_bits.
+        // Convert target exponent to precision bits (absolute value).
+        let precision_bits =
+            usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
+
+        // Leap to the needed term count based on precision.
         // Same formula as pi_bounds_at_precision: n = (precision_bits + 10) / 4.
         if precision_bits <= crate::MAX_COMPUTATION_BITS {
             let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
