@@ -141,8 +141,7 @@ impl NodeOp for PiOp {
         if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits()
             && precision_bits <= crate::MAX_COMPUTATION_BITS
         {
-            let needed =
-                crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
+            let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
             if needed > *num_terms {
                 *num_terms = needed;
                 return Ok(true);

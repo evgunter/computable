@@ -95,7 +95,6 @@ impl PrefixBounds {
     pub fn midpoint(&self) -> Binary {
         Binary::new(&self.mantissa * 2 + 1, self.exponent.clone() - 1)
     }
-
 }
 
 /// Result of a prefix bisection step.

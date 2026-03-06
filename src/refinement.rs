@@ -819,7 +819,9 @@ fn uxbinary_to_exp(ux: &UXBinary) -> XIsize {
 /// Converts a tolerance exponent to an `XIsize` target for refiners.
 fn tolerance_to_exp(tolerance_exp: &XUsize) -> XIsize {
     #[allow(clippy::arithmetic_side_effects)] // XUsize::neg() is total (no panics)
-    { -(*tolerance_exp) }
+    {
+        -(*tolerance_exp)
+    }
 }
 
 #[cfg(test)]
