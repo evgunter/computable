@@ -495,13 +495,14 @@ impl RefinementGraph {
                                                 if !active[sub_idx] {
                                                     return true;
                                                 }
-                                                refiner_budgets[sub_idx]
-                                                    .as_ref()
-                                                    .map_or(true, |budget| {
+                                                refiner_budgets[sub_idx].as_ref().map_or(
+                                                    true,
+                                                    |budget| {
                                                         refiner_nodes[sub_idx]
                                                             .cached_bounds()
                                                             .is_some_and(|b| b.width() <= budget)
-                                                    })
+                                                    },
+                                                )
                                             });
                                         if !inputs_ready {
                                             continue;
