@@ -1,9 +1,9 @@
-//! Computation graph nodes with lazy bounds computation and caching.
+//! Computation graph nodes with lazy prefix computation and caching.
 //!
 //! This module provides the core abstractions for the computation graph:
 //! - `BaseNode` trait for user-defined leaf nodes with custom refinement logic
 //! - `TypedBaseNode` for type-erased storage of heterogeneous leaf states
-//! - `Node` for the computation graph with bounds caching
+//! - `Node` for the computation graph with prefix caching
 //! - `NodeOp` trait for composable operations (arithmetic, transcendental, etc.)
 
 use std::sync::Arc;
@@ -13,6 +13,7 @@ use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
+use crate::prefix::Prefix;
 
 /// Shared API for retrieving bounds with lazy computation.
 pub trait BoundsAccess {
@@ -126,7 +127,23 @@ impl<T: BaseNode + ?Sized> BoundsAccess for T {
 // TODO: ensure it is possible to create user-defined composed nodes.
 pub trait NodeOp: Send + Sync {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError>;
-    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError>;
+
+    /// Computes prefix for this node. Default converts compute_bounds() result.
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
+        let bounds = self.compute_bounds()?;
+        Ok(Prefix::from_lower_upper(
+            bounds.small().clone(),
+            bounds.large(),
+        ))
+    }
+
+    /// Performs one refinement step targeting the given width exponent.
+    ///
+    /// Contract: after returning `Ok(true)`, `compute_prefix()` should return
+    /// a Prefix with `width_exponent < current` (at least 1 bit improvement).
+    /// Ideally `width_exponent ≤ target_width_exp`.
+    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError>;
+
     fn children(&self) -> Vec<Arc<Node>>;
     fn is_refiner(&self) -> bool;
 
@@ -187,16 +204,19 @@ impl Default for RefinementSync {
 }
 
 /// Node in the computation graph. The op stores structure/state; the cache stores
-/// the last bounds computed for this node.
+/// the last prefix computed for this node.
 ///
-/// NOTE: The bounds_cache is not automatically invalidated when children are refined.
-/// Updates are explicitly propagated via apply_update during refinement. If get_bounds()
+/// NOTE: The prefix_cache is not automatically invalidated when children are refined.
+/// Updates are explicitly propagated via apply_update during refinement. If get_prefix()
 /// is called between refinement steps (outside of refine_to), it may return stale cached
 /// values. Consider whether this is acceptable for your use case.
 pub struct Node {
     pub id: usize,
     pub op: Arc<dyn NodeOp>,
-    pub bounds_cache: RwLock<Option<Bounds>>,
+    /// Prefix cache for the refinement system (power-of-2 width).
+    pub prefix_cache: RwLock<Option<Prefix>>,
+    /// Exact bounds cache for arithmetic operations.
+    bounds_cache: RwLock<Option<Bounds>>,
     pub refinement: RefinementSync,
 }
 
@@ -206,9 +226,15 @@ impl Node {
         Arc::new(Self {
             id: NODE_IDS.fetch_add(1, Ordering::Relaxed),
             op,
+            prefix_cache: RwLock::new(None),
             bounds_cache: RwLock::new(None),
             refinement: RefinementSync::new(),
         })
+    }
+
+    /// Returns cached prefix if already computed.
+    pub fn cached_prefix(&self) -> Option<Prefix> {
+        self.prefix_cache.read().clone()
     }
 
     /// Returns cached bounds if already computed.
@@ -216,31 +242,61 @@ impl Node {
         self.bounds_cache.read().clone()
     }
 
-    /// Returns cached bounds, computing and caching if needed.
-    /// Combinators are infallible, so bounds are lazily computed on demand.
+    /// Returns exact bounds, computing and caching if needed.
     pub fn get_bounds(&self) -> Result<Bounds, ComputableError> {
         if let Some(bounds) = self.cached_bounds() {
             return Ok(bounds);
         }
-        let bounds = self.compute_bounds()?;
+        let bounds = self.op.compute_bounds()?;
         self.set_bounds(bounds.clone());
         Ok(bounds)
     }
 
-    pub fn set_bounds(&self, bounds: Bounds) {
-        let mut cache = self.bounds_cache.write();
-        *cache = Some(bounds);
+    /// Returns cached prefix, computing and caching if needed.
+    pub fn get_prefix(&self) -> Result<Prefix, ComputableError> {
+        if let Some(prefix) = self.cached_prefix() {
+            return Ok(prefix);
+        }
+        let prefix = self.compute_prefix()?;
+        self.set_prefix(prefix.clone());
+        Ok(prefix)
+    }
+
+    pub fn set_prefix(&self, prefix: Prefix) {
+        {
+            let mut cache = self.prefix_cache.write();
+            *cache = Some(prefix);
+        }
+        // Invalidate bounds cache — bounds derived from children may be stale.
+        {
+            let mut cache = self.bounds_cache.write();
+            *cache = None;
+        }
         self.refinement.notify_bounds_updated();
     }
 
-    /// Computes bounds for this node from current children/base state.
-    pub fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        self.op.compute_bounds()
+    /// Sets the exact bounds cache and derives prefix from it.
+    pub fn set_bounds(&self, bounds: Bounds) {
+        let prefix = Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
+        {
+            let mut cache = self.prefix_cache.write();
+            *cache = Some(prefix);
+        }
+        {
+            let mut cache = self.bounds_cache.write();
+            *cache = Some(bounds);
+        }
+        self.refinement.notify_bounds_updated();
     }
 
-    /// Performs one refinement step. Returns whether refinement was applied.
-    pub fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
-        self.op.refine_step(precision_bits)
+    /// Computes prefix for this node from current children/base state.
+    pub fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
+        self.op.compute_prefix()
+    }
+
+    /// Performs one refinement step targeting the given width exponent.
+    pub fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
+        self.op.refine_step(target_width_exp)
     }
 
     pub fn children(&self) -> Vec<Arc<Node>> {
