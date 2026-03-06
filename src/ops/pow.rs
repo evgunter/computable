@@ -10,10 +10,11 @@ use std::sync::Arc;
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 
-use crate::binary::{Bounds, UBinary, UXBinary, XBinary};
+use crate::binary::{UBinary, UXBinary, XBinary};
 use crate::binary_utils::power::{is_negative, is_positive, xbinary_max, xbinary_pow};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 
 /// Integer power operation.
 ///
@@ -35,25 +36,23 @@ pub struct PowOp {
 }
 
 impl NodeOp for PowOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let input_bounds = self.inner.get_bounds()?;
-        let lower = input_bounds.small();
-        let upper = &input_bounds.large();
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
+        let input_prefix = self.inner.get_prefix()?;
+        let lower = input_prefix.lower();
+        let upper = input_prefix.upper();
 
         // Handle the trivial case of exponent = 1
         if self.exponent.get() == 1 {
-            return Ok(input_bounds);
+            return Ok(input_prefix);
         }
 
         let is_even = self.exponent.get().is_multiple_of(2);
 
-        let bounds = if is_even {
-            compute_even_power_bounds(lower, upper, self.exponent)
+        if is_even {
+            Ok(compute_even_power_prefix(&lower, &upper, self.exponent))
         } else {
-            compute_odd_power_bounds(lower, upper, self.exponent)
-        };
-
-        Ok(bounds)
+            Ok(compute_odd_power_prefix(&lower, &upper, self.exponent))
+        }
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
@@ -76,9 +75,9 @@ impl NodeOp for PowOp {
         if n == 1 {
             return target_width.clone();
         }
-        let max_abs = match self.inner.cached_bounds() {
-            Some(b) => {
-                let (lo, hi) = b.abs();
+        let max_abs = match self.inner.cached_prefix() {
+            Some(p) => {
+                let (lo, hi) = p.abs();
                 std::cmp::max(lo, hi)
             }
             None => return target_width.clone(),
@@ -90,7 +89,7 @@ impl NodeOp for PowOp {
         target_width.div_floor(&denominator)
     }
 
-    fn budget_depends_on_bounds(&self) -> bool {
+    fn budget_depends_on_prefix(&self) -> bool {
         self.exponent.get() > 1
     }
 }
@@ -127,10 +126,10 @@ pub(crate) fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
 ///
 /// Since x^n is monotonically increasing for odd n, the output bounds
 /// are simply [lower^n, upper^n].
-fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Bounds {
+fn compute_odd_power_prefix(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Prefix {
     let result_lower = xbinary_pow(lower, n);
     let result_upper = xbinary_pow(upper, n);
-    Bounds::new(result_lower, result_upper)
+    Prefix::from_lower_upper(result_lower, result_upper)
 }
 
 /// Computes bounds for x^n where n is even.
@@ -139,60 +138,42 @@ fn compute_odd_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> 
 /// - If [lower, upper] is entirely non-negative: bounds are [lower^n, upper^n]
 /// - If [lower, upper] is entirely non-positive: bounds are [upper^n, lower^n]
 /// - If [lower, upper] spans zero: bounds are [0, max(|lower|^n, |upper|^n)]
-fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Bounds {
+fn compute_even_power_prefix(lower: &XBinary, upper: &XBinary, n: NonZeroU32) -> Prefix {
     let lower_non_negative = !is_negative(lower);
     let upper_non_positive = !is_positive(upper);
 
     if lower_non_negative {
-        // [lower, upper] is entirely non-negative
         let result_lower = xbinary_pow(lower, n);
         let result_upper = xbinary_pow(upper, n);
-        Bounds::new(result_lower, result_upper)
+        Prefix::from_lower_upper(result_lower, result_upper)
     } else if upper_non_positive {
-        // [lower, upper] is entirely non-positive
-        // For even powers, more negative gives larger positive result
         let result_lower = xbinary_pow(upper, n);
         let result_upper = xbinary_pow(lower, n);
-        Bounds::new(result_lower, result_upper)
+        Prefix::from_lower_upper(result_lower, result_upper)
     } else {
-        // Interval spans zero
         let lower_pow = xbinary_pow(lower, n);
         let upper_pow = xbinary_pow(upper, n);
         let result_upper = xbinary_max(&lower_pow, &upper_pow);
-        Bounds::new(XBinary::zero(), result_upper)
+        Prefix::from_lower_upper(XBinary::zero(), result_upper)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{Binary, Bounds};
     use crate::computable::Computable;
     use crate::refinement::XUsize;
-    use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
-
-    fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XUsize) {
-        let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
-
-        assert!(
-            lower <= *expected && *expected <= upper,
-            "Expected {} to be in bounds [{}, {}]",
-            expected,
-            lower,
-            upper
-        );
-    }
+    use crate::test_utils::{
+        assert_bounds_compatible_with_expected, assert_bounds_contain, assert_exact, bin,
+        interval_noop_computable, to_bounds, xbin,
+    };
 
     #[test]
     fn pow_constant_squared() {
         // 3^2 = 9
         let three = Computable::constant(bin(3, 0));
         let squared = three.pow(2);
-        let bounds = squared.bounds().expect("bounds should succeed");
-
-        let expected = bin(9, 0);
-        assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        let prefix = squared.prefix().expect("bounds should succeed");
+        assert_exact(&prefix, &bin(9, 0));
     }
 
     #[test]
@@ -200,11 +181,8 @@ mod tests {
         // 2^3 = 8
         let two = Computable::constant(bin(2, 0));
         let cubed = two.pow(3);
-        let bounds = cubed.bounds().expect("bounds should succeed");
-
-        let expected = bin(8, 0);
-        assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        let prefix = cubed.prefix().expect("bounds should succeed");
+        assert_exact(&prefix, &bin(8, 0));
     }
 
     #[test]
@@ -212,11 +190,8 @@ mod tests {
         // (-3)^2 = 9
         let neg_three = Computable::constant(bin(-3, 0));
         let squared = neg_three.pow(2);
-        let bounds = squared.bounds().expect("bounds should succeed");
-
-        let expected = bin(9, 0);
-        assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        let prefix = squared.prefix().expect("bounds should succeed");
+        assert_exact(&prefix, &bin(9, 0));
     }
 
     #[test]
@@ -224,11 +199,8 @@ mod tests {
         // (-2)^3 = -8
         let neg_two = Computable::constant(bin(-2, 0));
         let cubed = neg_two.pow(3);
-        let bounds = cubed.bounds().expect("bounds should succeed");
-
-        let expected = bin(-8, 0);
-        assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        let prefix = cubed.prefix().expect("bounds should succeed");
+        assert_exact(&prefix, &bin(-8, 0));
     }
 
     #[test]
@@ -236,32 +208,26 @@ mod tests {
         // [2, 4]^2 = [4, 16]
         let interval = interval_noop_computable(2, 4);
         let squared = interval.pow(2);
-        let bounds = squared.bounds().expect("bounds should succeed");
-
-        assert_eq!(unwrap_finite(bounds.small()), bin(4, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(16, 0));
+        let prefix = squared.prefix().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(4, 0), &xbin(16, 0));
     }
 
     #[test]
     fn pow_interval_negative_even() {
-        // [-4, -2]^2 = [4, 16] (note: more negative gives larger result)
+        // [-4, -2]^2 = [4, 16]
         let interval = interval_noop_computable(-4, -2);
         let squared = interval.pow(2);
-        let bounds = squared.bounds().expect("bounds should succeed");
-
-        assert_eq!(unwrap_finite(bounds.small()), bin(4, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(16, 0));
+        let prefix = squared.prefix().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(4, 0), &xbin(16, 0));
     }
 
     #[test]
     fn pow_interval_spanning_zero_even() {
-        // [-2, 3]^2 = [0, 9] (minimum at 0, max at the larger magnitude)
+        // [-2, 3]^2 = [0, 9]
         let interval = interval_noop_computable(-2, 3);
         let squared = interval.pow(2);
-        let bounds = squared.bounds().expect("bounds should succeed");
-
-        assert_eq!(unwrap_finite(bounds.small()), bin(0, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(9, 0));
+        let prefix = squared.prefix().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(0, 0), &xbin(9, 0));
     }
 
     #[test]
@@ -269,10 +235,8 @@ mod tests {
         // [2, 4]^3 = [8, 64]
         let interval = interval_noop_computable(2, 4);
         let cubed = interval.pow(3);
-        let bounds = cubed.bounds().expect("bounds should succeed");
-
-        assert_eq!(unwrap_finite(bounds.small()), bin(8, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(64, 0));
+        let prefix = cubed.prefix().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(8, 0), &xbin(64, 0));
     }
 
     #[test]
@@ -280,10 +244,8 @@ mod tests {
         // [-4, -2]^3 = [-64, -8]
         let interval = interval_noop_computable(-4, -2);
         let cubed = interval.pow(3);
-        let bounds = cubed.bounds().expect("bounds should succeed");
-
-        assert_eq!(unwrap_finite(bounds.small()), bin(-64, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(-8, 0));
+        let prefix = cubed.prefix().expect("bounds should succeed");
+        assert_bounds_contain(&prefix, &xbin(-64, 0), &xbin(-8, 0));
     }
 
     #[test]
@@ -291,11 +253,8 @@ mod tests {
         // x^1 = x
         let three = Computable::constant(bin(3, 0));
         let result = three.pow(1);
-        let bounds = result.bounds().expect("bounds should succeed");
-
-        let expected = bin(3, 0);
-        assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        let prefix = result.prefix().expect("bounds should succeed");
+        assert_exact(&prefix, &bin(3, 0));
     }
 
     #[test]
@@ -303,11 +262,8 @@ mod tests {
         // x^0 = 1 for all x
         let three = Computable::constant(bin(3, 0));
         let result = three.pow(0);
-        let bounds = result.bounds().expect("bounds should succeed");
-
-        let expected = bin(1, 0);
-        assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        let prefix = result.prefix().expect("bounds should succeed");
+        assert_exact(&prefix, &bin(1, 0));
     }
 
     #[test]
@@ -315,11 +271,8 @@ mod tests {
         // 0^0 = 1 by convention
         let zero = Computable::constant(bin(0, 0));
         let result = zero.pow(0);
-        let bounds = result.bounds().expect("bounds should succeed");
-
-        let expected = bin(1, 0);
-        assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        let prefix = result.prefix().expect("bounds should succeed");
+        assert_exact(&prefix, &bin(1, 0));
     }
 
     #[test]
@@ -330,12 +283,12 @@ mod tests {
         let sum = two_sq + three_sq;
 
         let tolerance_exp = XUsize::Finite(8);
-        let bounds = sum
+        let prefix = sum
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
         let expected = bin(13, 0);
-        assert_bounds_contain_expected(&bounds, &expected, &tolerance_exp);
+        assert_bounds_compatible_with_expected(&prefix, &expected, &tolerance_exp);
     }
 
     #[test]
@@ -346,12 +299,12 @@ mod tests {
         let squared = sqrt_two.pow(2);
 
         let tolerance_exp = XUsize::Finite(8);
-        let bounds = squared
+        let prefix = squared
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
         let expected = bin(2, 0);
-        assert_bounds_contain_expected(&bounds, &expected, &tolerance_exp);
+        assert_bounds_compatible_with_expected(&prefix, &expected, &tolerance_exp);
     }
 
     #[test]
@@ -359,7 +312,8 @@ mod tests {
         // 0^2 = 0
         let zero = Computable::constant(bin(0, 0));
         let squared = zero.pow(2);
-        let bounds = squared.bounds().expect("bounds should succeed");
+        let prefix = squared.prefix().expect("bounds should succeed");
+        let bounds = to_bounds(&prefix);
 
         assert!(bounds.small().is_zero());
         assert!(bounds.large().is_zero());

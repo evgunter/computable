@@ -12,10 +12,11 @@ use num_traits::Signed;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
+    Binary, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 use crate::sane;
 
 /// Minimum seed precision bits for Newton-Raphson initialization.
@@ -67,22 +68,22 @@ pub struct InvOp {
 }
 
 impl NodeOp for InvOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
         let state = self.newton_state.read();
 
         match &*state {
             None => {
                 // No state yet — return infinite bounds in the appropriate direction.
-                let existing = self.inner.get_bounds()?;
-                let lower = existing.small();
-                let upper = existing.large();
+                let existing = self.inner.get_prefix()?;
+                let lower = existing.lower();
+                let upper = existing.upper();
                 let zero = XBinary::zero();
-                if lower <= &zero && upper >= zero {
-                    Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf))
+                if lower <= zero && upper >= zero {
+                    Ok(Prefix::unbounded())
                 } else if upper < zero {
-                    Ok(Bounds::new(XBinary::NegInf, XBinary::zero()))
+                    Ok(Prefix::from_lower_upper(XBinary::NegInf, XBinary::zero()))
                 } else {
-                    Ok(Bounds::new(XBinary::zero(), XBinary::PosInf))
+                    Ok(Prefix::from_lower_upper(XBinary::zero(), XBinary::PosInf))
                 }
             }
             Some(s) => {
@@ -99,13 +100,13 @@ impl NodeOp for InvOp {
                         XBinary::Finite(s.hi.upper.clone()),
                     )
                 };
-                Ok(Bounds::new(out_lo, out_hi))
+                Ok(Prefix::from_lower_upper(out_lo, out_hi))
             }
         }
     }
 
     fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
-        let input_bounds = self.inner.get_bounds()?;
+        let input_prefix = self.inner.get_prefix()?;
         let mut state = self.newton_state.write();
 
         match &mut *state {
@@ -117,12 +118,12 @@ impl NodeOp for InvOp {
                 } else {
                     MIN_SEED_PRECISION_BITS
                 };
-                *state = try_initialize(&input_bounds, seed_precision)?;
+                *state = try_initialize(&input_prefix, seed_precision)?;
                 Ok(true)
             }
             Some(s) => {
                 // Read current inner bounds and update denominators.
-                update_denominators(s, &input_bounds)?;
+                update_denominators(s, &input_prefix)?;
 
                 // One N-R step on each endpoint.
                 // TODO: With a high-precision seed, the N-R doubling may overshoot
@@ -147,9 +148,9 @@ impl NodeOp for InvOp {
     /// [a,b] is 1/min_abs² (worst case at the value closest to zero).
     /// Child budget = target × min_abs².
     fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
-        let min_abs = match self.inner.cached_bounds() {
-            Some(b) => {
-                let (lo, hi) = b.abs();
+        let min_abs = match self.inner.cached_prefix() {
+            Some(p) => {
+                let (lo, hi) = p.abs();
                 std::cmp::min(lo, hi)
             }
             None => return target_width.clone(),
@@ -157,7 +158,7 @@ impl NodeOp for InvOp {
         target_width.mul(&min_abs).mul(&min_abs)
     }
 
-    fn budget_depends_on_bounds(&self) -> bool {
+    fn budget_depends_on_prefix(&self) -> bool {
         true
     }
 }
@@ -168,17 +169,17 @@ impl NodeOp for InvOp {
 /// `seed_precision` controls the number of bits used for the initial reciprocal
 /// seed. A higher value means fewer N-R doublings to reach the target precision.
 fn try_initialize(
-    input_bounds: &Bounds,
+    input_prefix: &Prefix,
     seed_precision: usize,
 ) -> Result<Option<NewtonState>, ComputableError> {
-    let lower = input_bounds.small();
-    let upper = input_bounds.large();
+    let lower = input_prefix.lower();
+    let upper = input_prefix.upper();
     let zero = XBinary::zero();
 
-    if lower <= &zero && upper >= zero {
+    if lower <= zero && upper >= zero {
         return Ok(None);
     }
-    let (lower_finite, upper_finite) = match (lower, &upper) {
+    let (lower_finite, upper_finite) = match (&lower, &upper) {
         (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
         _ => return Ok(None),
     };
@@ -239,12 +240,12 @@ fn seed_reciprocal(
 /// - `abs_lower` increases: `hi.upper` stays valid, `hi.lower` may need refresh.
 fn update_denominators(
     state: &mut NewtonState,
-    input_bounds: &Bounds,
+    input_prefix: &Prefix,
 ) -> Result<(), ComputableError> {
-    let lower = input_bounds.small();
-    let upper = &input_bounds.large();
+    let lower = input_prefix.lower();
+    let upper = input_prefix.upper();
 
-    let (lower_finite, upper_finite) = match (lower, upper) {
+    let (lower_finite, upper_finite) = match (&lower, &upper) {
         (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
         _ => return Ok(()), // still infinite, keep old denominators
     };
@@ -393,16 +394,16 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{Bounds, XBinary};
-    use crate::refinement::{XUsize, bounds_width_leq};
-    use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
+    use crate::prefix::Prefix;
+    use crate::refinement::{XUsize, prefix_width_leq};
+    use crate::test_utils::{bin, interval_midpoint_computable, to_bounds, unwrap_finite};
 
     #[test]
     fn inv_allows_infinite_bounds() {
         let value = interval_midpoint_computable(-1, 1);
         let inv = value.inv();
-        let bounds = inv.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(XBinary::NegInf, XBinary::PosInf));
+        let prefix = inv.prefix().expect("bounds should succeed");
+        assert_eq!(prefix, Prefix::unbounded());
     }
 
     #[test]
@@ -412,9 +413,10 @@ mod tests {
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
         let tolerance_exp = XUsize::Finite(8);
-        let bounds = inv
+        let prefix = inv
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
+        let bounds = to_bounds(&prefix);
 
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
@@ -433,7 +435,7 @@ mod tests {
             upper.mul(&three)
         );
         assert!(
-            bounds_width_leq(&bounds, &tolerance_exp),
+            prefix_width_leq(&prefix, &tolerance_exp),
             "bounds width exceeds tolerance"
         );
     }

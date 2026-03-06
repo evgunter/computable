@@ -52,134 +52,8 @@ pub use xbinary::XBinary;
 
 // BigInt/BigUint trait implementations for ordered_pair compatibility
 use num_bigint::{BigInt, BigUint};
-use num_traits::{One, Zero};
 
-use crate::ordered_pair::{AbsDistance, AddWidth, Interval, Unsigned};
-
-/// Bounds on a computable number: lower and upper bounds as XBinary values.
-/// The width is stored as UXBinary to guarantee non-negativity through the type system.
-///
-/// This type enforces the invariant from the formalism that bounds widths are
-/// always nonnegative (elements of D_inf where the value is >= 0).
-pub type Bounds = Interval<XBinary, UXBinary>;
-
-/// Finite bounds on a value: lower and upper bounds as Binary values.
-///
-/// Unlike [`Bounds`], this type guarantees that both bounds are finite
-/// (no infinities). This is useful for algorithms like bisection that
-/// require finite intervals, and for interval arithmetic in computations
-/// like pi and sin.
-///
-// Arithmetic methods (interval_add, interval_sub, interval_neg, scale_positive,
-// scale_bigint, midpoint) are defined on FiniteBounds rather than generically because
-// they rely on finite-only semantics:
-// - XBinary::add has add_lower/add_upper variants for correct bound arithmetic;
-//   the std Add trait can't distinguish these.
-// - XBinary::sub returns Result (indeterminate for ∞ - ∞).
-// - scale_positive and midpoint need UBinary::to_binary(), which UXBinary can't provide.
-pub type FiniteBounds = Interval<Binary, UBinary>;
-
-//=============================================================================
-// Interval arithmetic methods for FiniteBounds
-//=============================================================================
-
-impl FiniteBounds {
-    /// Returns the lower bound of the interval.
-    ///
-    /// This is a convenience alias for `small()`.
-    pub fn lo(&self) -> &Binary {
-        self.small()
-    }
-
-    /// Returns the upper bound of the interval.
-    ///
-    /// This is a convenience method that computes `lower + width`.
-    pub fn hi(&self) -> Binary {
-        self.large()
-    }
-
-    /// Returns the width of the interval as a Binary (for compatibility with existing code).
-    pub fn width_as_binary(&self) -> Binary {
-        self.width().to_binary()
-    }
-
-    /// Interval addition: [a,b] + [c,d] = [a+c, b+d]
-    ///
-    /// Width of result = width(self) + width(other)
-    pub fn interval_add(&self, other: &Self) -> Self {
-        let new_lower = self.lo().add(other.lo());
-        let new_width = self.width().add(other.width());
-        Self::from_lower_and_width(new_lower, new_width)
-    }
-
-    /// Interval subtraction: [a,b] - [c,d] = [a-d, b-c]
-    ///
-    /// Note: The result lower bound is `self.lo - other.hi`,
-    /// and the result upper bound is `self.hi - other.lo`.
-    /// Width of result = width(self) + width(other)
-    pub fn interval_sub(&self, other: &Self) -> Self {
-        // [a, b] - [c, d] = [a - d, b - c]
-        // lower = a - d = self.lo - other.hi = self.lo - (other.lo + other.width)
-        let other_hi = other.hi();
-        let new_lower = self.lo().sub(&other_hi);
-        // width = (b - c) - (a - d) = b - c - a + d = (b - a) + (d - c) = width(self) + width(other)
-        let new_width = self.width().add(other.width());
-        Self::from_lower_and_width(new_lower, new_width)
-    }
-
-    /// Interval negation: -[a,b] = [-b, -a]
-    pub fn interval_neg(&self) -> Self {
-        // -[a, b] = [-b, -a]
-        // new_lower = -b = -(a + width) = -a - width
-        // new_upper = -a
-        // new_width = -a - (-b) = b - a = original width
-        let new_lower = self.hi().neg();
-        Self::from_lower_and_width(new_lower, self.width().clone())
-    }
-
-    /// Interval multiplication by a non-negative scalar k: k * [a,b] = [k*a, k*b]
-    pub fn scale_positive(&self, k: &UBinary) -> Self {
-        // k * [a, b] = [k*a, k*b]
-        // width = k*b - k*a = k * (b - a) = k * width
-        let k_binary = k.to_binary();
-        let new_lower = self.lo().mul(&k_binary);
-        let new_width = self.width().mul(k);
-        Self::from_lower_and_width(new_lower, new_width)
-    }
-
-    /// Interval multiplication by a BigInt (can be negative).
-    ///
-    /// If k >= 0: k * [a,b] = [k*a, k*b]
-    /// If k < 0: k * [a,b] = [k*b, k*a] = -|k| * [-b, -a] = -|k| * neg([a,b])
-    pub fn scale_bigint(&self, k: &BigInt) -> Self {
-        use num_traits::Signed;
-
-        let abs_k = UBinary::new(k.magnitude().clone(), BigInt::zero());
-
-        if k.is_negative() {
-            // k * [a,b] = -|k| * [a,b] = |k| * (-[a,b]) = |k| * [-b, -a]
-            self.interval_neg().scale_positive(&abs_k)
-        } else {
-            self.scale_positive(&abs_k)
-        }
-    }
-
-    /// Returns the midpoint of the interval: lo + width/2
-    pub fn midpoint(&self) -> Binary {
-        let width = self.width().to_binary();
-        let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
-        self.lo().add(&half_width)
-    }
-}
-
-impl Bounds {
-    /// Returns the absolute value (magnitude) of each bound as a pair.
-    ///
-    /// For bounds [lower, upper], returns (|lower|, |upper|).
-    pub fn abs(&self) -> (UXBinary, UXBinary) {
-        (self.small().magnitude(), self.large().magnitude())
-    }
-}
+use crate::ordered_pair::{AbsDistance, AddWidth, Unsigned};
 
 impl Unsigned for BigUint {}
 
@@ -200,15 +74,7 @@ mod integration_tests {
     //! Integration tests that verify cross-module functionality.
 
     use super::*;
-    use crate::test_utils::{bin, xbin};
-
-    #[test]
-    fn bounds_reject_invalid_order() {
-        let lower = xbin(1, 0);
-        let upper = xbin(-1, 0);
-        let result = Bounds::new_checked(lower, upper);
-        assert!(result.is_err());
-    }
+    use crate::test_utils::bin;
 
     #[test]
     fn binary_to_ubinary_to_xbinary_roundtrip() {
@@ -235,51 +101,11 @@ mod integration_tests {
     }
 
     #[test]
-    fn bounds_from_lower_and_width_constructs_correctly() {
-        let lower = xbin(5, 0);
-        let width = UXBinary::Finite(UBinary::new(
-            num_bigint::BigUint::from(3u32),
-            BigInt::from(0_i32),
-        ));
-
-        let bounds = Bounds::from_lower_and_width(lower.clone(), width.clone());
-
-        assert_eq!(bounds.small(), &xbin(5, 0));
-        assert_eq!(bounds.width(), &width);
-        assert_eq!(bounds.large(), xbin(8, 0));
-    }
-
-    #[test]
-    fn bounds_from_lower_and_width_matches_new() {
-        let lower = xbin(10, 0);
-        let upper = xbin(25, 0);
-
-        let via_new = Bounds::new(lower.clone(), upper.clone());
-        let via_from_lower_and_width =
-            Bounds::from_lower_and_width(lower.clone(), via_new.width().clone());
-
-        assert_eq!(via_new, via_from_lower_and_width);
-    }
-
-    #[test]
-    fn bounds_from_lower_and_width_zero_width() {
-        let lower = xbin(42, 0);
-        let width = UXBinary::Finite(UBinary::new(
-            num_bigint::BigUint::from(0u32),
-            BigInt::from(0_i32),
-        ));
-
-        let bounds = Bounds::from_lower_and_width(lower.clone(), width);
-
-        assert_eq!(bounds.small(), &xbin(42, 0));
-        assert_eq!(bounds.large(), xbin(42, 0));
-    }
-
-    #[test]
-    fn finite_bounds_interval_subtraction() {
+    fn finite_interval_subtraction() {
+        use crate::finite_interval::FiniteInterval;
         // Test that [a,b] - [c,d] = [a-d, b-c]
-        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
-        let b = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
+        let a = FiniteInterval::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteInterval::new(bin(3, 0), bin(5, 0)); // [3, 5]
 
         let result = a.interval_sub(&b);
         // [1, 2] - [3, 5] = [1-5, 2-3] = [-4, -1]
@@ -288,95 +114,33 @@ mod integration_tests {
     }
 
     #[test]
-    fn finite_bounds_interval_negation() {
-        let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
+    fn finite_interval_negation() {
+        use crate::finite_interval::FiniteInterval;
+        let a = FiniteInterval::new(bin(1, 0), bin(3, 0)); // [1, 3]
         let neg_a = a.interval_neg(); // [-3, -1]
         assert_eq!(neg_a.lo(), &bin(-3, 0));
         assert_eq!(neg_a.hi(), bin(-1, 0));
     }
 
     #[test]
-    fn finite_bounds_join_overlapping() {
-        // Test join of overlapping intervals
-        let a = FiniteBounds::new(bin(1, 0), bin(4, 0)); // [1, 4]
-        let b = FiniteBounds::new(bin(3, 0), bin(6, 0)); // [3, 6]
+    fn finite_interval_join_overlapping() {
+        use crate::finite_interval::FiniteInterval;
+        let a = FiniteInterval::new(bin(1, 0), bin(4, 0)); // [1, 4]
+        let b = FiniteInterval::new(bin(3, 0), bin(6, 0)); // [3, 6]
 
         let result = a.join(&b);
-        // [1, 4].join([3, 6]) = [1, 6]
         assert_eq!(result.lo(), &bin(1, 0));
         assert_eq!(result.hi(), bin(6, 0));
     }
 
     #[test]
-    fn finite_bounds_join_disjoint() {
-        // Test join of disjoint intervals (convex hull)
-        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
-        let b = FiniteBounds::new(bin(5, 0), bin(7, 0)); // [5, 7]
+    fn finite_interval_join_disjoint() {
+        use crate::finite_interval::FiniteInterval;
+        let a = FiniteInterval::new(bin(1, 0), bin(2, 0)); // [1, 2]
+        let b = FiniteInterval::new(bin(5, 0), bin(7, 0)); // [5, 7]
 
         let result = a.join(&b);
-        // [1, 2].join([5, 7]) = [1, 7] (convex hull)
         assert_eq!(result.lo(), &bin(1, 0));
         assert_eq!(result.hi(), bin(7, 0));
-    }
-
-    #[test]
-    fn finite_bounds_join_nested() {
-        // Test join where one interval contains the other
-        let outer = FiniteBounds::new(bin(1, 0), bin(10, 0)); // [1, 10]
-        let inner = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
-
-        let result = outer.join(&inner);
-        // [1, 10].join([3, 5]) = [1, 10]
-        assert_eq!(result.lo(), &bin(1, 0));
-        assert_eq!(result.hi(), bin(10, 0));
-    }
-
-    #[test]
-    fn finite_bounds_intersection_overlapping() {
-        // Test intersection of overlapping intervals
-        let a = FiniteBounds::new(bin(1, 0), bin(4, 0)); // [1, 4]
-        let b = FiniteBounds::new(bin(3, 0), bin(6, 0)); // [3, 6]
-
-        let result = a.intersection(&b).expect("should overlap");
-        // [1, 4] ∩ [3, 6] = [3, 4]
-        assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(4, 0));
-    }
-
-    #[test]
-    fn finite_bounds_intersection_disjoint() {
-        // Test intersection of disjoint intervals
-        let a = FiniteBounds::new(bin(1, 0), bin(2, 0)); // [1, 2]
-        let b = FiniteBounds::new(bin(5, 0), bin(7, 0)); // [5, 7]
-
-        let result = a.intersection(&b);
-        assert!(
-            result.is_none(),
-            "disjoint intervals should have no intersection"
-        );
-    }
-
-    #[test]
-    fn finite_bounds_intersection_nested() {
-        // Test intersection where one interval contains the other
-        let outer = FiniteBounds::new(bin(1, 0), bin(10, 0)); // [1, 10]
-        let inner = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
-
-        let result = outer.intersection(&inner).expect("should overlap");
-        // [1, 10] ∩ [3, 5] = [3, 5]
-        assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(5, 0));
-    }
-
-    #[test]
-    fn finite_bounds_intersection_touching() {
-        // Test intersection of intervals that touch at a point
-        let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
-        let b = FiniteBounds::new(bin(3, 0), bin(5, 0)); // [3, 5]
-
-        let result = a.intersection(&b).expect("should touch at a point");
-        // [1, 3] ∩ [3, 5] = [3, 3]
-        assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(3, 0));
     }
 }

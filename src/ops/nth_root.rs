@@ -31,13 +31,15 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
+use crate::binary::{Binary, UXBinary, XBinary};
 use crate::binary_utils::bisection::{
     PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint, normalize_bounds,
 };
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
+use crate::finite_interval::FiniteInterval;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 
 /// N-th root operation with binary search refinement.
 ///
@@ -54,11 +56,11 @@ pub struct NthRootOp {
     pub degree: NonZeroU32,
     /// Current bisection state: tracks the interval for the root.
     ///
-    /// This is `None` until the first `compute_bounds()` call, which initializes
+    /// This is `None` until the first `compute_prefix()` call, which initializes
     /// it from the input bounds. We use `Option` because initialization requires
-    /// calling `inner.get_bounds()` which can fail, but node construction (via
+    /// calling `inner.get_prefix()` which can fail, but node construction (via
     /// `nth_root()`) is not supposed to be fallible. By deferring initialization
-    /// to the first `compute_bounds()` call (which returns `Result`), we can
+    /// to the first `compute_prefix()` call (which returns `Result`), we can
     /// propagate errors through the normal Result path.
     ///
     /// Each refinement step halves this interval via bisection.
@@ -80,37 +82,37 @@ pub struct BisectionState {
 }
 
 impl NodeOp for NthRootOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let input_bounds = self.inner.get_bounds()?;
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
+        let input_prefix = self.inner.get_prefix()?;
 
         // Fast path: read lock to check if already initialized.
         {
             let state = self.bisection_state.read();
             if let Some(s) = &*state {
-                return Ok(bounds_from_bisection_state(s));
+                return Ok(prefix_from_bisection_state(s));
             }
         }
         // Slow path: upgrade to write lock and initialize.
         // Double-check after acquiring write lock (another thread may have initialized).
         let mut state = self.bisection_state.write();
         if let Some(s) = &*state {
-            return Ok(bounds_from_bisection_state(s));
+            return Ok(prefix_from_bisection_state(s));
         }
-        let s = initialize_nth_root_bisection_state(&input_bounds, self.degree.get())?;
-        let bounds = bounds_from_bisection_state(&s);
+        let s = initialize_nth_root_bisection_state(&input_prefix, self.degree.get())?;
+        let prefix = prefix_from_bisection_state(&s);
         *state = Some(s);
-        Ok(bounds)
+        Ok(prefix)
     }
 
     fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
-        // Ensure bisection state is initialized (compute_bounds is always called
+        // Ensure bisection state is initialized (compute_prefix is always called
         // before refine_step by the coordinator, but be defensive).
         {
             let state = self.bisection_state.read();
             if state.is_none() {
                 drop(state);
-                // Trigger initialization via compute_bounds.
-                self.compute_bounds()?;
+                // Trigger initialization via compute_prefix.
+                self.compute_prefix()?;
             }
         }
 
@@ -165,9 +167,9 @@ impl NodeOp for NthRootOp {
         if n == 1 {
             return target_width.clone();
         }
-        let min_abs = match self.inner.cached_bounds() {
-            Some(b) => {
-                let (lo, hi) = b.abs();
+        let min_abs = match self.inner.cached_prefix() {
+            Some(p) => {
+                let (lo, hi) = p.abs();
                 std::cmp::min(lo, hi)
             }
             None => return target_width.clone(),
@@ -176,16 +178,16 @@ impl NodeOp for NthRootOp {
         target_width.mul(&n_ux).mul(&min_abs)
     }
 
-    fn budget_depends_on_bounds(&self) -> bool {
+    fn budget_depends_on_prefix(&self) -> bool {
         self.degree.get() > 1
     }
 }
 
-/// Extracts bounds from an initialized bisection state.
-fn bounds_from_bisection_state(s: &BisectionState) -> Bounds {
+/// Extracts a Prefix from an initialized bisection state.
+fn prefix_from_bisection_state(s: &BisectionState) -> Prefix {
     let finite_bounds = {
         let bounds = if let Some(exact) = &s.exact_value {
-            FiniteBounds::point(exact.clone())
+            FiniteInterval::point(exact.clone())
         } else {
             s.bounds.to_finite_bounds()
         };
@@ -195,9 +197,9 @@ fn bounds_from_bisection_state(s: &BisectionState) -> Bounds {
             bounds
         }
     };
-    Bounds::from_lower_and_width(
+    Prefix::from_lower_upper(
         XBinary::Finite(finite_bounds.small().clone()),
-        UXBinary::Finite(finite_bounds.width().clone()),
+        XBinary::Finite(finite_bounds.hi()),
     )
 }
 
@@ -206,14 +208,14 @@ fn bounds_from_bisection_state(s: &BisectionState) -> Bounds {
 /// Takes the midpoint of input bounds as the target value, then sets up initial
 /// bisection bounds to find the nth root of that target.
 fn initialize_nth_root_bisection_state(
-    input_bounds: &Bounds,
+    input_prefix: &Prefix,
     degree: u32,
 ) -> Result<BisectionState, ComputableError> {
-    let lower = input_bounds.small();
-    let upper = &input_bounds.large();
+    let lower = input_prefix.lower();
+    let upper = input_prefix.upper();
 
     // Get the target value - use midpoint for intervals, exact for points
-    let target = match (lower, upper) {
+    let target = match (&lower, &upper) {
         (XBinary::Finite(l), XBinary::Finite(u)) => midpoint(l, u),
         _ => return Err(ComputableError::InfiniteBounds),
     };
@@ -257,7 +259,7 @@ fn initialize_nth_root_bisection_state(
 
     // Normalize bounds once at initialization to ensure bisection automatically
     // selects shortest representations at each step
-    let initial_bounds = FiniteBounds::new(bisection_lower, bisection_upper);
+    let initial_bounds = FiniteInterval::new(bisection_lower, bisection_upper);
     let normalized = normalize_bounds(&initial_bounds)?;
 
     // Extract mantissa and exponent from normalized bounds.
@@ -287,192 +289,139 @@ fn initialize_nth_root_bisection_state(
 mod tests {
     use super::*;
     use crate::computable::Computable;
-    use crate::refinement::{XUsize, bounds_width_leq};
-    use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
+    use crate::refinement::XUsize;
+    use crate::test_utils::{
+        assert_bounds_compatible_with_expected, bin, interval_noop_computable, to_bounds,
+        unwrap_finite,
+    };
 
     /// Helper to create NonZeroU32 from a literal in tests.
     fn nz(n: u32) -> NonZeroU32 {
         NonZeroU32::new(n).expect("test degree must be non-zero")
     }
 
-    fn assert_bounds_compatible_with_expected(
-        bounds: &Bounds,
-        expected: &Binary,
-        tolerance_exp: &XUsize,
-    ) {
-        let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
-
-        assert!(
-            lower <= *expected && *expected <= upper,
-            "Expected {} to be in bounds [{}, {}]",
-            expected,
-            lower,
-            upper
-        );
-        assert!(
-            bounds_width_leq(bounds, tolerance_exp),
-            "Bounds width should be <= tolerance",
-        );
-    }
-
     #[test]
     fn sqrt_of_4() {
-        // sqrt(4) = 2
         let four = Computable::constant(bin(4, 0));
         let sqrt_four = four.nth_root(nz(2));
         let epsilon = XUsize::Finite(8);
-        let bounds = sqrt_four
+        let prefix = sqrt_four
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-
-        let expected = bin(2, 0);
-        assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+        assert_bounds_compatible_with_expected(&prefix, &bin(2, 0), &epsilon);
     }
 
     #[test]
     fn sqrt_of_2() {
-        // sqrt(2) ~= 1.414...
         let two = Computable::constant(bin(2, 0));
         let sqrt_two = two.nth_root(nz(2));
         let epsilon = XUsize::Finite(8);
-        let bounds = sqrt_two
+        let prefix = sqrt_two
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-
         let expected_f64 = 2.0_f64.sqrt();
         let expected_binary = XBinary::from_f64(expected_f64)
             .expect("expected value should convert to extended binary");
         let expected = unwrap_finite(&expected_binary);
-
-        assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+        assert_bounds_compatible_with_expected(&prefix, &expected, &epsilon);
     }
 
     #[test]
     fn cbrt_of_8() {
-        // cbrt(8) = 2
         let eight = Computable::constant(bin(8, 0));
         let cbrt_eight = eight.nth_root(nz(3));
         let epsilon = XUsize::Finite(8);
-        let bounds = cbrt_eight
+        let prefix = cbrt_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-
-        let expected = bin(2, 0);
-        assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+        assert_bounds_compatible_with_expected(&prefix, &bin(2, 0), &epsilon);
     }
 
     #[test]
     fn cbrt_of_negative_8() {
-        // cbrt(-8) = -2
         let neg_eight = Computable::constant(bin(-8, 0));
         let cbrt_neg_eight = neg_eight.nth_root(nz(3));
         let epsilon = XUsize::Finite(8);
-        let bounds = cbrt_neg_eight
+        let prefix = cbrt_neg_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-
-        let expected = bin(-2, 0);
-        assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+        assert_bounds_compatible_with_expected(&prefix, &bin(-2, 0), &epsilon);
     }
 
     #[test]
     fn fourth_root_of_16() {
-        // 16^(1/4) = 2
         let sixteen = Computable::constant(bin(16, 0));
         let fourth_root = sixteen.nth_root(nz(4));
         let epsilon = XUsize::Finite(8);
-        let bounds = fourth_root
+        let prefix = fourth_root
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-
-        let expected = bin(2, 0);
-        assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+        assert_bounds_compatible_with_expected(&prefix, &bin(2, 0), &epsilon);
     }
 
     #[test]
     fn sqrt_of_half() {
-        // sqrt(0.5) ~= 0.707...
         let half = Computable::constant(bin(1, -1));
         let sqrt_half = half.nth_root(nz(2));
         let epsilon = XUsize::Finite(8);
-        let bounds = sqrt_half
+        let prefix = sqrt_half
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-
         let expected_f64 = 0.5_f64.sqrt();
         let expected_binary = XBinary::from_f64(expected_f64)
             .expect("expected value should convert to extended binary");
         let expected = unwrap_finite(&expected_binary);
-
-        assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+        assert_bounds_compatible_with_expected(&prefix, &expected, &epsilon);
     }
 
     #[test]
     fn nth_root_in_expression() {
-        // Test that nth_root works in expressions: sqrt(2) + cbrt(8) = sqrt(2) + 2
         let sqrt_2 = Computable::constant(bin(2, 0)).nth_root(nz(2));
         let cbrt_8 = Computable::constant(bin(8, 0)).nth_root(nz(3));
         let sum = sqrt_2 + cbrt_8;
-
         let epsilon = XUsize::Finite(8);
-        let bounds = sum
+        let prefix = sum
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
-
         let expected_f64 = 2.0_f64.sqrt() + 2.0_f64;
         let expected_binary = XBinary::from_f64(expected_f64)
             .expect("expected value should convert to extended binary");
         let expected = unwrap_finite(&expected_binary);
-
-        assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+        assert_bounds_compatible_with_expected(&prefix, &expected, &epsilon);
     }
 
     #[test]
     fn sqrt_of_zero() {
-        // sqrt(0) = 0
         let zero = Computable::constant(bin(0, 0));
         let sqrt_zero = zero.nth_root(nz(2));
-        let bounds = sqrt_zero.bounds().expect("bounds should succeed");
-
+        let prefix = sqrt_zero.prefix().expect("bounds should succeed");
+        let bounds = to_bounds(&prefix);
         let expected = bin(0, 0);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-
         assert!(lower <= expected && expected <= upper);
     }
 
     #[test]
     fn sqrt_of_interval_overlapping_zero() {
-        // Test even root of a Computable with bounds overlapping zero: [-1, 4]
-        // Bisection targets the midpoint of the input (1.5), so output bounds
-        // contain sqrt(1.5) ~ 1.22, not the full range of possible roots.
         let interval = interval_noop_computable(-1, 4);
         let sqrt_interval = interval.nth_root(nz(2));
-        let bounds = sqrt_interval.bounds().expect("bounds should succeed");
-
+        let prefix = sqrt_interval.prefix().expect("bounds should succeed");
+        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-
-        // Bisection-based bounds should contain sqrt(midpoint) ~ sqrt(1.5) ~ 1.22
         assert!(lower <= bin(1, 0), "lower {} should be <= 1", lower);
         assert!(upper >= bin(1, 0), "upper {} should be >= 1", upper);
     }
 
     #[test]
     fn cbrt_of_interval_overlapping_zero() {
-        // Test odd root of a Computable with bounds overlapping zero: [-8, 27]
-        // Bisection targets the midpoint of the input (9.5), so output bounds
-        // contain cbrt(9.5) ~ 2.11, not the full range of possible roots.
         let interval = interval_noop_computable(-8, 27);
         let cbrt_interval = interval.nth_root(nz(3));
-        let bounds = cbrt_interval.bounds().expect("bounds should succeed");
-
+        let prefix = cbrt_interval.prefix().expect("bounds should succeed");
+        let bounds = to_bounds(&prefix);
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(&bounds.large());
-
-        // Bisection-based bounds should contain cbrt(midpoint) ~ cbrt(9.5) ~ 2.11
         assert!(lower <= bin(2, 0), "lower {} should be <= 2", lower);
         assert!(upper >= bin(2, 0), "upper {} should be >= 2", upper);
     }

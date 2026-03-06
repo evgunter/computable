@@ -10,14 +10,14 @@ use rand::{Rng, SeedableRng};
 
 use common::{balanced_sum, bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
-use computable::Bounds;
+use computable::Prefix;
 use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 1_000_usize;
 
 bench_group! {
     name: integer_roots,
-    fn bench_integer_roots(bits) -> Bounds {
+    fn bench_integer_roots(bits) -> Prefix {
         let mut rng = StdRng::seed_from_u64(7);
         let terms: Vec<Computable> = (0..SAMPLE_COUNT)
             .map(|i| {

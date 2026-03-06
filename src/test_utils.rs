@@ -68,8 +68,10 @@ pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
     }
 }
 
-use crate::binary::{Bounds, FiniteBounds};
 use crate::computable::Computable;
+use crate::finite_interval::FiniteInterval;
+use crate::prefix::Prefix;
+use crate::refinement::{XUsize, prefix_width_leq};
 
 /// Creates a Binary representing 2^(-n), for test assertions that need
 /// epsilon as a Binary value for arithmetic.
@@ -88,16 +90,13 @@ pub fn epsilon_as_binary(n: usize) -> Binary {
 pub fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
     let lower_finite = unwrap_finite(lower);
     let upper_finite = unwrap_finite(upper);
-    FiniteBounds::new(lower_finite, upper_finite).midpoint()
+    FiniteInterval::new(lower_finite, upper_finite).midpoint()
 }
 
-/// Refines bounds by collapsing them to their midpoint.
-pub fn interval_refine(state: Bounds) -> Result<Bounds, crate::error::ComputableError> {
-    let midpoint = midpoint_between(state.small(), &state.large());
-    Ok(Bounds::new(
-        XBinary::Finite(midpoint.clone()),
-        XBinary::Finite(midpoint),
-    ))
+/// Refines a prefix by collapsing it to its midpoint.
+pub fn interval_refine(state: Prefix) -> Result<Prefix, crate::error::ComputableError> {
+    let midpoint = midpoint_between(&state.lower(), &state.upper());
+    Ok(Prefix::exact(midpoint))
 }
 
 /// Creates a Computable that represents an interval [lower, upper] and refines to its midpoint.
@@ -108,15 +107,11 @@ pub fn interval_refine(state: Bounds) -> Result<Bounds, crate::error::Computable
 /// # Examples
 /// ```ignore
 /// let interval = interval_midpoint_computable(1, 3); // [1, 3], refines to midpoint 2
-/// let bounds = interval.bounds().expect("bounds should succeed");
+/// let bounds = interval.prefix().expect("bounds should succeed");
 /// ```
 pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
-    let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
-    Computable::new(
-        interval_state,
-        |inner_state| Ok(inner_state.clone()),
-        interval_refine,
-    )
+    let initial_prefix = Prefix::from_lower_upper(xbin(lower, 0), xbin(upper, 0));
+    Computable::new(initial_prefix, |state| Ok(state.clone()), interval_refine)
 }
 
 /// Creates a Computable that represents an interval [lower, upper] without refinement.
@@ -130,9 +125,97 @@ pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
 /// # Examples
 /// ```ignore
 /// let interval = interval_noop_computable(1, 3); // [1, 3], never refines
-/// let bounds = interval.bounds().expect("bounds should succeed");
+/// let bounds = interval.prefix().expect("bounds should succeed");
 /// ```
 pub fn interval_noop_computable(lower: i64, upper: i64) -> Computable {
-    let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
-    Computable::new(interval_state, |state| Ok(state.clone()), |state| Ok(state))
+    let initial_prefix = Prefix::from_lower_upper(xbin(lower, 0), xbin(upper, 0));
+    Computable::new(initial_prefix, |state| Ok(state.clone()), Ok)
+}
+
+/// Lightweight view of a Prefix's lower/upper bounds for test assertions.
+///
+/// Provides `.small()` and `.large()` accessors that mirror the old `Bounds` API.
+/// This avoids having to update all test callsites at once.
+pub struct PrefixView {
+    lower: XBinary,
+    upper: XBinary,
+}
+
+impl PrefixView {
+    pub fn small(&self) -> &XBinary {
+        &self.lower
+    }
+
+    pub fn large(&self) -> XBinary {
+        self.upper.clone()
+    }
+
+    pub fn width(&self) -> UXBinary {
+        match (&self.lower, &self.upper) {
+            (XBinary::NegInf, _) | (_, XBinary::PosInf) => UXBinary::Inf,
+            (XBinary::PosInf, _) | (_, XBinary::NegInf) => UXBinary::Inf,
+            (XBinary::Finite(lo), XBinary::Finite(hi)) => {
+                let diff = hi.sub(lo);
+                UXBinary::Finite(
+                    UBinary::try_from_binary(&diff).unwrap_or_else(|_| UBinary::zero()),
+                )
+            }
+        }
+    }
+}
+
+/// Convert a Prefix to a PrefixView for test assertions.
+pub fn to_bounds(prefix: &Prefix) -> PrefixView {
+    PrefixView {
+        lower: prefix.lower(),
+        upper: prefix.upper(),
+    }
+}
+
+/// Assert that the Prefix-derived bounds contain the expected interval.
+/// Due to Prefix normalization (width rounded up to power of 2), the actual
+/// bounds may be wider than the tight mathematical result.
+pub fn assert_bounds_contain(prefix: &Prefix, expected_lower: &XBinary, expected_upper: &XBinary) {
+    let lower = prefix.lower();
+    let upper = prefix.upper();
+    assert!(
+        lower <= *expected_lower,
+        "lower bound {:?} should be <= expected {:?}",
+        lower,
+        expected_lower
+    );
+    assert!(
+        upper >= *expected_upper,
+        "upper bound {:?} should be >= expected {:?}",
+        upper,
+        expected_upper
+    );
+}
+
+/// Assert that a Prefix contains a specific expected value and has width within tolerance.
+pub fn assert_bounds_compatible_with_expected(
+    prefix: &Prefix,
+    expected: &Binary,
+    tolerance_exp: &XUsize,
+) {
+    let lower = unwrap_finite(&prefix.lower());
+    let upper = unwrap_finite(&prefix.upper());
+
+    assert!(
+        lower <= *expected && *expected <= upper,
+        "Expected {} to be in bounds [{}, {}]",
+        expected,
+        lower,
+        upper
+    );
+    assert!(
+        prefix_width_leq(prefix, tolerance_exp),
+        "Bounds width should be <= tolerance",
+    );
+}
+
+/// Assert that a Prefix represents an exact value (lower == upper == expected).
+pub fn assert_exact(prefix: &Prefix, expected: &Binary) {
+    assert_eq!(unwrap_finite(&prefix.lower()), *expected);
+    assert_eq!(unwrap_finite(&prefix.upper()), *expected);
 }

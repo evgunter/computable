@@ -23,7 +23,7 @@ use num_bigint::BigInt;
 
 use common::{bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
-use computable::Bounds;
+use computable::Prefix;
 use computable::{Binary, Computable, pi};
 
 fn sqrt_2() -> Computable {
@@ -44,14 +44,14 @@ fn constant(value: i64) -> Computable {
 
 bench_group! {
     name: mixed,
-    fn bench_sqrt2_plus_pi(bits) -> Bounds {
+    fn bench_sqrt2_plus_pi(bits) -> Prefix {
         black_box(
             (sqrt_2() + pi())
                 .refine_to_default(epsilon(bits))
                 .expect("should succeed"),
         )
     }
-    fn bench_sqrt2_times_pi(bits) -> Bounds {
+    fn bench_sqrt2_times_pi(bits) -> Prefix {
         black_box(
             (sqrt_2() * pi())
                 .refine_to_default(epsilon(bits))
@@ -64,21 +64,21 @@ bench_group! {
 
 bench_group! {
     name: controls,
-    fn bench_sqrt2_plus_const3(bits) -> Bounds {
+    fn bench_sqrt2_plus_const3(bits) -> Prefix {
         black_box(
             (sqrt_2() + constant(3_i64))
                 .refine_to_default(epsilon(bits))
                 .expect("should succeed"),
         )
     }
-    fn bench_pi_plus_const1(bits) -> Bounds {
+    fn bench_pi_plus_const1(bits) -> Prefix {
         black_box(
             (pi() + constant(1_i64))
                 .refine_to_default(epsilon(bits))
                 .expect("should succeed"),
         )
     }
-    fn bench_sqrt2_plus_cbrt3(bits) -> Bounds {
+    fn bench_sqrt2_plus_cbrt3(bits) -> Prefix {
         black_box(
             (sqrt_2() + cbrt_3())
                 .refine_to_default(epsilon(bits))
