@@ -10,6 +10,7 @@
 //!
 //! - [`binary`]: Arbitrary-precision binary numbers (mantissa + exponent representation)
 //! - [`ordered_pair`]: Interval types with bounds checking (Bounds, Interval)
+//! - [`prefix`]: Prefix representation of precision (power-of-2 width intervals)
 //! - [`error`]: Error types for computable operations
 //! - [`node`]: Computation graph infrastructure (Node, NodeOp traits)
 //! - [`ops`]: Arithmetic and transcendental operations (add, mul, inv, sin, etc.)
@@ -74,7 +75,6 @@ mod error;
 mod finite_interval;
 mod node;
 mod ops;
-#[allow(dead_code)]
 mod prefix;
 mod refinement;
 mod sane;
@@ -90,5 +90,6 @@ pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT
 pub use error::ComputableError;
 pub use ops::{pi, pi_bounds_at_precision};
 pub use ordered_pair::{Interval, IntervalError};
+pub use prefix::{Prefix, XExponent};
 pub use refinement::XUsize;
 pub use sane::{MAX_COMPUTATION_BITS, Sane};
