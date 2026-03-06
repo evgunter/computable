@@ -379,12 +379,6 @@ impl RefinementGraph {
                     };
                     let mut dispatched = 0usize;
 
-                    // Collect non-leaf refiners whose inputs aren't ready
-                    // yet. Re-enqueued after the dispatch drain so they're
-                    // reconsidered on the next main loop iteration (not
-                    // re-popped infinitely within this drain).
-                    let mut deferred: Vec<usize> = Vec::new();
-
                     while let Some(i) = dispatch_queue.pop_front() {
                         in_queue[i] = false;
                         if !active[i]
@@ -440,7 +434,6 @@ impl RefinementGraph {
                                 })
                             });
                             if !inputs_ready {
-                                deferred.push(i);
                                 continue;
                             }
                         }
@@ -474,14 +467,6 @@ impl RefinementGraph {
                         });
                     }
 
-                    // Re-enqueue deferred non-leaf refiners for next iteration.
-                    for i in deferred {
-                        if !in_queue[i] {
-                            dispatch_queue.push_back(i);
-                            in_queue[i] = true;
-                        }
-                    }
-
                     // Stall recovery: if nothing was dispatched and nothing
                     // is outstanding, check if any active above-budget refiner
                     // is blocked only by needs_redispatch. If so, force-enable
@@ -502,6 +487,26 @@ impl RefinementGraph {
                                             .is_some_and(|b| b.width() <= budget)
                                     });
                                 if above_budget {
+                                    // For non-leaf refiners, only force if
+                                    // inputs are ready (avoids wasted work).
+                                    if !is_leaf_refiner[i] {
+                                        let inputs_ready =
+                                            sub_refiner_indices[i].iter().all(|&sub_idx| {
+                                                if !active[sub_idx] {
+                                                    return true;
+                                                }
+                                                refiner_budgets[sub_idx]
+                                                    .as_ref()
+                                                    .map_or(true, |budget| {
+                                                        refiner_nodes[sub_idx]
+                                                            .cached_bounds()
+                                                            .is_some_and(|b| b.width() <= budget)
+                                                    })
+                                            });
+                                        if !inputs_ready {
+                                            continue;
+                                        }
+                                    }
                                     needs_redispatch[i] = true;
                                     if !in_queue[i] {
                                         dispatch_queue.push_back(i);
@@ -621,6 +626,36 @@ impl RefinementGraph {
                                                 }
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            // Directly notify parent non-leaf refiners of the
+                            // responding sub-refiner. This catches cases where
+                            // apply_update propagation didn't change the parent's
+                            // bounds (so the parent isn't in changed_nodes) but
+                            // the sub-refiner now meets its budget. Without this,
+                            // deferred parents would never be re-enqueued.
+                            for &(j, _pos) in &parent_refiner_indices[idx] {
+                                if !is_leaf_refiner[j]
+                                    && active[j]
+                                    && !outstanding[j]
+                                    && !in_queue[j]
+                                    && steps[j] < MAX_REFINEMENT_ITERATIONS
+                                {
+                                    let all_ready = sub_refiner_indices[j].iter().all(|&sub_idx| {
+                                        if !active[sub_idx] {
+                                            return true;
+                                        }
+                                        refiner_budgets[sub_idx].as_ref().map_or(true, |budget| {
+                                            refiner_nodes[sub_idx]
+                                                .cached_bounds()
+                                                .is_some_and(|b| b.width() <= budget)
+                                        })
+                                    });
+                                    if all_ready {
+                                        needs_redispatch[j] = true;
+                                        dispatch_queue.push_back(j);
+                                        in_queue[j] = true;
                                     }
                                 }
                             }
