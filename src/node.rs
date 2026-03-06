@@ -131,7 +131,10 @@ pub trait NodeOp: Send + Sync {
     /// Computes prefix for this node. Default converts compute_bounds() result.
     fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
         let bounds = self.compute_bounds()?;
-        Ok(Prefix::from_lower_upper(bounds.small().clone(), bounds.large()))
+        Ok(Prefix::from_lower_upper(
+            bounds.small().clone(),
+            bounds.large(),
+        ))
     }
 
     /// Performs one refinement step targeting the given width exponent.

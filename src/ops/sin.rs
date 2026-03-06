@@ -52,8 +52,7 @@ impl NodeOp for SinOp {
         let mut num_terms = self.num_terms.write();
 
         // Convert target exponent to precision bits (absolute value).
-        let precision_bits =
-            usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
+        let precision_bits = usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
 
         // Leap based on coordinator's precision target.
         // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.

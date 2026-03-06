@@ -138,8 +138,7 @@ impl NodeOp for PiOp {
         let mut num_terms = self.num_terms.write();
 
         // Convert target exponent to precision bits (absolute value).
-        let precision_bits =
-            usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
+        let precision_bits = usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
 
         // Leap to the needed term count based on precision.
         // Same formula as pi_bounds_at_precision: n = (precision_bits + 10) / 4.

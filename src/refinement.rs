@@ -756,9 +756,7 @@ fn refiner_loop(
                             return;
                         }
                         Err(ComputableError::StateUnchanged) => {
-                            let prefix = node
-                                .cached_prefix()
-                                .unwrap_or_else(Prefix::unbounded);
+                            let prefix = node.cached_prefix().unwrap_or_else(Prefix::unbounded);
                             let _send = updates.send(RefinerMessage::Exhausted {
                                 update: NodeUpdate {
                                     node_id: node.id,
@@ -827,10 +825,7 @@ fn uxbinary_to_exp(ux: &UXBinary) -> i64 {
             }
             let bits = ub.mantissa().bits();
             let bits_i64 = i64::try_from(bits).unwrap_or(i64::MAX);
-            let exp_i64 = ub
-                .exponent()
-                .to_i64()
-                .unwrap_or(i64::MAX);
+            let exp_i64 = ub.exponent().to_i64().unwrap_or(i64::MAX);
             // width = mantissa * 2^exponent, mantissa has `bits` bits
             // so width < 2^(bits + exponent), ceil = bits + exponent if mantissa != power of 2
             // For a simple upper bound: bits + exponent (may overcount by 1, conservative)
@@ -843,12 +838,10 @@ fn uxbinary_to_exp(ux: &UXBinary) -> i64 {
 fn tolerance_to_exp(tolerance_exp: &XUsize) -> i64 {
     match tolerance_exp {
         XUsize::Inf => i64::MIN,
-        XUsize::Finite(exp) => {
-            i64::try_from(*exp)
-                .ok()
-                .and_then(|e| e.checked_neg())
-                .unwrap_or(i64::MIN)
-        }
+        XUsize::Finite(exp) => i64::try_from(*exp)
+            .ok()
+            .and_then(|e| e.checked_neg())
+            .unwrap_or(i64::MIN),
     }
 }
 
