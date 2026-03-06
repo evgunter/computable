@@ -124,8 +124,8 @@ impl Binary {
             };
         }
 
-        if let Some(tz) = mantissa.magnitude().trailing_zeros() {
-            let tz = crate::sane::bits_as_usize(tz);
+        if let Some(tz_u64) = mantissa.magnitude().trailing_zeros() {
+            let tz = crate::sane::bits_as_usize(tz_u64);
             mantissa >>= tz;
             exponent += BigInt::from(tz);
         }
