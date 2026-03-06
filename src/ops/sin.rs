@@ -934,7 +934,7 @@ mod tests {
         let input_bounds = Bounds::new(xbin(0, 0), xbin(0, 0));
         let pi_bounds = Bounds::new(XBinary::NegInf, XBinary::PosInf);
 
-        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(10))
+        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(10_i32))
             .expect("sin_bounds should succeed");
         let lower = unwrap_finite(result.small());
         let upper = unwrap_finite(&result.large());
