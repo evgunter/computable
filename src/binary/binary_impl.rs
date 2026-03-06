@@ -117,8 +117,6 @@ impl Binary {
 
     /// Normalizes the representation by factoring out powers of 2 from the mantissa.
     fn normalize(mut mantissa: BigInt, mut exponent: BigInt) -> Self {
-        use num_integer::Integer;
-
         if mantissa.is_zero() {
             return Self {
                 mantissa,
@@ -126,9 +124,10 @@ impl Binary {
             };
         }
 
-        while mantissa.is_even() {
-            mantissa /= 2_i32;
-            exponent += 1_i32;
+        if let Some(tz) = mantissa.magnitude().trailing_zeros() {
+            let tz = crate::sane::bits_as_usize(tz);
+            mantissa >>= tz;
+            exponent += BigInt::from(tz);
         }
 
         Self { mantissa, exponent }

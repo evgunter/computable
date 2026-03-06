@@ -124,9 +124,10 @@ impl UBinary {
             };
         }
 
-        while (&mantissa % 2u32).is_zero() {
-            mantissa /= 2u32;
-            exponent += 1_i32;
+        if let Some(tz) = mantissa.trailing_zeros() {
+            let tz = crate::sane::bits_as_usize(tz);
+            mantissa >>= tz;
+            exponent += BigInt::from(tz);
         }
 
         Self { mantissa, exponent }
