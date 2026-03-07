@@ -48,22 +48,13 @@ use crate::binary::{UBinary, UXBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
-use crate::prefix::{Prefix, XExponent};
-
-/// A `usize` extended with positive infinity, analogous to `UXBinary`.
-///
-/// When used as a tolerance exponent: `Finite(n)` means epsilon = 2^(-n),
-/// `Inf` means epsilon = 0 (exact convergence required).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum XUsize {
-    Finite(usize),
-    Inf,
-}
+use crate::prefix::Prefix;
+use crate::sane::{XIsize, XUsize};
 
 /// Command sent to a refiner thread.
 #[derive(Clone, Copy)]
 pub enum RefineCommand {
-    Step { target_width_exp: i64 },
+    Step { target_width_exp: XIsize },
     Stop,
 }
 
@@ -162,7 +153,7 @@ impl RefinementGraph {
             for node in &self.refiners {
                 let exact = node
                     .cached_prefix()
-                    .is_some_and(|p| p.width_exponent() == XExponent::NegInf);
+                    .is_some_and(|p| p.width_exponent() == XIsize::NegInf);
                 if !exact {
                     refiner_handles.push(spawn_refiner(
                         scope,
@@ -402,7 +393,9 @@ impl RefinementGraph {
                                     } else {
                                         // Exhausted sub-refiner: keep as responded.
                                         sub_responded_count[i] =
-                                            sub_responded_count[i].saturating_add(1);
+                                            sub_responded_count[i].checked_add(1).unwrap_or_else(|| {
+                                                unreachable!("sub_responded_count bounded by sub_refiner_indices[i].len()")
+                                            });
                                     }
                                 }
                             }
@@ -502,12 +495,16 @@ impl RefinementGraph {
                             // when it exhausts or hits the step limit.
                             if let Some(reason) = $exhaustion {
                                 active[idx] = false;
-                                eligible_count = eligible_count.saturating_sub(1);
+                                eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
+                                    unreachable!("eligible_count > 0: each refiner decrements at most once")
+                                });
                                 if !matches!(reason, ExhaustionReason::StateUnchanged) {
                                     all_state_unchanged = false;
                                 }
                             } else if steps[idx] >= MAX_REFINEMENT_ITERATIONS {
-                                eligible_count = eligible_count.saturating_sub(1);
+                                eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
+                                    unreachable!("eligible_count > 0: each refiner decrements at most once")
+                                });
                             }
                             // Leaf responding refiner: always re-dispatch
                             // (self-improving, independent of other refiners).
@@ -735,7 +732,9 @@ fn refiner_loop(
                                 break;
                             }
                             // Prefix didn't change — do another refine step
-                            extra_steps = extra_steps.saturating_add(1);
+                            extra_steps = extra_steps.checked_add(1).unwrap_or_else(|| {
+                                unreachable!("extra_steps bounded by loop break at 16")
+                            });
                         }
                         Ok(false) => {
                             let prefix = match node.compute_prefix() {
@@ -799,49 +798,55 @@ pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
 /// Returns true if width_exponent <= -tolerance_exp.
 pub fn prefix_width_leq(prefix: &Prefix, tolerance_exp: &XUsize) -> bool {
     let we = prefix.width_exponent();
-    match tolerance_exp {
-        XUsize::Inf => we == XExponent::NegInf,
-        XUsize::Finite(exp) => {
-            let target = i64::try_from(*exp).ok().and_then(|e| e.checked_neg());
-            match (we, target) {
-                (XExponent::NegInf, _) => true,
-                (XExponent::PosInf, _) => false,
-                (_, None) => false, // tolerance too large to represent
-                (XExponent::Finite(w), Some(t)) => w <= t,
-            }
-        }
-    }
+    #[allow(clippy::arithmetic_side_effects)] // XUsize::neg() is total (no panics)
+    let target = -(*tolerance_exp);
+    we <= target
 }
 
-/// Converts a UXBinary width to an i64 exponent.
+/// Converts a UXBinary width to an `XIsize` exponent.
 ///
-/// Returns the smallest e such that 2^e >= width, or i64::MAX for infinity.
-fn uxbinary_to_exp(ux: &UXBinary) -> i64 {
+/// Returns the smallest e such that 2^e >= width, or `PosInf` for infinity.
+fn uxbinary_to_exp(ux: &UXBinary) -> XIsize {
     match ux {
-        UXBinary::Inf => i64::MAX,
+        UXBinary::Inf => XIsize::PosInf,
         UXBinary::Finite(ub) => {
             if ub.mantissa().is_zero() {
-                return i64::MIN;
+                return XIsize::NegInf;
             }
             let bits = ub.mantissa().bits();
-            let bits_i64 = i64::try_from(bits).unwrap_or(i64::MAX);
-            let exp_i64 = ub.exponent().to_i64().unwrap_or(i64::MAX);
+            let Ok(bits_isize) = isize::try_from(bits) else {
+                // mantissa has more bits than isize can represent: width is astronomically large
+                return XIsize::PosInf;
+            };
+            let Some(exp_isize) = ub.exponent().to_isize() else {
+                // exponent doesn't fit in isize: width is astronomically large (or small)
+                // Positive exponent → PosInf; negative exponent with huge mantissa → still large
+                return if ub.exponent().sign() == num_bigint::Sign::Minus {
+                    // Huge negative exponent: width ≈ 0, exponent is extremely negative
+                    XIsize::NegInf
+                } else {
+                    XIsize::PosInf
+                };
+            };
             // width = mantissa * 2^exponent, mantissa has `bits` bits
             // so width < 2^(bits + exponent), ceil = bits + exponent if mantissa != power of 2
             // For a simple upper bound: bits + exponent (may overcount by 1, conservative)
-            bits_i64.saturating_add(exp_i64)
+            match bits_isize.checked_add(exp_isize) {
+                Some(v) => XIsize::Finite(v),
+                // Overflow in positive direction: astronomically large width
+                None if exp_isize > 0 => XIsize::PosInf,
+                // Overflow in negative direction: astronomically small width
+                None => XIsize::NegInf,
+            }
         }
     }
 }
 
-/// Converts a tolerance exponent to an i64 target for refiners.
-fn tolerance_to_exp(tolerance_exp: &XUsize) -> i64 {
-    match tolerance_exp {
-        XUsize::Inf => i64::MIN,
-        XUsize::Finite(exp) => i64::try_from(*exp)
-            .ok()
-            .and_then(|e| e.checked_neg())
-            .unwrap_or(i64::MIN),
+/// Converts a tolerance exponent to an `XIsize` target for refiners.
+fn tolerance_to_exp(tolerance_exp: &XUsize) -> XIsize {
+    #[allow(clippy::arithmetic_side_effects)] // XUsize::neg() is total (no panics)
+    {
+        -(*tolerance_exp)
     }
 }
 

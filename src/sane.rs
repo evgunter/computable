@@ -263,6 +263,120 @@ impl_sane_binary_op!(Sub, sub, checked_sub, "Sane subtraction underflow");
 impl_sane_binary_op!(Mul, mul, checked_mul, "Sane multiplication overflow");
 impl_sane_binary_op!(Div, div, checked_div, "Sane division by zero");
 
+/// Signed integer extended with ±infinity, used for width/magnitude exponents.
+///
+/// - `PosInf`: 2^(+inf) = unbounded
+/// - `NegInf`: 2^(-inf) = 0 (exact)
+/// - `Finite(e)`: normal 2^e
+///
+/// Uses `isize` (the signed equivalent of `usize`) because width exponents represent
+/// precision — how many bits are known. On 64-bit platforms this is identical to `i64`;
+/// on 32-bit it is sufficient since `MAX_COMPUTATION_BITS = u32::MAX`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XIsize {
+    NegInf,
+    Finite(isize),
+    PosInf,
+}
+
+impl PartialOrd for XIsize {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for XIsize {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (Self::NegInf, Self::NegInf) => Ordering::Equal,
+            (Self::NegInf, _) => Ordering::Less,
+            (_, Self::NegInf) => Ordering::Greater,
+            (Self::PosInf, Self::PosInf) => Ordering::Equal,
+            (Self::PosInf, _) => Ordering::Greater,
+            (_, Self::PosInf) => Ordering::Less,
+            (Self::Finite(a), Self::Finite(b)) => a.cmp(b),
+        }
+    }
+}
+
+impl XIsize {
+    /// Interprets this width exponent as a precision requirement in bits.
+    ///
+    /// - `NegInf` (width = 0, exact) → `XUsize::Inf` (infinite precision needed)
+    /// - `Finite(e)` with `e <= 0` → `XUsize::Finite(|e|)` (|e| bits of precision)
+    /// - `Finite(e)` with `e > 0` → `XUsize::Finite(0)` (coarse target, no precision)
+    /// - `PosInf` (width = ∞) → `XUsize::Finite(0)` (unbounded, no precision)
+    ///
+    /// This replaces the dangerous `unsigned_abs()` pattern that mapped
+    /// `NegInf` (encoded as `i64::MIN`) to `2^63`.
+    pub fn to_precision_bits(self) -> XUsize {
+        match self {
+            Self::NegInf => XUsize::Inf,
+            Self::Finite(e) if e <= 0 => {
+                // e is in range isize::MIN..=0, so unsigned_abs() fits in usize.
+                #[allow(clippy::arithmetic_side_effects)]
+                let abs = e.unsigned_abs();
+                XUsize::Finite(abs)
+            }
+            Self::Finite(_) | Self::PosInf => XUsize::Finite(0),
+        }
+    }
+}
+
+/// A `usize` extended with positive infinity, analogous to `UXBinary`.
+///
+/// When used as a tolerance exponent: `Finite(n)` means epsilon = 2^(-n),
+/// `Inf` means epsilon = 0 (exact convergence required).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XUsize {
+    Finite(usize),
+    Inf,
+}
+
+impl PartialOrd for XUsize {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for XUsize {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (Self::Inf, Self::Inf) => Ordering::Equal,
+            (Self::Inf, _) => Ordering::Greater,
+            (_, Self::Inf) => Ordering::Less,
+            (Self::Finite(a), Self::Finite(b)) => a.cmp(b),
+        }
+    }
+}
+
+impl std::ops::Neg for XUsize {
+    type Output = XIsize;
+
+    /// Negates to produce an `XIsize`: `Finite(n)` → `XIsize::Finite(-(n as isize))`,
+    /// `Inf` → `XIsize::NegInf`.
+    ///
+    /// Replaces `tolerance_to_exp`.
+    fn neg(self) -> XIsize {
+        match self {
+            Self::Inf => XIsize::NegInf,
+            Self::Finite(n) => {
+                // isize::try_from(n) fails when n > isize::MAX. In that case the
+                // negated value would be < isize::MIN, so map to NegInf.
+                match isize::try_from(n) {
+                    Ok(signed) => match signed.checked_neg() {
+                        Some(negated) => XIsize::Finite(negated),
+                        None => XIsize::NegInf,
+                    },
+                    Err(_) => XIsize::NegInf,
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +434,49 @@ mod tests {
         let n: usize = MAX_COMPUTATION_BITS;
         // n + 1 doesn't overflow usize, but exceeds MAX_COMPUTATION_BITS
         let _ = crate::sane_arithmetic!(n; n + 1);
+    }
+
+    // --- XIsize tests ---
+
+    #[test]
+    fn xisize_ordering() {
+        assert!(XIsize::NegInf < XIsize::Finite(-1000));
+        assert!(XIsize::Finite(-1000) < XIsize::Finite(0));
+        assert!(XIsize::Finite(0) < XIsize::Finite(1000));
+        assert!(XIsize::Finite(1000) < XIsize::PosInf);
+        assert_eq!(XIsize::NegInf, XIsize::NegInf);
+        assert_eq!(XIsize::PosInf, XIsize::PosInf);
+    }
+
+    #[test]
+    fn xisize_to_precision_bits() {
+        assert_eq!(XIsize::Finite(0).to_precision_bits(), XUsize::Finite(0));
+        assert_eq!(XIsize::Finite(-10).to_precision_bits(), XUsize::Finite(10));
+        assert_eq!(
+            XIsize::Finite(-100).to_precision_bits(),
+            XUsize::Finite(100)
+        );
+        // Positive exponents: coarse target, no precision needed
+        assert_eq!(XIsize::Finite(5).to_precision_bits(), XUsize::Finite(0));
+        // NegInf = exact = infinite precision
+        assert_eq!(XIsize::NegInf.to_precision_bits(), XUsize::Inf);
+        // PosInf = unbounded = no precision needed
+        assert_eq!(XIsize::PosInf.to_precision_bits(), XUsize::Finite(0));
+    }
+
+    // --- XUsize tests ---
+
+    #[test]
+    fn xusize_ordering() {
+        assert!(XUsize::Finite(0) < XUsize::Finite(10));
+        assert!(XUsize::Finite(10) < XUsize::Inf);
+        assert_eq!(XUsize::Inf, XUsize::Inf);
+    }
+
+    #[test]
+    fn xusize_neg() {
+        assert_eq!(-XUsize::Inf, XIsize::NegInf);
+        assert_eq!(-XUsize::Finite(0), XIsize::Finite(0));
+        assert_eq!(-XUsize::Finite(42), XIsize::Finite(-42));
     }
 }

@@ -6,9 +6,6 @@
 use std::ops::ShlAssign;
 
 use num_bigint::{BigInt, BigUint};
-use num_traits::Zero;
-
-use crate::sane::MAX_COMPUTATION_BITS;
 
 /// Marker trait for arbitrary-precision integer types whose arithmetic
 /// (including `<<=`) cannot overflow. Implemented only for `BigInt` and
@@ -30,27 +27,24 @@ impl ArbitraryPrecision for BigUint {}
 /// # Panics
 /// Panics via `detected_computable_would_exhaust_memory!` if `shift` exceeds
 /// `MAX_COMPUTATION_BITS`, since the result would be too large to fit in memory.
-pub(crate) fn shift_mantissa_chunked<M>(mantissa: &M, shift: &BigUint, chunk_limit: &BigUint) -> M
+pub(crate) fn shift_mantissa_chunked<M>(mantissa: &M, shift: &BigUint, chunk_limit: usize) -> M
 where
     M: ArbitraryPrecision,
 {
-    if shift > &BigUint::from(MAX_COMPUTATION_BITS) {
-        crate::detected_computable_would_exhaust_memory!("shift by extreme exponent");
-    }
+    let shift_usize: usize = shift.try_into().unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("shift by extreme exponent")
+    });
+    crate::assert_sane_computation_size!(shift_usize);
     let mut shifted = mantissa.clone();
-    let mut remaining = shift.clone();
-    let chunk_limit_usize = chunk_limit.try_into().unwrap_or(usize::MAX);
-    while remaining > BigUint::zero() {
-        let chunk_usize: usize = if &remaining > chunk_limit {
-            chunk_limit_usize
-        } else {
-            (&remaining).try_into().unwrap_or(usize::MAX)
-        };
+    let mut remaining = shift_usize;
+    while remaining > 0 {
+        let chunk = remaining.min(chunk_limit);
         #[allow(clippy::arithmetic_side_effects)] // M: ArbitraryPrecision — only BigInt/BigUint
         {
-            shifted <<= chunk_usize;
+            shifted <<= chunk;
         }
-        remaining -= BigUint::from(chunk_usize);
+        // remaining >= chunk by construction of min, so this cannot underflow.
+        remaining = remaining.wrapping_sub(chunk);
     }
     shifted
 }
@@ -59,13 +53,14 @@ where
 mod tests {
     use super::*;
     use num_bigint::BigInt;
+    use num_traits::Zero;
 
     #[test]
     fn shift_mantissa_chunks_large_shift() {
         let mantissa = BigInt::from(1_i32);
         let shift = BigUint::from(128u32);
-        let chunk_limit = BigUint::from(64u32);
-        let chunked = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, &chunk_limit);
+        let chunk_limit = 64_usize;
+        let chunked = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, chunk_limit);
         let expected = &mantissa << 128usize;
         assert_eq!(chunked, expected);
     }
@@ -74,8 +69,8 @@ mod tests {
     fn shift_zero_returns_original() {
         let mantissa = BigInt::from(42_i32);
         let shift = BigUint::zero();
-        let chunk_limit = BigUint::from(64u32);
-        let result = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, &chunk_limit);
+        let chunk_limit = 64_usize;
+        let result = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, chunk_limit);
         assert_eq!(result, mantissa);
     }
 
@@ -83,8 +78,8 @@ mod tests {
     fn shift_within_single_chunk() {
         let mantissa = BigInt::from(1_i32);
         let shift = BigUint::from(10u32);
-        let chunk_limit = BigUint::from(64u32);
-        let result = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, &chunk_limit);
+        let chunk_limit = 64_usize;
+        let result = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, chunk_limit);
         assert_eq!(result, BigInt::from(1024_i32)); // 1 << 10 = 1024
     }
 }

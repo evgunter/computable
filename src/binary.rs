@@ -49,6 +49,7 @@ pub use reciprocal::{
     ReciprocalRounding, ReciprocalWithRemainder, extend_reciprocal, reciprocal_of_biguint,
     reciprocal_with_remainder,
 };
+pub(crate) use shift::shift_mantissa_chunked;
 pub use ubinary::UBinary;
 pub use uxbinary::UXBinary;
 pub use xbinary::XBinary;

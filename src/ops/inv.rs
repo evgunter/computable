@@ -18,7 +18,7 @@ use crate::binary::{
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane;
+use crate::sane::{self, XIsize, XUsize};
 
 /// Minimum seed precision bits for division initialization.
 const MIN_SEED_PRECISION_BITS: usize = 64;
@@ -177,7 +177,7 @@ impl NodeOp for InvOp {
         }
     }
 
-    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.division_state.write();
 
@@ -217,28 +217,14 @@ impl NodeOp for InvOp {
             }
         };
 
-        // Convert target_width_exp to precision_bits (positive usize).
-        // target_width_exp is typically negative (e.g. -64 means width ≤ 2^(-64)).
-        let precision_bits = match usize::try_from(target_width_exp.unsigned_abs()) {
-            Ok(v) => v,
-            Err(_) => usize::MAX,
-        };
-
-        // The output width is 2^(-Q - shift - exponent). To achieve width ≤ 2^(-precision_bits),
-        // we need Q ≥ precision_bits - shift - exponent.
-        let min_q = required_quotient_bits(
-            precision_bits,
-            prefix_info.prefix_shift,
-            &prefix_info.prefix_exponent,
-        );
-
         // The coordinator dispatches us when our bounds are wider than its budget,
-        // which may require tighter bounds than precision_bits implies (e.g. summing
+        // which may require tighter bounds than target_width_exp implies (e.g. summing
         // many terms). We must always make progress when dispatched.
         //
-        // Strategy: jump to min_q when it's reasonable (one-shot division).
-        // Double the existing precision as a fallback for progress when min_q is
-        // already met. Cap at 2×prefix_bits when uncertain bits exist.
+        // Strategy: jump to min_q in one shot when the target is finite and
+        // reasonable. Double the existing precision as a fallback for progress
+        // (handles Inf targets and cases where budget needs tighter bounds).
+        // Cap at 2×prefix_bits when uncertain bits exist.
         let current_prec = match &*state {
             Some(s) => s.div.recip.precision_bits,
             None => 0,
@@ -249,9 +235,19 @@ impl NodeOp for InvOp {
             sane_mul_or_max(current_prec, 2)
         };
 
-        // Jump to min_q in one shot when precision_bits is a reasonable finite value.
-        // Fall back to doubling when precision_bits is huge (e.g. usize::MAX from Inf tolerance).
-        let one_shot_feasible = precision_bits <= crate::MAX_COMPUTATION_BITS;
+        // Convert target to precision bits and compute min quotient bits needed.
+        // For Inf targets, fall back to doubling (one_shot_feasible = false).
+        let (min_q, one_shot_feasible) =
+            if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits() {
+                let q = required_quotient_bits(
+                    precision_bits,
+                    prefix_info.prefix_shift,
+                    &prefix_info.prefix_exponent,
+                );
+                (q, precision_bits <= crate::MAX_COMPUTATION_BITS)
+            } else {
+                (doubled, false)
+            };
 
         let target = if prefix_info.prefix_shift > 0 {
             let max_useful = sane_mul_or_max(prefix_info.prefix_bits, 2);
@@ -365,7 +361,8 @@ fn sane_mul_or_max(a: usize, b: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::binary::{Bounds, XBinary};
-    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::refinement::bounds_width_leq;
+    use crate::sane::XUsize;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
 
     #[test]

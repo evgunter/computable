@@ -14,6 +14,7 @@ use parking_lot::{Condvar, Mutex, RwLock};
 use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
 use crate::prefix::Prefix;
+use crate::sane::XIsize;
 
 /// Shared API for retrieving bounds with lazy computation.
 pub trait BoundsAccess {
@@ -142,7 +143,7 @@ pub trait NodeOp: Send + Sync {
     /// Contract: after returning `Ok(true)`, `compute_prefix()` should return
     /// a Prefix with `width_exponent < current` (at least 1 bit improvement).
     /// Ideally `width_exponent ≤ target_width_exp`.
-    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError>;
+    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError>;
 
     fn children(&self) -> Vec<Arc<Node>>;
     fn is_refiner(&self) -> bool;
@@ -295,7 +296,7 @@ impl Node {
     }
 
     /// Performs one refinement step targeting the given width exponent.
-    pub fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
+    pub fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
         self.op.refine_step(target_width_exp)
     }
 

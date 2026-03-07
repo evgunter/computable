@@ -25,7 +25,7 @@ use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::Sane;
+use crate::sane::{Sane, XIsize, XUsize};
 
 /// Initial number of Taylor series terms for pi computation.
 pub(crate) const INITIAL_PI_TERMS: usize = 10;
@@ -42,7 +42,7 @@ fn bit_length(x: Sane) -> Sane {
     let bits = usize::BITS
         .checked_sub(x.0.leading_zeros())
         .unwrap_or_else(|| unreachable!("leading_zeros() is always <= usize::BITS"));
-    Sane(usize::try_from(bits).unwrap_or(0))
+    Sane(crate::sane::bits_as_usize(u64::from(bits)))
 }
 
 /// Computes the intermediate reciprocal precision needed for `num_terms` Taylor series terms.
@@ -134,15 +134,13 @@ impl NodeOp for PiOp {
         normalize_finite_to_bounds(&finite)
     }
 
-    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
-        // Convert target exponent to precision bits (absolute value).
-        let precision_bits = usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
-
-        // Leap to the needed term count based on precision.
-        // Same formula as pi_bounds_at_precision: n = (precision_bits + 10) / 4.
-        if precision_bits <= crate::MAX_COMPUTATION_BITS {
+        // Leap to the needed term count based on precision target.
+        if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits()
+            && precision_bits <= crate::MAX_COMPUTATION_BITS
+        {
             let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
             if needed > *num_terms {
                 *num_terms = needed;
@@ -150,8 +148,9 @@ impl NodeOp for PiOp {
             }
         }
 
-        // Fall through: double the number of terms (existing behavior)
-        *num_terms = (*num_terms).saturating_mul(2).max(1_usize);
+        // Fall through: double the number of terms (handles Inf / large targets)
+        let current = *num_terms;
+        *num_terms = crate::sane_arithmetic!(current; current * 2).max(1_usize);
         Ok(true)
     }
 
@@ -339,7 +338,7 @@ pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
 mod tests {
     use super::*;
     use crate::binary::XBinary;
-    use crate::refinement::XUsize;
+    use crate::sane::XUsize;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
