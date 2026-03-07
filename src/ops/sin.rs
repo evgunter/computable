@@ -158,7 +158,12 @@ fn sin_bounds(
     };
 
     // Convert num_terms to usize (capped at reasonable limit)
-    let n = num_terms.to_usize().unwrap_or(1).max(1);
+    let n = num_terms
+        .to_usize()
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("num_terms exceeds usize")
+        })
+        .max(1);
 
     // Range reduction subtracts k * 2π from the input, introducing error
     // proportional to max_abs(input) * width(π). When input is 0 this
@@ -593,17 +598,36 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     // Shift by enough bits to get a meaningful quotient, plus extra precision for rounding.
     // When mp_bits > mx_bits, we need at least the difference plus 64 extra bits.
     // When mx_bits >= mp_bits, 64 bits suffice.
-    let precision_bits = mp_bits.saturating_sub(mx_bits).saturating_add(64).max(64);
+    let precision_bits = if mp_bits >= mx_bits {
+        crate::sane_arithmetic!(mp_bits, mx_bits; mp_bits - mx_bits + 64)
+    } else {
+        64
+    };
 
     let shifted_mx = mx << precision_bits;
     let quotient = &shifted_mx / mp;
     let result_exp = ex - ep - BigInt::from(precision_bits);
 
     if result_exp >= BigInt::zero() {
-        let shift = result_exp.to_usize().unwrap_or(0);
-        &quotient << shift
+        let shift = result_exp
+            .to_biguint()
+            .unwrap_or_else(|| unreachable!("result_exp is non-negative"));
+        crate::binary::shift_mantissa_chunked(&quotient, &shift, usize::MAX)
     } else {
-        let shift_val = (-&result_exp).to_usize().unwrap_or(0);
+        let magnitude = (-&result_exp)
+            .to_biguint()
+            .unwrap_or_else(|| unreachable!("negated negative is positive"));
+        let quotient_bits = quotient.bits();
+        if magnitude > num_bigint::BigUint::from(quotient_bits) {
+            if quotient.is_negative() {
+                return BigInt::from(-1_i32);
+            } else {
+                return BigInt::zero();
+            }
+        }
+        let shift_val = magnitude
+            .to_usize()
+            .unwrap_or_else(|| unreachable!("magnitude <= quotient.bits() which fits in u64"));
         match std::num::NonZeroUsize::new(shift_val) {
             None => quotient.clone(),
             Some(shift) => {
@@ -862,10 +886,14 @@ fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
 
     // -log2(width) ≈ -(mantissa_bits + exponent)
     let mantissa_bits = crate::sane::bits_as_usize(width.mantissa().magnitude().bits());
-    let mantissa_bits_i64 = i64::try_from(mantissa_bits).unwrap_or(i64::MAX);
-    let exp_i64 = width.exponent().to_i64().unwrap_or(0_i64);
-    let log2_width = exp_i64.saturating_add(mantissa_bits_i64);
-    let neg_log2 = log2_width.saturating_neg().max(0_i64);
+    let mantissa_bits_i64 = i64::try_from(mantissa_bits)
+        .unwrap_or_else(|_| unreachable!("mantissa_bits <= MAX_COMPUTATION_BITS fits in i64"));
+    let exp_i64 = width.exponent().to_i64()?;
+    let log2_width = exp_i64.checked_add(mantissa_bits_i64)?;
+    let neg_log2 = match log2_width.checked_neg() {
+        Some(v) if v >= 0_i64 => v,
+        _ => return None,
+    };
     usize::try_from(neg_log2).ok()
 }
 

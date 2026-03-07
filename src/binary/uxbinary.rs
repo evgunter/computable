@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Shl, Shr, Sub};
+use std::ops::{Add, Mul, Shl, Shr};
 
 use num_traits::Zero;
 
@@ -106,17 +106,6 @@ impl UXBinary {
             }
         }
     }
-
-    /// Subtracts another UXBinary from this one, saturating at zero.
-    pub fn sub_saturating(&self, other: &Self) -> Self {
-        use UXBinary::{Finite, Inf};
-        match (self, other) {
-            (Inf, Finite(_)) => Inf,
-            (Inf, Inf) => Finite(UBinary::zero()),
-            (Finite(_), Inf) => Finite(UBinary::zero()),
-            (Finite(lhs), Finite(rhs)) => Finite(lhs.sub_saturating(rhs)),
-        }
-    }
 }
 
 impl Ord for UXBinary {
@@ -152,14 +141,6 @@ impl Add for UXBinary {
 
     fn add(self, rhs: Self) -> Self::Output {
         UXBinary::add(&self, &rhs)
-    }
-}
-
-impl Sub for UXBinary {
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        UXBinary::sub_saturating(&self, &rhs)
     }
 }
 
@@ -216,7 +197,7 @@ impl AbsDistance<XBinary, UXBinary> for XBinary {
             (NegInf, NegInf) | (PosInf, PosInf) => UXBinary::zero(),
             (NegInf, Finite(_)) | (Finite(_), PosInf) => UXBinary::Inf,
             (PosInf, Finite(_)) | (Finite(_), NegInf) => UXBinary::Inf,
-            (Finite(l), Finite(u)) => UXBinary::Finite(u.sub(l).magnitude()),
+            (Finite(l), Finite(u)) => UXBinary::Finite(u.sub(&l).magnitude()),
         }
     }
 }
@@ -270,24 +251,6 @@ mod tests {
         let inf = UXBinary::Inf;
         assert_eq!(one.clone() + inf.clone(), UXBinary::Inf);
         assert_eq!(inf + one, UXBinary::Inf);
-    }
-
-    #[test]
-    fn uxbinary_sub_saturating_works() {
-        let two = UXBinary::Finite(ubin(1, 1));
-        let one = UXBinary::Finite(ubin(1, 0));
-
-        let diff = two.sub_saturating(&one);
-        assert_eq!(diff, UXBinary::Finite(ubin(1, 0)));
-
-        // Saturation cases
-        let saturated = one.sub_saturating(&two);
-        assert_eq!(saturated, UXBinary::zero());
-
-        let inf = UXBinary::Inf;
-        assert_eq!(inf.sub_saturating(&one), UXBinary::Inf);
-        assert_eq!(inf.sub_saturating(&inf), UXBinary::zero());
-        assert_eq!(one.sub_saturating(&inf), UXBinary::zero());
     }
 
     #[test]

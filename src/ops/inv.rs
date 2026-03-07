@@ -321,7 +321,8 @@ fn newton_step(approx: &mut ReciprocalApprox, denom: &Binary) {
     let upper_new = x_new.add(&err);
 
     // Double the precision budget for this step.
-    let new_precision = approx.precision.saturating_mul(2_usize);
+    let precision = approx.precision;
+    let new_precision = crate::sane_arithmetic!(precision; precision * 2);
 
     // Truncate to the new precision to keep mantissa sizes bounded.
     // Lower bound: truncate toward -∞ (floor) to stay ≤ 1/denom.

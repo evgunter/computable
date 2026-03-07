@@ -393,7 +393,9 @@ impl RefinementGraph {
                                     } else {
                                         // Exhausted sub-refiner: keep as responded.
                                         sub_responded_count[i] =
-                                            sub_responded_count[i].saturating_add(1);
+                                            sub_responded_count[i].checked_add(1).unwrap_or_else(|| {
+                                                unreachable!("sub_responded_count bounded by sub_refiner_indices[i].len()")
+                                            });
                                     }
                                 }
                             }
@@ -493,12 +495,16 @@ impl RefinementGraph {
                             // when it exhausts or hits the step limit.
                             if let Some(reason) = $exhaustion {
                                 active[idx] = false;
-                                eligible_count = eligible_count.saturating_sub(1);
+                                eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
+                                    unreachable!("eligible_count > 0: each refiner decrements at most once")
+                                });
                                 if !matches!(reason, ExhaustionReason::StateUnchanged) {
                                     all_state_unchanged = false;
                                 }
                             } else if steps[idx] >= MAX_REFINEMENT_ITERATIONS {
-                                eligible_count = eligible_count.saturating_sub(1);
+                                eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
+                                    unreachable!("eligible_count > 0: each refiner decrements at most once")
+                                });
                             }
                             // Leaf responding refiner: always re-dispatch
                             // (self-improving, independent of other refiners).
@@ -726,7 +732,9 @@ fn refiner_loop(
                                 break;
                             }
                             // Prefix didn't change — do another refine step
-                            extra_steps = extra_steps.saturating_add(1);
+                            extra_steps = extra_steps.checked_add(1).unwrap_or_else(|| {
+                                unreachable!("extra_steps bounded by loop break at 16")
+                            });
                         }
                         Ok(false) => {
                             let prefix = match node.compute_prefix() {
@@ -806,12 +814,30 @@ fn uxbinary_to_exp(ux: &UXBinary) -> XIsize {
                 return XIsize::NegInf;
             }
             let bits = ub.mantissa().bits();
-            let bits_isize = isize::try_from(bits).unwrap_or(isize::MAX);
-            let exp_isize = ub.exponent().to_isize().unwrap_or(isize::MAX);
+            let Ok(bits_isize) = isize::try_from(bits) else {
+                // mantissa has more bits than isize can represent: width is astronomically large
+                return XIsize::PosInf;
+            };
+            let Some(exp_isize) = ub.exponent().to_isize() else {
+                // exponent doesn't fit in isize: width is astronomically large (or small)
+                // Positive exponent → PosInf; negative exponent with huge mantissa → still large
+                return if ub.exponent().sign() == num_bigint::Sign::Minus {
+                    // Huge negative exponent: width ≈ 0, exponent is extremely negative
+                    XIsize::NegInf
+                } else {
+                    XIsize::PosInf
+                };
+            };
             // width = mantissa * 2^exponent, mantissa has `bits` bits
             // so width < 2^(bits + exponent), ceil = bits + exponent if mantissa != power of 2
             // For a simple upper bound: bits + exponent (may overcount by 1, conservative)
-            XIsize::Finite(bits_isize.saturating_add(exp_isize))
+            match bits_isize.checked_add(exp_isize) {
+                Some(v) => XIsize::Finite(v),
+                // Overflow in positive direction: astronomically large width
+                None if exp_isize > 0 => XIsize::PosInf,
+                // Overflow in negative direction: astronomically small width
+                None => XIsize::NegInf,
+            }
         }
     }
 }

@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Shl, Shr, Sub};
+use std::ops::{Add, Mul, Shl, Shr};
 
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
@@ -70,16 +70,6 @@ impl UBinary {
     pub fn add(&self, other: &Self) -> Self {
         let (lhs, rhs, exponent) = Self::align_mantissas(self, other);
         Self::normalize(lhs + rhs, exponent)
-    }
-
-    /// Subtracts another UBinary from this one, saturating at zero.
-    pub fn sub_saturating(&self, other: &Self) -> Self {
-        let (lhs, rhs, exponent) = Self::align_mantissas(self, other);
-        if lhs >= rhs {
-            Self::normalize(lhs - rhs, exponent)
-        } else {
-            Self::zero()
-        }
     }
 
     /// Multiplies two UBinary numbers.
@@ -154,8 +144,7 @@ impl UBinary {
         if shift.is_zero() {
             return mantissa.clone();
         }
-        let chunk_limit = BigUint::from(usize::MAX);
-        shift_mantissa_chunked::<BigUint>(mantissa, shift, &chunk_limit)
+        shift_mantissa_chunked::<BigUint>(mantissa, shift, usize::MAX)
     }
 }
 
@@ -189,14 +178,6 @@ impl Add for UBinary {
 
     fn add(self, rhs: Self) -> Self::Output {
         UBinary::add(&self, &rhs)
-    }
-}
-
-impl Sub for UBinary {
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        UBinary::sub_saturating(&self, &rhs)
     }
 }
 
@@ -269,19 +250,6 @@ mod tests {
         let sum = one + half;
         let expected = ubin(3, -1);
         assert_eq!(sum, expected);
-    }
-
-    #[test]
-    fn ubinary_sub_saturating_works() {
-        let two = ubin(1, 1);
-        let one = ubin(1, 0);
-        let diff = two.sub_saturating(&one);
-        let expected = ubin(1, 0);
-        assert_eq!(diff, expected);
-
-        // Test saturation at zero
-        let saturated = one.sub_saturating(&two);
-        assert_eq!(saturated, UBinary::zero());
     }
 
     #[test]
