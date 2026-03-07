@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::binary::UXBinary;
+use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
-use crate::node::{BaseNode, Node, NodeOp, PrefixAccess};
-use crate::prefix::Prefix;
+use crate::node::{BaseNode, BoundsAccess, Node, NodeOp};
+use crate::sane::XIsize;
 
 /// Operation that wraps a user-defined base node.
 pub struct BaseOp {
@@ -13,14 +13,14 @@ pub struct BaseOp {
 }
 
 impl NodeOp for BaseOp {
-    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
-        PrefixAccess::get_prefix(self.base.as_ref())
+    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+        BoundsAccess::get_bounds(self.base.as_ref())
     }
 
-    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
         self.base.refine()?;
-        let prefix = PrefixAccess::get_prefix(self.base.as_ref())?;
-        if prefix.lower() == prefix.upper() {
+        let bounds = BoundsAccess::get_bounds(self.base.as_ref())?;
+        if bounds.small() == &bounds.large() {
             return Ok(false);
         }
         Ok(true)

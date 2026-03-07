@@ -17,7 +17,9 @@ mod common;
 use std::num::NonZeroU32;
 use std::time::Instant;
 
-use computable::{Binary, Computable, Prefix, XBinary, XUsize, pi, pi_prefix_at_precision};
+use computable::{
+    Binary, Bounds, Computable, FiniteBounds, XBinary, XUsize, pi, pi_bounds_at_precision,
+};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 use rand::rngs::StdRng;
@@ -29,27 +31,12 @@ use common::balanced_sum;
 // Helpers (example-specific; balanced_sum comes from benches/common.rs)
 // ---------------------------------------------------------------------------
 
-/// Returns the lower and upper finite bounds plus midpoint, if both are finite.
-fn try_finite_bounds(prefix: &Prefix) -> Option<FiniteBoundsView> {
-    match (prefix.lower(), prefix.upper()) {
+fn try_finite_bounds(bounds: &Bounds) -> Option<FiniteBounds> {
+    match (bounds.small(), bounds.large()) {
         (XBinary::Finite(lower), XBinary::Finite(upper)) => {
-            let sum = lower.add(&upper);
-            let midpoint =
-                Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::from(1_i32));
-            Some(FiniteBoundsView { midpoint })
+            Some(FiniteBounds::new(lower.clone(), upper))
         }
         _ => None,
-    }
-}
-
-/// A view of finite bounds with a precomputed midpoint.
-struct FiniteBoundsView {
-    midpoint: Binary,
-}
-
-impl FiniteBoundsView {
-    fn midpoint(&self) -> Binary {
-        self.midpoint.clone()
     }
 }
 
@@ -101,7 +88,7 @@ fn complex_analysis(rng: &mut StdRng) {
         })
         .collect();
     let total = balanced_sum(terms);
-    let bounds = total.prefix().expect("bounds should succeed");
+    let bounds = total.bounds().expect("bounds should succeed");
     let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
     let comp_duration = comp_start.elapsed();
 
@@ -152,7 +139,7 @@ fn summation_analysis(rng: &mut StdRng) {
     terms.push(Computable::constant(Binary::from_f64(base).unwrap()));
     terms.extend(computable_inputs.iter().cloned());
     let total = balanced_sum(terms);
-    let bounds = total.prefix().expect("bounds should succeed");
+    let bounds = total.bounds().expect("bounds should succeed");
     let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
     let comp_duration = comp_start.elapsed();
 
@@ -161,7 +148,7 @@ fn summation_analysis(rng: &mut StdRng) {
     // True sum without base (computable, no cancellation)
     let baseless_sum_computable = {
         let sum = balanced_sum(computable_inputs.clone());
-        let b = sum.prefix().expect("bounds should succeed");
+        let b = sum.bounds().expect("bounds should succeed");
         let f = try_finite_bounds(&b).expect("bounds should be finite");
         f.midpoint()
     };
@@ -413,13 +400,13 @@ fn pi_analysis() {
         }
     }
 
-    // pi_prefix_at_precision
+    // pi_bounds_at_precision
     println!();
-    println!("== pi_prefix_at_precision ==");
+    println!("== pi_bounds_at_precision ==");
     println!();
     for &bits in precision_bits {
         let start = Instant::now();
-        let (lower, upper) = pi_prefix_at_precision(bits);
+        let (lower, upper) = pi_bounds_at_precision(bits);
         let duration = start.elapsed();
         let width = upper.sub(&lower);
         let sum = lower.add(&upper);
@@ -491,8 +478,8 @@ fn pi_analysis() {
             .expect("sin(n*pi) should succeed");
         let duration = start.elapsed();
 
-        let lower = finite_binary(&bounds.lower());
-        let upper = finite_binary(&bounds.upper());
+        let lower = finite_binary(bounds.small());
+        let upper = finite_binary(&bounds.large());
         let contains_zero = lower.mantissa().is_negative() || lower.mantissa().is_zero();
         println!(
             "  sin({multiplier:>3}*pi): {duration:>10?}  bounds: [{lower}, {upper}]  width: {}  contains 0: {contains_zero}",

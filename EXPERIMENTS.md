@@ -280,6 +280,110 @@ original baseline. No catastrophic regressions across any scheduling order.
 | bench_integer_roots | -1.5% | +0.5% | Neutral |
 | Various small (pi_half etc.) | — | +5-10% | Event-loop fixed overhead |
 
+## Experiments 12–14: Input-readiness gate for non-leaf refiners
+
+**Branch:** `mng/valgrind-noise`, **PR:** #65
+
+### Problem
+
+Under different thread scheduling orders, SinOp would see wide or narrow
+pi bounds from its sub-refiners, causing bimodal behavior. The event loop
+didn't distinguish "all subs responded" from "all subs responded with
+useful precision." Dispatching SinOp with wide pi bounds triggers expensive
+Taylor series evaluations that produce useless [-1,1] output. Valgrind
+crystallizes this nondeterminism: ~1M vs ~300M+ instructions.
+
+### Shared infrastructure (all three experiments)
+
+- **Reverse index** (`parent_refiner_indices`): maps each refiner to
+  parent non-leaf refiners that depend on it
+- **Budget-skip-as-responded**: when a refiner is budget-skipped, notify
+  parents via the reverse index so their sub_responded gate can open
+- **Input-readiness gate**: before dispatching a non-leaf refiner, verify
+  all sub-refiners' cached bounds are within their propagated budgets
+- **`child_demand_budget` doc update** (`src/node.rs`): hard invariant
+  that budgets must err on the conservative side
+
+### Experiment 12: gate with sub_responded reset
+
+**Commits:** `001d579`, `e7b83e2`, `ef43dd2`
+(reverted in `a47e8d3`)
+
+When the input-readiness gate blocks a non-leaf refiner, reset its
+sub_responded tracking so future sub-refiner responses re-trigger enqueue.
+
+| | Wall-clock | Valgrind (Ir) |
+|---|-----------|--------------|
+| **Result** | **-98%** (dramatic) | **+1048% to +31169%** (catastrophic) |
+
+**Root cause of valgrind failure:** The sub_responded reset creates a
+pathological loop under serialized scheduling:
+1. PiOp responds (partially tightened, not yet within budget)
+2. SinOp's sub_responded gate opens → enqueued
+3. Input-readiness fails → sub_responded reset → skip
+4. PiOp dispatched again (leaf, self-re-dispatches) → responds → goto 2
+
+Each cycle forces an extra PiOp step (exponentially expensive). Under
+real parallelism this is hidden by concurrent execution, but under
+valgrind's serialization it's catastrophic. Reverted.
+
+### Experiment 13: gate with deferred list re-enqueue (v2)
+
+**Commit:** `cf48fbd`
+
+Same gate, but on failure: collect blocked refiners into a `deferred` list
+and re-enqueue them after the dispatch drain. No sub_responded reset.
+
+| | Wall-clock | Valgrind (Ir) |
+|---|-----------|--------------|
+| **Result** | ~neutral | nondeterministic (sin_100pi p4: 327M vs 1.1M baseline) |
+
+**Analysis:** Deferred re-enqueue creates polling overhead — each main loop
+iteration re-checks deferred refiners, consuming instructions that compete
+with PiOp's thread under valgrind serialization.
+
+### Experiment 14: event-driven parent notification (v3)
+
+**Commits:** `5c0bec6`, `55d3024`
+
+Remove the deferred list entirely. Instead, when a sub-refiner responds
+in `record_completion`, use the reverse index to check each parent. If all
+of that parent's sub-refiners now meet their budgets, enqueue the parent.
+
+| | Wall-clock | Valgrind (Ir) |
+|---|-----------|--------------|
+| **Result** | ~neutral | improved over v2, still nondeterministic |
+
+Key valgrind numbers (v3 vs v2 vs baseline):
+
+| Benchmark | Baseline (main) | v2 | v3 |
+|-----------|----------------|-----|-----|
+| sin_1pi p4 | 1.85M | 17.9M | 10.2M |
+| sin_2pi p4 | 1.26M | 7.2M | 5.3M |
+| sin_10pi p4 | 1.06M | 7.4M | 5.5M |
+| sin_100pi p4 | 1.27M | 327M | 5.6M |
+| sin p4 | 91M | 30.4B | 27.7B |
+
+Most dramatic: `sin_100pi p4` dropped from 327M (v2) to 5.6M (v3). The
+event-driven approach eliminated the polling overhead that caused v2's
+worst case.
+
+### Overall conclusion: approach abandoned
+
+**Net result vs main: ~neutral wall-clock, ~neutral valgrind (just
+different scheduling luck).**
+
+The input-readiness gate cannot fix the fundamental problem: under valgrind
+serialization, the coordinator thread and refiner threads share one CPU.
+Whether PiOp meets its budget before SinOp gets checked depends on which
+thread valgrind schedules first — no amount of gate logic can control this.
+
+The v3 code adds ~80 lines of non-trivial coordinator logic (reverse index,
+budget-skip-as-responded, input-readiness gate, event-driven parent
+notification) for no measurable improvement. All code changes reverted;
+further investigation should focus on the benchmarking infrastructure
+(e.g. `--fair-sched=yes`, min-of-N runs) rather than the algorithm.
+
 ## Remaining Ir Regressions
 
 ### bench_inv +137% (Ir) / +3-12% (wall-clock)

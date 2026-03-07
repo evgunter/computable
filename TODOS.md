@@ -16,6 +16,12 @@ The event-loop coordinator returns as soon as precision is met, but `thread::sco
 
 ---
 
+### <a id="single-cache"></a>single-cache: Investigate single-cache Node without convergence regressions
+**Experiment:** `experiment/remove-bounds-cache` branch (commit `c8c9fd8`)
+The dual cache (prefix_cache + bounds_cache) adds complexity and lock contention. Removing it speeds up pi/integer_roots benchmarks by 30-44% but regresses inv/256 by +94% and sin_Npi by +40-71% because Prefix rounding degrades Newton-Raphson convergence. Investigate whether a single cache storing exact Bounds (deriving Prefix lazily) could get both benefits — less overhead AND exact arithmetic for convergence. See EXPERIMENTS.md Experiment 13.
+
+---
+
 ## Tier 2: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="node-initiated-refinement"></a>node-initiated-refinement: Allow nodes to request refinement of their inputs

@@ -12,6 +12,7 @@ autobenches = false
 
 [features]
 criterion-bench = []
+time-bench = []
 
 [dependencies]
 crossbeam-channel = "0.5"
