@@ -323,14 +323,6 @@ impl XIsize {
         }
     }
 
-    /// Saturating addition of an `isize` offset.
-    pub fn saturating_add(self, n: isize) -> Self {
-        match self {
-            Self::NegInf => Self::NegInf,
-            Self::PosInf => Self::PosInf,
-            Self::Finite(e) => Self::Finite(e.saturating_add(n)),
-        }
-    }
 }
 
 /// A `usize` extended with positive infinity, analogous to `UXBinary`.
@@ -473,16 +465,6 @@ mod tests {
         assert_eq!(XIsize::PosInf.to_precision_bits(), XUsize::Finite(0));
     }
 
-    #[test]
-    fn xisize_saturating_add() {
-        assert_eq!(XIsize::Finite(10).saturating_add(1), XIsize::Finite(11));
-        assert_eq!(XIsize::NegInf.saturating_add(1), XIsize::NegInf);
-        assert_eq!(XIsize::PosInf.saturating_add(1), XIsize::PosInf);
-        assert_eq!(
-            XIsize::Finite(isize::MAX).saturating_add(1),
-            XIsize::Finite(isize::MAX)
-        );
-    }
 
     // --- XUsize tests ---
 
