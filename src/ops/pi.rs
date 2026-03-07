@@ -24,9 +24,6 @@ use crate::node::{Node, NodeOp};
 use crate::prefix::Prefix;
 use crate::sane::Sane;
 
-/// Initial number of Taylor series terms for pi computation.
-pub(crate) const INITIAL_PI_TERMS: usize = 10;
-
 /// Returns the number of bits in the binary representation of `x`.
 ///
 /// Equivalent to floor(log2(x)) + 1 for x > 0, and 0 for x == 0.
@@ -91,7 +88,7 @@ fn precision_bits_for_num_terms(num_terms: usize) -> usize {
 pub(crate) fn pi_node() -> Arc<Node> {
     Node::new(Arc::new(PiOp {
         state: RwLock::new(PiState {
-            num_terms: INITIAL_PI_TERMS,
+            num_terms: 1,
             arctan_5: ArctanCache::empty(5),
             arctan_239: ArctanCache::empty(239),
         }),
@@ -274,8 +271,12 @@ impl NodeOp for PiOp {
             }
         }
 
-        // Current state already satisfies the requested precision — no change needed.
-        Ok(false)
+        // With per-refiner budgets, the leap formula always produces needed > num_terms
+        // when the coordinator dispatches (otherwise the refiner would have been skipped).
+        unreachable!(
+            "PiOp: leap did not advance; precision_bits={}, num_terms={}",
+            precision_bits, state.num_terms
+        )
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
