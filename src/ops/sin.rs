@@ -158,9 +158,12 @@ fn sin_bounds(
     };
 
     // Convert num_terms to usize (capped at reasonable limit)
-    let n = num_terms.to_usize().unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!("num_terms exceeds usize")
-    }).max(1);
+    let n = num_terms
+        .to_usize()
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("num_terms exceeds usize")
+        })
+        .max(1);
 
     // Range reduction subtracts k * 2π from the input, introducing error
     // proportional to max_abs(input) * width(π). When input is 0 this
@@ -606,15 +609,25 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     let result_exp = ex - ep - BigInt::from(precision_bits);
 
     if result_exp >= BigInt::zero() {
-        let shift = result_exp.to_biguint().unwrap_or_else(|| unreachable!("result_exp is non-negative"));
+        let shift = result_exp
+            .to_biguint()
+            .unwrap_or_else(|| unreachable!("result_exp is non-negative"));
         crate::binary::shift_mantissa_chunked(&quotient, &shift, usize::MAX)
     } else {
-        let magnitude = (-&result_exp).to_biguint().unwrap_or_else(|| unreachable!("negated negative is positive"));
+        let magnitude = (-&result_exp)
+            .to_biguint()
+            .unwrap_or_else(|| unreachable!("negated negative is positive"));
         let quotient_bits = quotient.bits();
         if magnitude > num_bigint::BigUint::from(quotient_bits) {
-            if quotient.is_negative() { return BigInt::from(-1_i32); } else { return BigInt::zero(); }
+            if quotient.is_negative() {
+                return BigInt::from(-1_i32);
+            } else {
+                return BigInt::zero();
+            }
         }
-        let shift_val = magnitude.to_usize().unwrap_or_else(|| unreachable!("magnitude <= quotient.bits() which fits in u64"));
+        let shift_val = magnitude
+            .to_usize()
+            .unwrap_or_else(|| unreachable!("magnitude <= quotient.bits() which fits in u64"));
         match std::num::NonZeroUsize::new(shift_val) {
             None => quotient.clone(),
             Some(shift) => {

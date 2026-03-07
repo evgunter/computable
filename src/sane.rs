@@ -322,7 +322,6 @@ impl XIsize {
             Self::Finite(_) | Self::PosInf => XUsize::Finite(0),
         }
     }
-
 }
 
 /// A `usize` extended with positive infinity, analogous to `UXBinary`.
@@ -464,7 +463,6 @@ mod tests {
         // PosInf = unbounded = no precision needed
         assert_eq!(XIsize::PosInf.to_precision_bits(), XUsize::Finite(0));
     }
-
 
     // --- XUsize tests ---
 

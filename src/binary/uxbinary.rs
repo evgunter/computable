@@ -106,7 +106,6 @@ impl UXBinary {
             }
         }
     }
-
 }
 
 impl Ord for UXBinary {
