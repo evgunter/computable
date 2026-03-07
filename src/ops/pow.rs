@@ -14,6 +14,7 @@ use crate::binary::{Bounds, UBinary, UXBinary, XBinary};
 use crate::binary_utils::power::{is_negative, is_positive, xbinary_max, xbinary_pow};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::sane::XIsize;
 
 /// Integer power operation.
 ///
@@ -56,7 +57,7 @@ impl NodeOp for PowOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
         // This is a passive combinator - it doesn't refine, just propagates bounds
         Ok(false)
     }
@@ -167,7 +168,7 @@ fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) ->
 mod tests {
     use crate::binary::{Binary, Bounds};
     use crate::computable::Computable;
-    use crate::refinement::XUsize;
+    use crate::sane::XUsize;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
     fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XUsize) {

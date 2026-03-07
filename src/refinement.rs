@@ -41,28 +41,20 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::{BigInt, BigUint};
-use num_traits::Zero;
+use num_traits::{ToPrimitive, Zero};
 
 use crate::binary::Bounds;
-use crate::binary::{UBinary, UXBinary, XBinary};
+use crate::binary::{UBinary, UXBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
-
-/// A `usize` extended with positive infinity, analogous to `UXBinary`.
-///
-/// When used as a tolerance exponent: `Finite(n)` means epsilon = 2^(-n),
-/// `Inf` means epsilon = 0 (exact convergence required).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum XUsize {
-    Finite(usize),
-    Inf,
-}
+use crate::prefix::Prefix;
+use crate::sane::{XIsize, XUsize};
 
 /// Command sent to a refiner thread.
 #[derive(Clone, Copy)]
 pub enum RefineCommand {
-    Step { precision_bits: usize },
+    Step { target_width_exp: XIsize },
     Stop,
 }
 
@@ -75,7 +67,7 @@ pub struct RefinerHandle {
 #[derive(Clone)]
 pub struct NodeUpdate {
     pub node_id: usize,
-    pub bounds: Bounds,
+    pub prefix: Prefix,
 }
 
 /// Reason a refiner has stopped producing further updates.
@@ -144,10 +136,10 @@ impl RefinementGraph {
         &self,
         tolerance_exp: &XUsize,
     ) -> Result<Bounds, ComputableError> {
-        // Eagerly populate all bounds caches so we can identify exact-bounds refiners.
-        let root_bounds = self.root.get_bounds()?;
-        if bounds_width_leq(&root_bounds, tolerance_exp) {
-            return Ok(root_bounds);
+        // Eagerly populate all prefix caches so we can identify exact-bounds refiners.
+        let root_prefix = self.root.get_prefix()?;
+        if prefix_width_leq(&root_prefix, tolerance_exp) {
+            return Ok(root_prefix.to_bounds());
         }
 
         let mut outcome = None;
@@ -160,8 +152,8 @@ impl RefinementGraph {
             let mut refiner_handles = Vec::new();
             for node in &self.refiners {
                 let exact = node
-                    .cached_bounds()
-                    .is_some_and(|b| b.small() == &b.large());
+                    .cached_prefix()
+                    .is_some_and(|p| p.width_exponent() == XIsize::NegInf);
                 if !exact {
                     refiner_handles.push(spawn_refiner(
                         scope,
@@ -219,12 +211,11 @@ impl RefinementGraph {
                         let mut seen = HashSet::new();
                         let mut stack: Vec<Arc<Node>> = node.children();
                         while let Some(child) = stack.pop() {
-                            if refiner_id_set.contains(&child.id) {
-                                if let Some(&idx) = refiner_index.get(&child.id) {
-                                    if seen.insert(idx) {
-                                        subs.push(idx);
-                                    }
-                                }
+                            if refiner_id_set.contains(&child.id)
+                                && let Some(&idx) = refiner_index.get(&child.id)
+                                && seen.insert(idx)
+                            {
+                                subs.push(idx);
                             }
                             stack.extend(child.children());
                         }
@@ -262,7 +253,7 @@ impl RefinementGraph {
                         .map(|node| node_is_static.get(&node.id).copied().unwrap_or(true))
                         .collect()
                 };
-                let any_budget_dynamic = budget_is_static.iter().any(|&s| !s);
+                let _any_budget_dynamic = budget_is_static.iter().any(|&s| !s);
 
                 // Track whether each refiner should be re-dispatched.
                 // True initially (first dispatch) and when another refiner
@@ -290,8 +281,8 @@ impl RefinementGraph {
 
                 let precision_met =
                     |root: &Arc<Node>, tol: &XUsize| -> Result<bool, ComputableError> {
-                        let bounds = root.get_bounds()?;
-                        Ok(bounds_width_leq(&bounds, tol))
+                        let prefix = root.get_prefix()?;
+                        Ok(prefix_width_leq(&prefix, tol))
                     };
 
                 let mut refiner_budgets: Vec<Option<UXBinary>> = {
@@ -361,10 +352,6 @@ impl RefinementGraph {
                             }
                         }
                     }
-                    let precision_bits = match tolerance_exp {
-                        XUsize::Finite(n) => *n,
-                        XUsize::Inf => usize::MAX,
-                    };
                     let mut dispatched = 0usize;
 
                     while let Some(i) = dispatch_queue.pop_front() {
@@ -378,13 +365,18 @@ impl RefinementGraph {
                         }
                         let skip = refiner_budgets[i].as_ref().is_some_and(|budget| {
                             refiner_nodes[i]
-                                .cached_bounds()
-                                .is_some_and(|b| b.width() <= budget)
+                                .cached_prefix()
+                                .is_some_and(|p| p.width() <= *budget)
                         });
                         if !skip {
+                            // Convert budget to target_width_exp for the refiner.
+                            let target_width_exp = refiner_budgets[i]
+                                .as_ref()
+                                .map(uxbinary_to_exp)
+                                .unwrap_or_else(|| tolerance_to_exp(tolerance_exp));
                             refiner_handles[i]
                                 .sender
-                                .send(RefineCommand::Step { precision_bits })
+                                .send(RefineCommand::Step { target_width_exp })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             outstanding[i] = true;
                             needs_redispatch[i] = false;
@@ -401,7 +393,9 @@ impl RefinementGraph {
                                     } else {
                                         // Exhausted sub-refiner: keep as responded.
                                         sub_responded_count[i] =
-                                            sub_responded_count[i].saturating_add(1);
+                                            sub_responded_count[i].checked_add(1).unwrap_or_else(|| {
+                                                unreachable!("sub_responded_count bounded by sub_refiner_indices[i].len()")
+                                            });
                                     }
                                 }
                             }
@@ -429,8 +423,8 @@ impl RefinementGraph {
                                 let above_budget =
                                     !refiner_budgets[i].as_ref().is_some_and(|budget| {
                                         refiner_nodes[i]
-                                            .cached_bounds()
-                                            .is_some_and(|b| b.width() <= budget)
+                                            .cached_prefix()
+                                            .is_some_and(|p| p.width() <= *budget)
                                     });
                                 if above_budget {
                                     needs_redispatch[i] = true;
@@ -501,12 +495,16 @@ impl RefinementGraph {
                             // when it exhausts or hits the step limit.
                             if let Some(reason) = $exhaustion {
                                 active[idx] = false;
-                                eligible_count = eligible_count.saturating_sub(1);
+                                eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
+                                    unreachable!("eligible_count > 0: each refiner decrements at most once")
+                                });
                                 if !matches!(reason, ExhaustionReason::StateUnchanged) {
                                     all_state_unchanged = false;
                                 }
                             } else if steps[idx] >= MAX_REFINEMENT_ITERATIONS {
-                                eligible_count = eligible_count.saturating_sub(1);
+                                eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
+                                    unreachable!("eligible_count > 0: each refiner decrements at most once")
+                                });
                             }
                             // Leaf responding refiner: always re-dispatch
                             // (self-improving, independent of other refiners).
@@ -592,14 +590,14 @@ impl RefinementGraph {
         }
     }
 
-    /// Applies a node update and propagates bounds changes upward.
+    /// Applies a node update and propagates prefix changes upward.
     /// Returns the set of node IDs that were changed by propagation
     /// (excluding the directly-updated node).
     fn apply_update(&self, update: NodeUpdate) -> Result<Vec<usize>, ComputableError> {
         let mut changed_by_propagation = Vec::new();
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
-            node.set_bounds(update.bounds);
+            node.set_prefix(update.prefix);
             queue.push_back(node.id);
         }
 
@@ -612,9 +610,9 @@ impl RefinementGraph {
                     .nodes
                     .get(parent_id)
                     .ok_or(ComputableError::RefinementChannelClosed)?;
-                let next_bounds = parent.compute_bounds()?;
-                if parent.cached_bounds().as_ref() != Some(&next_bounds) {
-                    parent.set_bounds(next_bounds);
+                let next_prefix = parent.compute_prefix()?;
+                if parent.cached_prefix().as_ref() != Some(&next_prefix) {
+                    parent.set_prefix(next_prefix);
                     changed_by_propagation.push(*parent_id);
                     queue.push_back(*parent_id);
                 }
@@ -699,72 +697,81 @@ fn refiner_loop(
 ) {
     while !stop.is_stopped() {
         match commands.recv() {
-            Ok(RefineCommand::Step { precision_bits }) => match node.refine_step(precision_bits) {
-                Ok(true) => {
-                    let bounds = match node.compute_bounds() {
-                        Ok(b) => b,
-                        Err(e) => {
-                            // Safe to discard: send fails only when the coordinator
-                            // has already dropped update_rx (i.e. it already has a result).
-                            let _send = updates.send(RefinerMessage::Error(e));
-                            break;
+            Ok(RefineCommand::Step { target_width_exp }) => {
+                // Keep refining until the prefix visibly changes or we exhaust.
+                // This prevents infinite loops where the underlying bounds improve
+                // but the Prefix (power-of-2 rounded width) stays the same.
+                let old_prefix = node.cached_prefix();
+                let mut extra_steps = 0usize;
+
+                loop {
+                    match node.refine_step(target_width_exp) {
+                        Ok(true) => {
+                            let prefix = match node.compute_prefix() {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    let _send = updates.send(RefinerMessage::Error(e));
+                                    return;
+                                }
+                            };
+
+                            // Check if prefix visibly changed
+                            let changed = old_prefix.as_ref() != Some(&prefix);
+                            node.set_prefix(prefix.clone());
+
+                            if changed || extra_steps >= 16 {
+                                if updates
+                                    .send(RefinerMessage::Update(NodeUpdate {
+                                        node_id: node.id,
+                                        prefix,
+                                    }))
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                                break;
+                            }
+                            // Prefix didn't change — do another refine step
+                            extra_steps = extra_steps.checked_add(1).unwrap_or_else(|| {
+                                unreachable!("extra_steps bounded by loop break at 16")
+                            });
                         }
-                    };
-                    node.set_bounds(bounds.clone());
-                    if updates
-                        .send(RefinerMessage::Update(NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        }))
-                        .is_err()
-                    {
-                        break;
+                        Ok(false) => {
+                            let prefix = match node.compute_prefix() {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    let _send = updates.send(RefinerMessage::Error(e));
+                                    return;
+                                }
+                            };
+                            node.set_prefix(prefix.clone());
+                            let _send = updates.send(RefinerMessage::Exhausted {
+                                update: NodeUpdate {
+                                    node_id: node.id,
+                                    prefix,
+                                },
+                                reason: ExhaustionReason::Converged,
+                            });
+                            return;
+                        }
+                        Err(ComputableError::StateUnchanged) => {
+                            let prefix = node.cached_prefix().unwrap_or_else(Prefix::unbounded);
+                            let _send = updates.send(RefinerMessage::Exhausted {
+                                update: NodeUpdate {
+                                    node_id: node.id,
+                                    prefix,
+                                },
+                                reason: ExhaustionReason::StateUnchanged,
+                            });
+                            return;
+                        }
+                        Err(error) => {
+                            let _send = updates.send(RefinerMessage::Error(error));
+                            return;
+                        }
                     }
                 }
-                Ok(false) => {
-                    let bounds = match node.compute_bounds() {
-                        Ok(b) => b,
-                        Err(e) => {
-                            // Safe to discard: send fails only when the coordinator
-                            // has already dropped update_rx (i.e. it already has a result).
-                            let _send = updates.send(RefinerMessage::Error(e));
-                            break;
-                        }
-                    };
-                    node.set_bounds(bounds.clone());
-                    // Safe to discard: send fails only when the coordinator
-                    // has already dropped update_rx (i.e. it already has a result).
-                    let _send = updates.send(RefinerMessage::Exhausted {
-                        update: NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        },
-                        reason: ExhaustionReason::Converged,
-                    });
-                    break;
-                }
-                Err(ComputableError::StateUnchanged) => {
-                    let bounds = node
-                        .cached_bounds()
-                        .unwrap_or_else(|| Bounds::new(XBinary::NegInf, XBinary::PosInf));
-                    // Safe to discard: send fails only when the coordinator
-                    // has already dropped update_rx (i.e. it already has a result).
-                    let _send = updates.send(RefinerMessage::Exhausted {
-                        update: NodeUpdate {
-                            node_id: node.id,
-                            bounds,
-                        },
-                        reason: ExhaustionReason::StateUnchanged,
-                    });
-                    break;
-                }
-                Err(error) => {
-                    // Safe to discard: send fails only when the coordinator
-                    // has already dropped update_rx (i.e. it already has a result).
-                    let _send = updates.send(RefinerMessage::Error(error));
-                    break;
-                }
-            },
+            }
             Ok(RefineCommand::Stop) | Err(_) => break,
         }
     }
@@ -774,6 +781,7 @@ fn refiner_loop(
 ///
 /// `Finite(n)` means epsilon = 2^(-n); `Inf` means epsilon = 0.
 /// Returns true if width <= epsilon.
+#[cfg(test)]
 pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
     match bounds.width() {
         UXBinary::Inf => false,
@@ -781,6 +789,64 @@ pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
             XUsize::Inf => width.mantissa().is_zero(),
             XUsize::Finite(exp) => *width <= UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)),
         },
+    }
+}
+
+/// Compares prefix width against a tolerance exponent.
+///
+/// `Finite(n)` means epsilon = 2^(-n); `Inf` means epsilon = 0.
+/// Returns true if width_exponent <= -tolerance_exp.
+pub fn prefix_width_leq(prefix: &Prefix, tolerance_exp: &XUsize) -> bool {
+    let we = prefix.width_exponent();
+    #[allow(clippy::arithmetic_side_effects)] // XUsize::neg() is total (no panics)
+    let target = -(*tolerance_exp);
+    we <= target
+}
+
+/// Converts a UXBinary width to an `XIsize` exponent.
+///
+/// Returns the smallest e such that 2^e >= width, or `PosInf` for infinity.
+fn uxbinary_to_exp(ux: &UXBinary) -> XIsize {
+    match ux {
+        UXBinary::Inf => XIsize::PosInf,
+        UXBinary::Finite(ub) => {
+            if ub.mantissa().is_zero() {
+                return XIsize::NegInf;
+            }
+            let bits = ub.mantissa().bits();
+            let Ok(bits_isize) = isize::try_from(bits) else {
+                // mantissa has more bits than isize can represent: width is astronomically large
+                return XIsize::PosInf;
+            };
+            let Some(exp_isize) = ub.exponent().to_isize() else {
+                // exponent doesn't fit in isize: width is astronomically large (or small)
+                // Positive exponent → PosInf; negative exponent with huge mantissa → still large
+                return if ub.exponent().sign() == num_bigint::Sign::Minus {
+                    // Huge negative exponent: width ≈ 0, exponent is extremely negative
+                    XIsize::NegInf
+                } else {
+                    XIsize::PosInf
+                };
+            };
+            // width = mantissa * 2^exponent, mantissa has `bits` bits
+            // so width < 2^(bits + exponent), ceil = bits + exponent if mantissa != power of 2
+            // For a simple upper bound: bits + exponent (may overcount by 1, conservative)
+            match bits_isize.checked_add(exp_isize) {
+                Some(v) => XIsize::Finite(v),
+                // Overflow in positive direction: astronomically large width
+                None if exp_isize > 0 => XIsize::PosInf,
+                // Overflow in negative direction: astronomically small width
+                None => XIsize::NegInf,
+            }
+        }
+    }
+}
+
+/// Converts a tolerance exponent to an `XIsize` target for refiners.
+fn tolerance_to_exp(tolerance_exp: &XUsize) -> XIsize {
+    #[allow(clippy::arithmetic_side_effects)] // XUsize::neg() is total (no panics)
+    {
+        -(*tolerance_exp)
     }
 }
 
@@ -886,11 +952,11 @@ mod tests {
         let expected = xbin(1, 0);
         let upper = bounds.large();
 
-        assert!(bounds.small() <= &expected && &expected <= &upper);
+        assert!(bounds.small() <= &expected && expected <= upper);
         assert!(bounds_width_leq(&bounds, &tolerance_exp));
         let refined_bounds = computable.bounds().expect("bounds should succeed");
         let refined_upper = refined_bounds.large();
-        assert!(refined_bounds.small() <= &expected && &expected <= &refined_upper);
+        assert!(refined_bounds.small() <= &expected && expected <= refined_upper);
     }
 
     #[test]

@@ -44,42 +44,41 @@ sadly, the implementation cannot exactly realize the formalism.
 - parallelism: if an expression being refined has multiple components that need to be refined separately, those sub-refinements run in parallel.
 
 ## threading model
-the implementation spawns one thread per refiner node (base computable numbers and `inv` operations) using `std::thread::scope`. there is no thread pool or work-stealing; threads are created per refinement call and cleaned up when refinement completes. this may need to be modified to improve performance.
+the implementation spawns one thread per refiner node (base computable numbers and active operations like `inv`) using `std::thread::scope`. threads are created per `refine_to` call and cleaned up when refinement completes. refiner threads are passive workers: they block waiting for commands from the coordinator and send back update messages.
 
 ## design
 - i use the term 'composition' to refer to a computable number which contains multiple base computable numbers. for example, $\sqrt{a + ab}$ is a composition. $a + a$ is also considered a composition even though the constituent computable numbers are identical. (however, $2a$ is not a composition; it has only a single constituent to refine.)
-- compositions are structured as binary trees; each composition may have at most two children. (note that the same computable number can occur multiple times in a single expression, so it's logically a DAG, but it's still structured as a binary tree) <!-- it's possible that this binary tree requirement will need to be relaxed, but i'm going to start out assuming that it does not -->
-- when a composition is refined, all its branches are refined in parallel.
-- refinements of the branches are propagated upwards live, and refinement is halted as soon as the overall expression reaches the required precision.
-<!-- TODO: add a propagated stopping condition so branches can be halted when they can no longer tighten the overall bounds. -->
+- compositions are structured as binary trees; each composition may have at most two children. (note that the same computable number can occur multiple times in a single expression, so it's logically a DAG, but it's still structured as a binary tree)
+- refinement is coordinated by `RefinementGraph`, which discovers all leaf "refiner" nodes and drives them externally. combinators (`AddOp`, `MulOp`, `NegOp`) are passive—they don't refine anything themselves. the coordinator sends `Step` commands to refiner threads and, after each response, propagates the updated bounds upward through the passive combinators.
+- the refinement model is round-based with three key improvements over plain lock-step:
+    - **early exit**: the coordinator checks whether root precision meets the target after each individual refiner response, not just at the end of a round. this means refinement can stop as soon as any single update tips the root bounds within tolerance.
+    - **per-refiner exhaustion**: refiners that have converged (bounds are a single point) or whose state is unchanged are marked inactive and excluded from future rounds, rather than causing the entire refinement to fail.
+    - **demand-based skipping**: each round computes a demand budget ($\epsilon / 2^{\lceil \log_2 N \rceil}$ where $N$ is the number of active refiners). refiners whose bounds are already narrower than the budget are skipped, avoiding wasted work on fast-converging operands. a safety valve ensures that if all active refiners are below the demand budget but root precision isn't met, the least-precise refiners are stepped anyway (skipping extreme outliers whose width is negligible compared to the widest).
 <!-- TODO: add support for distributive law/commutativity-type-things, where e.g. Mul(Add(a, b), c) can be converted to Add(Mul(a, c), Mul(b, c)) or Mod_n(Mul(a, b)) can be converted to Mod_n(Mul(Mod_n(a), Mod_n(b))) -->
 
 ### example
-let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$.
-- the current value of the expression is computed
-    - step inside the $\sqrt{}$
-        - consider both sides of the addition in parallel
-            - left branch: get the current bounds on $a$. suppose these are $(-1, 0.5)$
-            - right branch
-                - consider both sides of the multiplication in parallel
-                    - get the current bounds on $a$: $(-1, 0.5)$
-                    - get the current bounds on $b$: $(4, 6)$
-                - combine both sides of the multiplication to get bounds on $ab$: $(-6, 3)$
-        - combine both sides of the addition to get bounds on $a + ab$: $(-7, 3.5)$
-    - apply $\sqrt{}$ to these bounds: recoverable error, since the bounds are not fully contained in the domain of $\sqrt{}$. refinement is required. (if the bounds did not contain any of the domain of $\sqrt{}$, we would finish with an irrecoverable error.)
-- refine $\sqrt{a + ab}$
-    - step inside the $\sqrt{}$
-        - consider both sides of the addition in parallel
-            - left branch: acquire the refinement lock on $a$ and refine $a$ repeatedly. on each refinement, publish the new bounds for reading elsewhere. let's suppose the successive refinements are $(-0.5, 0.5)$, $(-0.25, 0.25)$, $(0.125, 0.25)$, ...
-            - right branch: consider both sides of the multiplication in parallel
-                - left branch: try to acquire the refinement lock on $a$. since the refinement lock is already acquired, instead subscribe to updates on $a$'s bounds.
-                - right branch: acquire the refinement lock on $b$. let's suppose refining $b$ is quite slow, and no refinements come in for now.
-            - the multiplication receives refinements of its left branch $a$ (and is listening for refinements of $b$, but we're supposing refining $b$ is slow). when a new refinement comes in, it recalculates the multiplication bounds. for the successive refinements of $a$ that we supposed, this would yield $(-3, 3)$, $(-1.5, 1.5)$, $(0.75, 1.5)$, ...
-        - similarly, the addition receives refinements of its left branch $a$ and right branch $ab$ and recalculates the addition bounds. the refinements from left and right may come in in any order; let's suppose this yields $(-6.5, 3.5)$, $(-3.5, 3.5)$, $(-2, 2)$, $(0.25, 2)$. (note that it is possible for the right expression $ab$ to be using a more refined $a$ than the left expression $a$, if the addition recieves the left update slowly.)
-    - the $\sqrt{}$ receives refinements of its argument and recomputes itself. for $(-6.5, 3.5)$, $(-3.5, 3.5)$, and $(-2, 2)$ the bounds are still not fully contained in the domain of $\sqrt{}$, so it does not halt the refinement. for $(0.25, 2)$, since $\sqrt{}$ is increasing, the bounds are $(\sqrt{0.25}, \sqrt{2})$. these are both represented as computable numbers themselves, so to figure out if the desired precision has been attained, they too must be refined. both of these refinements proceed in parallel with each other and with $a$ and $b$ and the expressions built from them (including $\sqrt{}$ itself--it does not wait until the refinement of $\sqrt{0.25}$ and $\sqrt{2}$ is done to recompute).
-        - refining $\sqrt{0.25}$: let's suppose that our initial bounds are $(0.25, 1)$ and our refinement algorithm is binary search (though in practice, hopefully we'd be using an algorithm that quickly detects that there is an exact answer). this yields $(0.25, 0.625)$, $(0.4375, 0.625)$, $(0.4375, 0.53125)$, ...
-        - refining $\sqrt{2}$: let's suppose that our initial bounds are $(1, 2)$ and our refinement algorithm is binary search. this yields $(1, 1.5)$, $(1.25, 1.5)$, $(1.375, 1.5)$, $(1.375, 1.4375)$ ...
-    - the $\sqrt{}$ receives the refinements of $\sqrt{0.25}$ and $\sqrt{2}$, also in some arbitrary order. it will compute the outer bounds to see if they become narrower than $\epsilon$ (meaning the precision has been attained), and the inner bounds to see if they become wider than our $\epsilon$ of 1 (meaning the desired precision cannot be obtained without further refining $a + ab$ itself). let's suppose that it recieves refinements of $\sqrt{2}$ and $\sqrt{0.25}$ in alternation. then it will obtain outer bounds of $(0.25, 2)$ and inner bounds of $(1, 1)$; $(0.25, 1.5)$ and $(1, 1)$; $(0.25, 1.5)$ and $(0.625, 1)$; $(0.25, 1.5)$ and $(0.625, 1.25)$; $(0.4375, 1.5)$ and $(0.625, 1.25)$; $(0.4375, 1.5)$ and $(0.625, 1.375)$; $(0.4375, 1.5)$ and $(0.53125, 1.375)$; $(0.4375, 1.4375)$ and $(0.53125, 1.375)$. the outer bounds now have a width of 1, which is exactly $\epsilon$, so refinement stops. the refinement of $\sqrt{a + ab}$ to $\epsilon=1$ returns $(0.4375, 1.4375)$, and all the other parallel processes are halted. (however, any refinements made to $a$ and $b$ which were already performed but didn't percolate up to $\sqrt{}$ in time to affect the output will be maintained, and if $\sqrt{a + ab}$ is refined again with a smaller $\epsilon$, they will be available at the start of that computation.)
+let's consider the example of refining $\sqrt{a + ab}$ to precision $\epsilon=1$, where $a$ has initial bounds $(-1, 0.5)$ and $b$ has initial bounds $(4, 6)$.
+
+the graph has three refiner nodes ($a$, $b$, and $\sqrt{}$) and two passive combinators ($+$ and $\times$). the coordinator spawns one thread per refiner and proceeds in rounds.
+
+**round 1**: the coordinator computes the demand budget from $\epsilon$ and the number of active refiners, and sends a `Step` command to each refiner whose bounds are wider than the budget (initially, all of them).
+
+- the refiner threads execute one refinement step each in parallel:
+    - $a$ refines from $(-1, 0.5)$ to $(-0.5, 0.5)$
+    - $b$ refines from $(4, 6)$ to $(4, 5)$
+    - $\sqrt{}$'s refiner does its own internal step
+- as each refiner responds, the coordinator propagates the update upward. for example, after $a$'s update arrives:
+    - $a \times b$ is recomputed using $a$'s new bounds and $b$'s current bounds
+    - $a + ab$ is recomputed
+    - $\sqrt{a + ab}$ is recomputed
+    - the coordinator checks whether the root bounds are within $\epsilon$; if so, refinement stops immediately (early exit)
+
+**subsequent rounds**: the coordinator repeats—computing the demand budget, skipping refiners that are already precise enough, stepping the rest, and checking precision after each response. suppose after a few rounds:
+- $b$ has converged to $(4.5, 4.5)$ and is marked exhausted (per-refiner exhaustion)—it won't be stepped again
+- $a$'s bounds are now narrow enough relative to the demand budget and are skipped (demand-based skipping)
+- only $\sqrt{}$'s refiner is stepped
+
+this continues until the root bounds are within $\epsilon$, at which point all refiner threads are stopped and the result is returned.
 
 (note that, in general, the constraints on a composition may be narrower than the combination of the constraints on each side considered independently; for example, $a - ab$ with bounds on $a$ of $(-1, 0.5)$ and bounds on $b$ of $(4, 6)$ is bounded by $(-2.5, 5)$, but considering $a$ and $ab$ independently (i.e. ignoring the fact that $a$ is in both) would yield $(-4, 6.5)$. we ignore this for now, always considering the sides independently, but this might be a place for further improvements.)
 

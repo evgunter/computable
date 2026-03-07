@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_traits::One;
 use parking_lot::RwLock;
 
@@ -28,8 +28,7 @@ use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, NodeOp, TypedBaseNode};
-use crate::refinement::{XUsize, bounds_width_leq};
-use crate::sane::Sane;
+use crate::sane::{Sane, XIsize, XUsize};
 
 use super::BaseOp;
 use super::InvOp;
@@ -49,7 +48,7 @@ fn bit_length(x: Sane) -> Sane {
     let bits = usize::BITS
         .checked_sub(x.0.leading_zeros())
         .unwrap_or_else(|| unreachable!("leading_zeros() is always <= usize::BITS"));
-    Sane(usize::try_from(bits).unwrap_or(0))
+    Sane(crate::sane::bits_as_usize(u64::from(bits)))
 }
 
 /// Computes the intermediate reciprocal precision needed for `num_terms` Taylor series terms.
@@ -227,7 +226,7 @@ fn make_inv_node(denominator: BigInt) -> Arc<Node> {
     let constant_node = Node::new(Arc::new(BaseOp { base }));
     Node::new(Arc::new(InvOp {
         inner: constant_node,
-        newton_state: RwLock::new(None),
+        division_state: RwLock::new(None),
     }))
 }
 
@@ -242,13 +241,20 @@ fn refine_node_to_precision(
     refine_precision: usize,
 ) -> Result<(), ComputableError> {
     const MAX_ITERS: usize = 64;
+    let tolerance = UBinary::new(BigUint::from(1_u32), -BigInt::from(target_width_bits));
     for _ in 0..MAX_ITERS {
         let bounds = node.get_bounds()?;
-        if bounds_width_leq(&bounds, &XUsize::Finite(target_width_bits)) {
-            return Ok(());
+        match bounds.width() {
+            UXBinary::Finite(w) if *w <= tolerance => return Ok(()),
+            _ => {}
         }
-        node.refine_step(refine_precision)?;
-        let new_bounds = node.compute_bounds()?;
+        let target_exp = XIsize::Finite(
+            isize::try_from(refine_precision)
+                .map(|p| p.checked_neg().unwrap_or(isize::MIN))
+                .unwrap_or(isize::MIN),
+        );
+        node.refine_step(target_exp)?;
+        let new_bounds = node.op.compute_bounds()?;
         node.set_bounds(new_bounds);
     }
     Err(ComputableError::MaxRefinementIterations { max: MAX_ITERS })
@@ -350,12 +356,13 @@ impl NodeOp for PiOp {
         normalize_finite_to_bounds(&finite)
     }
 
-    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
         let mut state = self.state.write();
 
-        // Leap to the needed term count based on precision_bits.
-        // Same formula as pi_bounds_at_precision: n = (precision_bits + 10) / 4.
-        if precision_bits <= crate::MAX_COMPUTATION_BITS {
+        // Leap to the needed term count based on precision target.
+        if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits()
+            && precision_bits <= crate::MAX_COMPUTATION_BITS
+        {
             let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
             if needed > state.num_terms {
                 state.extend_to(needed);
@@ -363,8 +370,9 @@ impl NodeOp for PiOp {
             }
         }
 
-        // Fall through: double the number of terms
-        let new_count = state.num_terms.saturating_mul(2).max(1_usize);
+        // Fall through: double the number of terms (handles Inf / large targets)
+        let current = state.num_terms;
+        let new_count = crate::sane_arithmetic!(current; current * 2).max(1_usize);
         state.extend_to(new_count);
         Ok(true)
     }
@@ -553,7 +561,7 @@ pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
 mod tests {
     use super::*;
     use crate::binary::XBinary;
-    use crate::refinement::XUsize;
+    use crate::sane::XUsize;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))

@@ -418,7 +418,7 @@ fn pi_analysis() {
     }
 
     // Arithmetic with pi
-    let epsilon = XUsize::Finite(64);
+    let pi_arith_epsilon = XUsize::Finite(64);
 
     println!();
     println!("== Pi Arithmetic ==");
@@ -448,7 +448,7 @@ fn pi_analysis() {
         let start = Instant::now();
         let expr = build_expr();
         let bounds = expr
-            .refine_to_default(epsilon)
+            .refine_to_default(pi_arith_epsilon)
             .expect("pi arithmetic should succeed");
         let duration = start.elapsed();
         let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
@@ -459,7 +459,7 @@ fn pi_analysis() {
     }
 
     // sin(n*pi) — should be ~0
-    let epsilon = XUsize::Finite(32);
+    let sin_pi_epsilon = XUsize::Finite(32);
 
     println!();
     println!("== sin(n * pi) — should contain 0 ==");
@@ -474,7 +474,7 @@ fn pi_analysis() {
         };
         let bounds = n_pi
             .sin()
-            .refine_to_default(epsilon)
+            .refine_to_default(sin_pi_epsilon)
             .expect("sin(n*pi) should succeed");
         let duration = start.elapsed();
 
@@ -493,10 +493,10 @@ fn pi_analysis() {
     println!();
 
     for &bits in &[2048usize, 4096, 8192] {
-        let epsilon = XUsize::Finite(bits);
+        let high_prec_epsilon = XUsize::Finite(bits);
         let start = Instant::now();
         let bounds = pi()
-            .refine_to_default(epsilon)
+            .refine_to_default(high_prec_epsilon)
             .expect("high precision pi should succeed");
         let duration = start.elapsed();
         println!(

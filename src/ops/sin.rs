@@ -32,6 +32,7 @@ use crate::binary::{
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::sane::{XIsize, XUsize};
 
 /// Sine operation with Taylor series refinement.
 pub struct SinOp {
@@ -48,12 +49,14 @@ impl NodeOp for SinOp {
         sin_bounds(&input_bounds, &pi_bounds, &num_terms)
     }
 
-    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
         // Leap based on coordinator's precision target.
-        // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.
-        if precision_bits <= crate::MAX_COMPUTATION_BITS {
+        if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits()
+            && precision_bits <= crate::MAX_COMPUTATION_BITS
+        {
+            // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.
             let needed_n = (precision_bits / 3).max(1);
             let needed = BigInt::from(needed_n);
             if needed > *num_terms {
@@ -154,7 +157,35 @@ fn sin_bounds(
         }
     };
 
-    // Extract finite pi bounds, or return [-1, 1] if pi bounds are infinite
+    // Convert num_terms to usize (capped at reasonable limit)
+    let n = num_terms
+        .to_usize()
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("num_terms exceeds usize")
+        })
+        .max(1);
+
+    // Range reduction subtracts k * 2π from the input, introducing error
+    // proportional to max_abs(input) * width(π). When input is 0 this
+    // product is 0 * anything = 0 (Exact in UXBinary), so π's precision
+    // is irrelevant. Check the product, not π's precision in isolation.
+    let (input_abs_lo, input_abs_hi) = input_bounds.abs();
+    let input_max_abs = std::cmp::max(input_abs_lo, input_abs_hi);
+    let pi_error_contribution = input_max_abs.mul(pi_bounds.width());
+
+    if pi_error_contribution.is_zero() {
+        // Pi contributes no error to range reduction — the product
+        // max_abs(input) * width(π) is exact zero (e.g. input is zero).
+        // Compute sin directly via Taylor series; no range reduction needed.
+        let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
+        let sin_result = compute_sin_on_monotonic_interval(&input_interval, n);
+        let clamped_lo = std::cmp::max(sin_result.lo().clone(), neg_one);
+        let clamped_hi = std::cmp::min(sin_result.hi(), pos_one);
+        let finite = FiniteBounds::new(clamped_lo, clamped_hi);
+        return normalize_finite_to_bounds(&finite);
+    }
+
+    // Pi's precision affects the result — extract finite bounds or bail.
     let pi_lo = pi_bounds.small();
     let pi_hi_xb = pi_bounds.large();
     let pi_interval = match (pi_lo, &pi_hi_xb) {
@@ -180,9 +211,6 @@ fn sin_bounds(
         half_pi_hi_val.exponent() - BigInt::one(),
     );
     let half_pi_interval = FiniteBounds::new(half_pi_lo, half_pi_hi);
-
-    // Convert num_terms to usize (capped at reasonable limit)
-    let n = num_terms.to_usize().unwrap_or(1).max(1);
 
     // Process each endpoint through range reduction with full interval tracking
     let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
@@ -570,17 +598,36 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     // Shift by enough bits to get a meaningful quotient, plus extra precision for rounding.
     // When mp_bits > mx_bits, we need at least the difference plus 64 extra bits.
     // When mx_bits >= mp_bits, 64 bits suffice.
-    let precision_bits = mp_bits.saturating_sub(mx_bits).saturating_add(64).max(64);
+    let precision_bits = if mp_bits >= mx_bits {
+        crate::sane_arithmetic!(mp_bits, mx_bits; mp_bits - mx_bits + 64)
+    } else {
+        64
+    };
 
     let shifted_mx = mx << precision_bits;
     let quotient = &shifted_mx / mp;
     let result_exp = ex - ep - BigInt::from(precision_bits);
 
     if result_exp >= BigInt::zero() {
-        let shift = result_exp.to_usize().unwrap_or(0);
-        &quotient << shift
+        let shift = result_exp
+            .to_biguint()
+            .unwrap_or_else(|| unreachable!("result_exp is non-negative"));
+        crate::binary::shift_mantissa_chunked(&quotient, &shift, usize::MAX)
     } else {
-        let shift_val = (-&result_exp).to_usize().unwrap_or(0);
+        let magnitude = (-&result_exp)
+            .to_biguint()
+            .unwrap_or_else(|| unreachable!("negated negative is positive"));
+        let quotient_bits = quotient.bits();
+        if magnitude > num_bigint::BigUint::from(quotient_bits) {
+            if quotient.is_negative() {
+                return BigInt::from(-1_i32);
+            } else {
+                return BigInt::zero();
+            }
+        }
+        let shift_val = magnitude
+            .to_usize()
+            .unwrap_or_else(|| unreachable!("magnitude <= quotient.bits() which fits in u64"));
         match std::num::NonZeroUsize::new(shift_val) {
             None => quotient.clone(),
             Some(shift) => {
@@ -839,10 +886,14 @@ fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
 
     // -log2(width) ≈ -(mantissa_bits + exponent)
     let mantissa_bits = crate::sane::bits_as_usize(width.mantissa().magnitude().bits());
-    let mantissa_bits_i64 = i64::try_from(mantissa_bits).unwrap_or(i64::MAX);
-    let exp_i64 = width.exponent().to_i64().unwrap_or(0_i64);
-    let log2_width = exp_i64.saturating_add(mantissa_bits_i64);
-    let neg_log2 = log2_width.saturating_neg().max(0_i64);
+    let mantissa_bits_i64 = i64::try_from(mantissa_bits)
+        .unwrap_or_else(|_| unreachable!("mantissa_bits <= MAX_COMPUTATION_BITS fits in i64"));
+    let exp_i64 = width.exponent().to_i64()?;
+    let log2_width = exp_i64.checked_add(mantissa_bits_i64)?;
+    let neg_log2 = match log2_width.checked_neg() {
+        Some(v) if v >= 0_i64 => v,
+        _ => return None,
+    };
     usize::try_from(neg_log2).ok()
 }
 
@@ -856,7 +907,8 @@ pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
 mod tests {
     use super::*;
     use crate::computable::Computable;
-    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::refinement::bounds_width_leq;
+    use crate::sane::XUsize;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite, xbin};
 
     fn assert_bounds_compatible_with_expected(
@@ -884,6 +936,47 @@ mod tests {
         // sin(0) = 0
         let expected = bin(0, 0);
         assert_bounds_compatible_with_expected(&bounds, &expected, &epsilon);
+    }
+
+    #[test]
+    fn sin_of_zero_exact() {
+        let zero = Computable::constant(bin(0, 0));
+        let sin_zero = zero.sin();
+
+        // sin(0) = 0 exactly — should converge to exact bounds
+        let bounds = sin_zero
+            .refine_to_default(XUsize::Inf)
+            .expect("sin(0) should converge to exact zero");
+
+        let lower = unwrap_finite(bounds.small());
+        let upper = unwrap_finite(&bounds.large());
+        assert_eq!(lower, bin(0, 0), "sin(0) lower bound should be exactly 0");
+        assert_eq!(upper, bin(0, 0), "sin(0) upper bound should be exactly 0");
+    }
+
+    #[test]
+    fn sin_bounds_zero_input_ignores_pi_precision() {
+        // sin(0) = 0 regardless of pi's precision. The budget system correctly
+        // gives pi an infinite budget when the input is zero (since 0 * pi = 0),
+        // so pi may never be refined. sin_bounds must handle this by returning
+        // exact zero before consulting pi_bounds.
+        let input_bounds = Bounds::new(xbin(0, 0), xbin(0, 0));
+        let pi_bounds = Bounds::new(XBinary::NegInf, XBinary::PosInf);
+
+        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(10_i32))
+            .expect("sin_bounds should succeed");
+        let lower = unwrap_finite(result.small());
+        let upper = unwrap_finite(&result.large());
+        assert_eq!(
+            lower,
+            bin(0, 0),
+            "sin(0) should be 0 regardless of pi precision"
+        );
+        assert_eq!(
+            upper,
+            bin(0, 0),
+            "sin(0) should be 0 regardless of pi precision"
+        );
     }
 
     #[test]

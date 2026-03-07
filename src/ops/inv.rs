@@ -1,78 +1,158 @@
-//! Multiplicative inverse operation with Newton-Raphson refinement.
+//! Multiplicative inverse via stable-prefix batched division.
 //!
-//! Each `refine_step` performs one N-R iteration on both interval endpoints,
-//! doubling the number of correct bits per step via quadratic convergence.
-//! The N-R iterates are reused across steps (unlike the old approach which
-//! recomputed a full-precision division each step).
+//! Instead of Newton-Raphson iteration, we compute `1/x` as `2^P / prefix`
+//! where `prefix` is the leading bits shared by both endpoints of the inner
+//! interval. As the inner interval narrows, the prefix grows and we extend
+//! the division cheaply using the stored remainder.
 
 use std::sync::Arc;
 
-use num_bigint::BigInt;
-use num_traits::Signed;
+use num_bigint::{BigInt, BigUint};
+use num_integer::Integer;
+use num_traits::{One, Signed, ToPrimitive, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
+    Binary, Bounds, ReciprocalWithRemainder, UXBinary, XBinary, extend_reciprocal,
+    reciprocal_with_remainder,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane;
+use crate::sane::{self, XIsize, XUsize};
 
-/// Minimum seed precision bits for Newton-Raphson initialization.
-///
-/// Even when the coordinator requests low precision, we use at least this many
-/// bits for the seed to ensure N-R converges quickly for typical use cases.
+/// Minimum seed precision bits for division initialization.
 const MIN_SEED_PRECISION_BITS: usize = 64;
 
-/// N-R approximation of `1/denom`: maintains `lower <= 1/denom <= upper`.
-///
-/// Tracks a precision budget (in mantissa bits) that doubles each N-R step.
-/// After each step, both bounds are truncated to the new precision to prevent
-/// quadratic mantissa blowup from exact `Binary` arithmetic.
-struct ReciprocalApprox {
-    lower: Binary,
-    upper: Binary,
-    /// Current mantissa precision budget in bits. Doubles each N-R step.
-    precision: usize,
+/// Division state for computing 1/x via the stable prefix of the inner interval.
+struct PrefixDivision {
+    recip: ReciprocalWithRemainder,
+    /// The stable prefix value (common high bits of aligned endpoints).
+    prefix: BigUint,
+    /// Number of uncertain low bits: denom ∈ [prefix << shift, (prefix+1) << shift).
+    prefix_shift: usize,
+    /// Exponent of the aligned interval (the common exponent after alignment).
+    prefix_exponent: BigInt,
 }
 
-/// Newton-Raphson state for computing `1/x` over an interval.
-///
-/// Tracks two N-R sequences: one for each endpoint of the absolute inner
-/// interval. As inner bounds narrow, the denominators are updated and the
-/// existing iterates serve as warm-start seeds (they remain valid bounds).
-pub(crate) struct NewtonState {
-    /// Approximation of `1/abs_upper` — its `lower` field is the output lower bound.
-    lo: ReciprocalApprox,
-    /// Approximation of `1/abs_lower` — its `upper` field is the output upper bound.
-    hi: ReciprocalApprox,
-    /// Current positive lower endpoint of inner interval.
-    abs_lower: Binary,
-    /// Current positive upper endpoint of inner interval.
-    abs_upper: Binary,
-    /// True if the input was negative (result should be negated).
+/// Mutable state for the prefix-based division approach.
+pub(crate) struct DivisionState {
+    div: PrefixDivision,
     negate_result: bool,
 }
 
-/// Inverse (reciprocal) operation with Newton-Raphson refinement.
-///
-/// For inv, we don't normalize to prefix form because prefix normalization
-/// can expand the interval by up to ~4x, which interferes with the
-/// N-R refinement. The reciprocal computation already produces bounds
-/// with controlled mantissa size (proportional to the N-R iteration count).
+/// Inverse (reciprocal) operation with stable-prefix batched division.
 pub struct InvOp {
     pub inner: Arc<Node>,
-    /// Newton-Raphson state. `None` means not yet initialized.
-    pub newton_state: RwLock<Option<NewtonState>>,
+    pub division_state: RwLock<Option<DivisionState>>,
+}
+
+/// Info extracted from the stable prefix of the inner interval endpoints.
+struct PrefixInfo {
+    prefix: BigUint,
+    prefix_shift: usize,
+    prefix_exponent: BigInt,
+    prefix_bits: usize,
+}
+
+/// Extract the stable prefix from two positive Binary values.
+///
+/// The stable prefix consists of the leading bits common to both endpoints
+/// when aligned to the same exponent. These bits are guaranteed correct
+/// regardless of where the true value falls in the interval.
+fn extract_prefix(abs_lower: &Binary, abs_upper: &Binary) -> Option<PrefixInfo> {
+    let (lo_m, hi_m, exponent) = Binary::align_mantissas(abs_lower, abs_upper);
+
+    // Both should be positive after abs
+    debug_assert!(lo_m >= BigInt::zero());
+    debug_assert!(hi_m >= BigInt::zero());
+
+    let lo_uint = lo_m.magnitude().clone();
+    let hi_uint = hi_m.magnitude().clone();
+
+    if lo_uint.is_zero() {
+        return None;
+    }
+
+    let diff = &hi_uint - &lo_uint;
+    let diff_bits = if diff.is_zero() {
+        // Exact: endpoints are equal, all bits are stable
+        0
+    } else {
+        sane::bits_as_usize(diff.bits())
+    };
+
+    // prefix = lo >> diff_bits (common high bits)
+    let prefix = &lo_uint >> diff_bits;
+    if prefix.is_zero() {
+        // No common prefix (e.g. interval crosses a power-of-2 boundary)
+        return None;
+    }
+
+    let prefix_bits = sane::bits_as_usize(prefix.bits());
+
+    Some(PrefixInfo {
+        prefix,
+        prefix_shift: diff_bits,
+        prefix_exponent: exponent,
+        prefix_bits,
+    })
+}
+
+/// Derive upper and lower bounds on 1/x from the stored division state.
+///
+/// Given `2^Q / prefix = q rem r`, with `prefix_shift = s`, `prefix_exponent = e`:
+/// - True denominator x ∈ [prefix * 2^(s+e), (prefix+1) * 2^(s+e))
+///
+/// When `prefix_shift > 0` (uncertain bits exist):
+/// - Upper bound on 1/x: ceil(2^Q / prefix) * 2^(-Q-s-e)
+/// - Lower bound on 1/x: floor(2^Q / (prefix+1)) * 2^(-Q-s-e)
+///
+/// When `prefix_shift == 0` (exact denominator, all bits stable):
+/// - Both bounds come from the quotient: [q, q + (1 if r>0)] * 2^(-Q-e)
+fn bounds_from_division(div: &PrefixDivision) -> (Binary, Binary) {
+    let q = &div.recip.quotient;
+    let r = &div.recip.remainder;
+    let precision = div.recip.precision_bits;
+
+    // Common exponent: -Q - s - e
+    let result_exponent =
+        -BigInt::from(precision) - BigInt::from(div.prefix_shift) - &div.prefix_exponent;
+
+    // Upper bound: ceil(2^Q / prefix) = q + (1 if r > 0 else 0)
+    let upper_mantissa = if r.is_zero() {
+        q.clone()
+    } else {
+        q + BigUint::one()
+    };
+
+    let lower_mantissa = if div.prefix_shift == 0 {
+        // Exact denominator: lower bound = floor(2^Q / prefix) = q
+        q.clone()
+    } else {
+        // Uncertain bits: lower bound = floor(2^Q / (prefix+1))
+        // = q - ceil((q - r) / (prefix + 1))
+        let prefix_plus_one = &div.prefix + BigUint::one();
+        if q >= r {
+            let q_minus_r = q - r;
+            let correction = q_minus_r.div_ceil(&prefix_plus_one);
+            q - &correction
+        } else {
+            q.clone()
+        }
+    };
+
+    let upper = Binary::new(BigInt::from(upper_mantissa), result_exponent.clone());
+    let lower = Binary::new(BigInt::from(lower_mantissa), result_exponent);
+
+    (lower, upper)
 }
 
 impl NodeOp for InvOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let state = self.newton_state.read();
+        let state = self.division_state.read();
 
         match &*state {
             None => {
-                // No state yet — return infinite bounds in the appropriate direction.
                 let existing = self.inner.get_bounds()?;
                 let lower = existing.small();
                 let upper = existing.large();
@@ -86,51 +166,149 @@ impl NodeOp for InvOp {
                 }
             }
             Some(s) => {
-                // Output lower = lo.lower (lower bound on 1/abs_upper)
-                // Output upper = hi.upper (upper bound on 1/abs_lower)
+                let (lo, hi) = bounds_from_division(&s.div);
                 let (out_lo, out_hi) = if s.negate_result {
-                    (
-                        XBinary::Finite(s.hi.upper.neg()),
-                        XBinary::Finite(s.lo.lower.neg()),
-                    )
+                    (XBinary::Finite(hi.neg()), XBinary::Finite(lo.neg()))
                 } else {
-                    (
-                        XBinary::Finite(s.lo.lower.clone()),
-                        XBinary::Finite(s.hi.upper.clone()),
-                    )
+                    (XBinary::Finite(lo), XBinary::Finite(hi))
                 };
                 Ok(Bounds::new(out_lo, out_hi))
             }
         }
     }
 
-    fn refine_step(&self, precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
-        let mut state = self.newton_state.write();
+        let mut state = self.division_state.write();
+
+        // Determine sign and absolute endpoints
+        let lower = input_bounds.small();
+        let upper = input_bounds.large();
+        let zero = XBinary::zero();
+
+        if lower <= &zero && upper >= zero {
+            // Interval spans zero — can't compute reciprocal yet
+            *state = None;
+            return Ok(true);
+        }
+
+        let (lower_finite, upper_finite) = match (lower, &upper) {
+            (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
+            _ => {
+                *state = None;
+                return Ok(true);
+            }
+        };
+
+        let negate_result = upper_finite.mantissa().is_negative();
+        let (abs_lower, abs_upper) = if negate_result {
+            (upper_finite.neg(), lower_finite.neg())
+        } else {
+            (lower_finite, upper_finite)
+        };
+
+        // Extract stable prefix
+        let prefix_info = match extract_prefix(&abs_lower, &abs_upper) {
+            Some(info) => info,
+            None => {
+                // No useful prefix — return wide bounds, wait for inner to refine
+                *state = None;
+                return Ok(true);
+            }
+        };
+
+        // The coordinator dispatches us when our bounds are wider than its budget,
+        // which may require tighter bounds than target_width_exp implies (e.g. summing
+        // many terms). We must always make progress when dispatched.
+        //
+        // Strategy: jump to min_q in one shot when the target is finite and
+        // reasonable. Double the existing precision as a fallback for progress
+        // (handles Inf targets and cases where budget needs tighter bounds).
+        // Cap at 2×prefix_bits when uncertain bits exist.
+        let current_prec = match &*state {
+            Some(s) => s.div.recip.precision_bits,
+            None => 0,
+        };
+        let doubled = if current_prec == 0 {
+            MIN_SEED_PRECISION_BITS
+        } else {
+            sane_mul_or_max(current_prec, 2)
+        };
+
+        // Convert target to precision bits and compute min quotient bits needed.
+        // For Inf targets, fall back to doubling (one_shot_feasible = false).
+        let (min_q, one_shot_feasible) =
+            if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits() {
+                let q = required_quotient_bits(
+                    precision_bits,
+                    prefix_info.prefix_shift,
+                    &prefix_info.prefix_exponent,
+                );
+                (q, precision_bits <= crate::MAX_COMPUTATION_BITS)
+            } else {
+                (doubled, false)
+            };
+
+        let target = if prefix_info.prefix_shift > 0 {
+            let max_useful = sane_mul_or_max(prefix_info.prefix_bits, 2);
+            if one_shot_feasible {
+                min_q
+                    .max(doubled)
+                    .min(max_useful)
+                    .max(MIN_SEED_PRECISION_BITS)
+            } else {
+                doubled.min(max_useful).max(MIN_SEED_PRECISION_BITS)
+            }
+        } else if one_shot_feasible {
+            min_q.max(doubled).max(MIN_SEED_PRECISION_BITS)
+        } else {
+            doubled
+        };
 
         match &mut *state {
             None => {
-                // Cap seed precision: usize::MAX (from Inf targets) would exhaust
-                // memory. Use MIN_SEED_PRECISION_BITS as fallback for unreasonable values.
-                let seed_precision = if precision_bits <= crate::MAX_COMPUTATION_BITS {
-                    precision_bits.max(MIN_SEED_PRECISION_BITS)
-                } else {
-                    MIN_SEED_PRECISION_BITS
-                };
-                *state = try_initialize(&input_bounds, seed_precision)?;
+                // Fresh initialization
+                let recip = reciprocal_with_remainder(&prefix_info.prefix, target);
+                *state = Some(DivisionState {
+                    div: PrefixDivision {
+                        recip,
+                        prefix: prefix_info.prefix,
+                        prefix_shift: prefix_info.prefix_shift,
+                        prefix_exponent: prefix_info.prefix_exponent,
+                    },
+                    negate_result,
+                });
                 Ok(true)
             }
-            Some(s) => {
-                // Read current inner bounds and update denominators.
-                update_denominators(s, &input_bounds)?;
-
-                // One N-R step on each endpoint.
-                // TODO: With a high-precision seed, the N-R doubling may overshoot
-                // significantly. Consider capping at precision_bits rather than
-                // unconditionally doubling.
-                newton_step(&mut s.lo, &s.abs_upper);
-                newton_step(&mut s.hi, &s.abs_lower);
-                Ok(true)
+            Some(existing) => {
+                if prefix_info.prefix != existing.div.prefix
+                    || prefix_info.prefix_shift != existing.div.prefix_shift
+                    || prefix_info.prefix_exponent != existing.div.prefix_exponent
+                {
+                    // Prefix changed (inner operand refined) — new divisor, fresh division
+                    let recip = reciprocal_with_remainder(&prefix_info.prefix, target);
+                    *state = Some(DivisionState {
+                        div: PrefixDivision {
+                            recip,
+                            prefix: prefix_info.prefix,
+                            prefix_shift: prefix_info.prefix_shift,
+                            prefix_exponent: prefix_info.prefix_exponent,
+                        },
+                        negate_result,
+                    });
+                    Ok(true)
+                } else if target > existing.div.recip.precision_bits {
+                    // Same prefix, need more bits — extend via remainder carry
+                    let new_recip =
+                        extend_reciprocal(&existing.div.recip, &existing.div.prefix, target);
+                    existing.div.recip = new_recip;
+                    existing.negate_result = negate_result;
+                    Ok(true)
+                } else {
+                    // Can't improve: uncertain bits cap prevents extending further.
+                    // Need the inner operand to refine (extending the prefix).
+                    Ok(false)
+                }
             }
         }
     }
@@ -143,9 +321,6 @@ impl NodeOp for InvOp {
         true
     }
 
-    /// Sensitivity of 1/x: derivative = -1/x², so max |derivative| over
-    /// [a,b] is 1/min_abs² (worst case at the value closest to zero).
-    /// Child budget = target × min_abs².
     fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
         let min_abs = match self.inner.cached_bounds() {
             Some(b) => {
@@ -162,239 +337,32 @@ impl NodeOp for InvOp {
     }
 }
 
-/// Try to initialize Newton state from the current inner bounds.
-/// Returns `Ok(None)` if bounds span zero or are infinite (caller should retry later).
+/// Compute the minimum quotient bits Q such that the output width
+/// `2^(-Q - shift - exponent)` is at most `2^(-precision_bits)`.
 ///
-/// `seed_precision` controls the number of bits used for the initial reciprocal
-/// seed. A higher value means fewer N-R doublings to reach the target precision.
-fn try_initialize(
-    input_bounds: &Bounds,
-    seed_precision: usize,
-) -> Result<Option<NewtonState>, ComputableError> {
-    let lower = input_bounds.small();
-    let upper = input_bounds.large();
-    let zero = XBinary::zero();
-
-    if lower <= &zero && upper >= zero {
-        return Ok(None);
+/// Requires: `Q ≥ precision_bits - shift - exponent`.
+/// Clamps to `[0, MAX_COMPUTATION_BITS]`.
+fn required_quotient_bits(precision_bits: usize, shift: usize, exponent: &BigInt) -> usize {
+    let target = BigInt::from(precision_bits) - BigInt::from(shift) - exponent;
+    if target <= BigInt::zero() {
+        return 0;
     }
-    let (lower_finite, upper_finite) = match (lower, &upper) {
-        (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
-        _ => return Ok(None),
-    };
-
-    let negate_result = upper_finite.mantissa().is_negative();
-    let (abs_lower, abs_upper) = if negate_result {
-        (upper_finite.neg(), lower_finite.neg())
-    } else {
-        (lower_finite, upper_finite)
-    };
-
-    let lo = seed_reciprocal(&abs_upper, seed_precision)?;
-    let hi = seed_reciprocal(&abs_lower, seed_precision)?;
-
-    Ok(Some(NewtonState {
-        lo,
-        hi,
-        abs_lower,
-        abs_upper,
-        negate_result,
-    }))
+    match target.to_usize() {
+        Some(q) => q.min(crate::MAX_COMPUTATION_BITS),
+        None => crate::MAX_COMPUTATION_BITS,
+    }
 }
 
-/// Compute a seed reciprocal for N-R initialization at the given precision.
-fn seed_reciprocal(
-    denom: &Binary,
-    seed_precision: usize,
-) -> Result<ReciprocalApprox, ComputableError> {
-    let precision = BigInt::from(seed_precision);
-    let xb_denom = XBinary::Finite(denom.clone());
-
-    let lower_xb =
-        reciprocal_rounded_abs_extended(&xb_denom, &precision, ReciprocalRounding::Floor)?;
-    let upper_xb =
-        reciprocal_rounded_abs_extended(&xb_denom, &precision, ReciprocalRounding::Ceil)?;
-
-    let lower = match lower_xb {
-        XBinary::Finite(b) => b,
-        XBinary::NegInf | XBinary::PosInf => Binary::zero(),
-    };
-    let upper = match upper_xb {
-        XBinary::Finite(b) => b,
-        XBinary::NegInf | XBinary::PosInf => Binary::zero(),
-    };
-
-    Ok(ReciprocalApprox {
-        lower,
-        upper,
-        precision: seed_precision,
-    })
-}
-
-/// Update the stored denominators from current inner bounds.
-///
-/// When inner bounds narrow, the N-R iterates remain valid but may need
-/// their error bounds refreshed:
-/// - `abs_upper` decreases: `lo.lower` stays valid, `lo.upper` may need refresh.
-/// - `abs_lower` increases: `hi.upper` stays valid, `hi.lower` may need refresh.
-fn update_denominators(
-    state: &mut NewtonState,
-    input_bounds: &Bounds,
-) -> Result<(), ComputableError> {
-    let lower = input_bounds.small();
-    let upper = &input_bounds.large();
-
-    let (lower_finite, upper_finite) = match (lower, upper) {
-        (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
-        _ => return Ok(()), // still infinite, keep old denominators
-    };
-
-    let (new_abs_lower, new_abs_upper) = if state.negate_result {
-        (upper_finite.neg(), lower_finite.neg())
-    } else {
-        (lower_finite, upper_finite)
-    };
-
-    let one = Binary::new(BigInt::from(1_i32), BigInt::from(0_i32));
-
-    // Update abs_upper (denominator for lo sequence).
-    if new_abs_upper != state.abs_upper {
-        state.abs_upper = new_abs_upper.clone();
-
-        // lo.lower ≤ 1/old_abs_upper ≤ 1/new_abs_upper: still valid ✓
-        // lo.upper: was ≥ 1/old_abs_upper, but 1/new_abs_upper may be larger.
-        // Check: lo.upper * new_abs_upper ≥ 1?
-        if state.lo.upper.mul(&new_abs_upper) < one {
-            // lo.upper is too small. Use hi.upper as a conservative replacement.
-            // hi.upper ≥ 1/abs_lower ≥ 1/abs_upper since abs_lower ≤ abs_upper.
-            state.lo.upper = state.hi.upper.clone();
-        }
-    }
-
-    // Update abs_lower (denominator for hi sequence).
-    if new_abs_lower != state.abs_lower {
-        state.abs_lower = new_abs_lower.clone();
-
-        // hi.upper ≥ 1/old_abs_lower ≥ 1/new_abs_lower: still valid ✓
-        // hi.lower: was ≤ 1/old_abs_lower, but 1/new_abs_lower may be smaller.
-        // Check: hi.lower * new_abs_lower ≤ 1?
-        if state.hi.lower.mul(&new_abs_lower) > one {
-            // hi.lower is too large. Use lo.lower as a conservative replacement.
-            // lo.lower ≤ 1/abs_upper ≤ 1/abs_lower since abs_upper ≥ abs_lower.
-            state.hi.lower = state.lo.lower.clone();
-        }
-    }
-
-    Ok(())
-}
-
-/// Performs one Newton-Raphson iteration on a `ReciprocalApprox`.
-///
-/// For `a > 0`, the N-R map `f(x) = x * (2 - a*x)` satisfies:
-///   `f(x) - 1/a = -a*(x - 1/a)^2`
-///
-/// This means `f(x) <= 1/a` always — N-R naturally produces **lower bounds**.
-/// For the upper bound: given `x <= 1/a <= upper`, the error after one step is
-///   `|f(x) - 1/a| = a*(x - 1/a)^2 <= a*(upper - x)^2`
-/// so `upper_new = f(x) + a*(upper - x)^2` is a valid upper bound.
-///
-/// After computing the new bounds, both are truncated to `2 * precision` bits
-/// to prevent quadratic mantissa blowup, then `precision` is doubled.
-fn newton_step(approx: &mut ReciprocalApprox, denom: &Binary) {
-    let x = &approx.lower;
-
-    // gap = upper - lower
-    let gap = approx.upper.sub(x);
-
-    // x_new = x * (2 - a * x)
-    let two = Binary::new(BigInt::from(1_i32), BigInt::from(1_i32));
-    let ax = denom.mul(x);
-    let two_minus_ax = two.sub(&ax);
-    let x_new = x.mul(&two_minus_ax);
-
-    // err = a * gap^2
-    let gap_sq = gap.mul(&gap);
-    let err = denom.mul(&gap_sq);
-
-    // upper_new = x_new + err
-    let upper_new = x_new.add(&err);
-
-    // Double the precision budget for this step.
-    let new_precision = approx.precision.saturating_mul(2_usize);
-
-    // Truncate to the new precision to keep mantissa sizes bounded.
-    // Lower bound: truncate toward -∞ (floor) to stay ≤ 1/denom.
-    // Upper bound: truncate toward +∞ (ceil) to stay ≥ 1/denom.
-    let x_trunc = truncate_floor(&x_new, new_precision);
-    let upper_trunc = truncate_ceil(&upper_new, new_precision);
-
-    // Only update if bounds actually improve.
-    if x_trunc > approx.lower {
-        approx.lower = x_trunc;
-    }
-    if upper_trunc < approx.upper {
-        approx.upper = upper_trunc;
-    }
-
-    approx.precision = new_precision;
-}
-
-/// Truncate a positive `Binary` to at most `precision_bits` mantissa bits,
-/// rounding toward -∞ (floor). The result is always ≤ the input.
-fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
-    let bit_length = sane::bits_as_usize(x.mantissa().magnitude().bits());
-    let Some(shift) = bit_length
-        .checked_sub(precision_bits)
-        .filter(|&s| s > 0_usize)
-    else {
-        return x.clone();
-    };
-    let shifted = x.mantissa().magnitude() >> shift;
-
-    // For positive values, truncation toward zero IS floor.
-    // For negative values, truncation toward zero is ceil, so we need to subtract 1.
-    let has_remainder = (&shifted << shift) != *x.mantissa().magnitude();
-    let signed = if x.mantissa().is_negative() && has_remainder {
-        -BigInt::from(shifted) - BigInt::from(1_i32)
-    } else if x.mantissa().is_negative() {
-        -BigInt::from(shifted)
-    } else {
-        BigInt::from(shifted)
-    };
-
-    Binary::new(signed, x.exponent() + BigInt::from(shift))
-}
-
-/// Truncate a positive `Binary` to at most `precision_bits` mantissa bits,
-/// rounding toward +∞ (ceil). The result is always ≥ the input.
-fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
-    let bit_length = sane::bits_as_usize(x.mantissa().magnitude().bits());
-    let Some(shift) = bit_length
-        .checked_sub(precision_bits)
-        .filter(|&s| s > 0_usize)
-    else {
-        return x.clone();
-    };
-    let shifted = x.mantissa().magnitude() >> shift;
-    let has_remainder = (&shifted << shift) != *x.mantissa().magnitude();
-
-    // For positive values, truncation toward zero is floor, so add 1 if remainder.
-    // For negative values, truncation toward zero IS ceil.
-    let signed = if !x.mantissa().is_negative() && has_remainder {
-        BigInt::from(shifted) + BigInt::from(1_i32)
-    } else if x.mantissa().is_negative() {
-        -BigInt::from(shifted)
-    } else {
-        BigInt::from(shifted)
-    };
-
-    Binary::new(signed, x.exponent() + BigInt::from(shift))
+/// Saturating multiply for usize: returns `a * b` or `usize::MAX` on overflow.
+fn sane_mul_or_max(a: usize, b: usize) -> usize {
+    a.saturating_mul(b)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::binary::{Bounds, XBinary};
-    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::refinement::bounds_width_leq;
+    use crate::sane::XUsize;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
 
     #[test]

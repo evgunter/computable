@@ -8,10 +8,22 @@ The event-loop coordinator returns as soon as precision is met, but `thread::sco
 
 ---
 
+### <a id="single-cache"></a>single-cache: Investigate single-cache Node without convergence regressions
+**Experiment:** `experiment/remove-bounds-cache` branch (commit `c8c9fd8`)
+The dual cache (prefix_cache + bounds_cache) adds complexity and lock contention. Removing it speeds up pi/integer_roots benchmarks by 30-44% but regresses inv/256 by +94% and sin_Npi by +40-71% because Prefix rounding degrades Newton-Raphson convergence. Investigate whether a single cache storing exact Bounds (deriving Prefix lazily) could get both benefits — less overhead AND exact arithmetic for convergence. See EXPERIMENTS.md Experiment 13.
+
+---
+
 ## Tier 2: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="node-initiated-refinement"></a>node-initiated-refinement: Allow nodes to request refinement of their inputs
 Enable a node's `refine_step` to return a recoverable error requesting that the coordinator refine a specific input before retrying. Currently the coordinator decides which refiners to step based on demand budgets; nodes cannot signal "my input bounds are too wide, refine them first." This is needed for nth_root to handle even-degree roots of inputs overlapping with negative numbers (return a recoverable error instead of (0, ∞) bounds). **Blocks:** [nth-root-negative](#nth-root-negative)
+
+---
+
+### <a id="nth-root-target-width"></a>nth-root-target-width: Investigate using target_width_exp in nth_root refine_step
+**File:** `src/ops/nth_root.rs:105`
+Currently `nth_root`'s `refine_step` ignores `target_width_exp` and does one bisection step at a time. Other ops (sin, inv, pi) use the target to leap toward the needed precision. Investigate whether nth_root could similarly use the target to skip bisection steps or switch to a Newton-Raphson strategy when the target is far from current precision.
 
 ---
 
