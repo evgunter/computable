@@ -172,6 +172,15 @@ impl FiniteBounds {
     }
 }
 
+impl Bounds {
+    /// Returns the absolute value (magnitude) of each bound as a pair.
+    ///
+    /// For bounds [lower, upper], returns (|lower|, |upper|).
+    pub fn abs(&self) -> (UXBinary, UXBinary) {
+        (self.small().magnitude(), self.large().magnitude())
+    }
+}
+
 impl Unsigned for BigUint {}
 
 impl AbsDistance<BigInt, BigUint> for BigInt {
@@ -213,13 +222,13 @@ mod integration_tests {
     fn uxbinary_xbinary_conversion() {
         use num_bigint::BigUint;
 
-        let ub = UBinary::new(BigUint::from(5u32), BigInt::from(2));
+        let ub = UBinary::new(BigUint::from(5u32), BigInt::from(2_i32));
         let uxb = UXBinary::Finite(ub);
         let xb = XBinary::from(uxb);
 
         if let XBinary::Finite(binary) = xb {
-            assert_eq!(binary.mantissa(), &BigInt::from(5));
-            assert_eq!(binary.exponent(), &BigInt::from(2));
+            assert_eq!(binary.mantissa(), &BigInt::from(5_i32));
+            assert_eq!(binary.exponent(), &BigInt::from(2_i32));
         } else {
             panic!("expected finite value");
         }
@@ -230,7 +239,7 @@ mod integration_tests {
         let lower = xbin(5, 0);
         let width = UXBinary::Finite(UBinary::new(
             num_bigint::BigUint::from(3u32),
-            BigInt::from(0),
+            BigInt::from(0_i32),
         ));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width.clone());
@@ -257,7 +266,7 @@ mod integration_tests {
         let lower = xbin(42, 0);
         let width = UXBinary::Finite(UBinary::new(
             num_bigint::BigUint::from(0u32),
-            BigInt::from(0),
+            BigInt::from(0_i32),
         ));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width);

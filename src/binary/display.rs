@@ -77,26 +77,26 @@ mod tests {
     #[test]
     fn format_single_bit_mantissa() {
         let mantissa = BigUint::from(1u32);
-        let exponent = BigInt::from(0);
+        let exponent = BigInt::from(0_i32);
         let (formatted, adjusted_exp) = format_mantissa_with_point(&mantissa, &exponent);
         assert_eq!(formatted, "1.0");
-        assert_eq!(adjusted_exp, BigInt::from(0));
+        assert_eq!(adjusted_exp, BigInt::from(0_i32));
     }
 
     #[test]
     fn format_multi_bit_mantissa() {
         // 123 decimal = 1111011 binary (7 bits)
         let mantissa = BigUint::from(123u32);
-        let exponent = BigInt::from(5);
+        let exponent = BigInt::from(5_i32);
         let (formatted, adjusted_exp) = format_mantissa_with_point(&mantissa, &exponent);
         assert_eq!(formatted, "1.111011");
-        assert_eq!(adjusted_exp, BigInt::from(11)); // 5 + 6
+        assert_eq!(adjusted_exp, BigInt::from(11_i32)); // 5 + 6
     }
 
     #[test]
     fn format_binary_display_zero() {
-        let mantissa = BigInt::from(0);
-        let exponent = BigInt::from(42);
+        let mantissa = BigInt::from(0_i32);
+        let exponent = BigInt::from(42_i32);
         let result = format!(
             "{}",
             FormatWrapper(&mantissa, &exponent, format_binary_display)
@@ -106,8 +106,8 @@ mod tests {
 
     #[test]
     fn format_binary_display_negative() {
-        let mantissa = BigInt::from(-15); // -1111 in binary
-        let exponent = BigInt::from(3);
+        let mantissa = BigInt::from(-15_i32); // -1111 in binary
+        let exponent = BigInt::from(3_i32);
         let result = format!(
             "{}",
             FormatWrapper(&mantissa, &exponent, format_binary_display)
@@ -121,14 +121,11 @@ mod tests {
         // Old format would be: 123 * 2^5
         // New format is: 1.111011 * 2^11 (exponent adjusted by 6)
         let mantissa = BigUint::from(123u32);
-        let exponent = BigInt::from(5);
+        let exponent = BigInt::from(5_i32);
         let (formatted, adjusted_exp) = format_mantissa_with_point(&mantissa, &exponent);
 
-        println!("Old format would be: 123 * 2^5");
-        println!("New format is: {} * 2^{}", formatted, adjusted_exp);
-
         assert_eq!(formatted, "1.111011");
-        assert_eq!(adjusted_exp, BigInt::from(11));
+        assert_eq!(adjusted_exp, BigInt::from(11_i32));
     }
 
     // Helper struct for testing Display implementations

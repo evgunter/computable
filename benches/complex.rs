@@ -1,77 +1,49 @@
 mod common;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+#[cfg(not(feature = "criterion-bench"))]
+use gungraun::*;
+use std::hint::black_box;
+
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, bench_id, epsilon, precision_bits, verbose};
+use common::{balanced_sum, bench_group, bench_main, epsilon};
+#[cfg(not(feature = "criterion-bench"))]
+use computable::Bounds;
 use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 5_000;
 
-fn generate_inputs() -> Vec<(f64, f64, f64, f64)> {
-    let mut rng = StdRng::seed_from_u64(7);
-    (0..SAMPLE_COUNT)
-        .map(|_| {
-            (
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
-            )
-        })
-        .collect()
-}
+// No precision sweep: all inputs are exact constants and arithmetic preserves
+// exactness, so refinement is a no-op regardless of the requested tolerance.
+bench_group! {
+    name: complex,
+    fn bench_complex() -> Bounds {
+        let mut rng = StdRng::seed_from_u64(7);
+        let terms: Vec<Computable> = (0..SAMPLE_COUNT)
+            .map(|_| {
+                let a = rng.gen_range(-10.0_f64..10.0_f64);
+                let bv = rng.gen_range(-10.0_f64..10.0_f64);
+                let cv = rng.gen_range(-10.0_f64..10.0_f64);
+                let d = rng.gen_range(-10.0_f64..10.0_f64);
 
-fn build_terms(inputs: &[(f64, f64, f64, f64)]) -> Vec<Computable> {
-    inputs
-        .iter()
-        .map(|&(a, bv, cv, d)| {
-            let a_c = Computable::constant(Binary::from_f64(a).unwrap());
-            let b_c = Computable::constant(Binary::from_f64(bv).unwrap());
-            let c_c = Computable::constant(Binary::from_f64(cv).unwrap());
-            let d_c = Computable::constant(Binary::from_f64(d).unwrap());
+                let a_c = Computable::constant(Binary::from_f64(a).unwrap());
+                let b_c = Computable::constant(Binary::from_f64(bv).unwrap());
+                let c_c = Computable::constant(Binary::from_f64(cv).unwrap());
+                let d_c = Computable::constant(Binary::from_f64(d).unwrap());
 
-            let mixed = (a_c.clone() + b_c.clone()) * (c_c.clone() - d_c.clone());
-            let squared = c_c.clone() * c_c + d_c.clone() * d_c;
-            a_c * b_c + squared + mixed
-        })
-        .collect()
-}
-
-fn bench_complex(c: &mut Criterion) {
-    let inputs = generate_inputs();
-
-    let mut group = c.benchmark_group("complex");
-    group.sample_size(10);
-
-    for &bits in precision_bits() {
-        let eps = epsilon(bits);
-
-        if verbose() {
-            let bounds = balanced_sum(build_terms(&inputs))
-                .refine_to_default(eps)
-                .expect("refine_to should succeed");
-            eprintln!("[complex/{bits}] width: {}", bounds.width());
-        }
-
-        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
-            b.iter(|| {
-                black_box(
-                    balanced_sum(build_terms(&inputs))
-                        .refine_to_default(*eps)
-                        .expect("refine_to should succeed"),
-                )
+                let mixed = (a_c.clone() + b_c.clone()) * (c_c.clone() - d_c.clone());
+                let squared = c_c.clone() * c_c + d_c.clone() * d_c;
+                a_c * b_c + squared + mixed
             })
-        });
+            .collect();
+
+        black_box(
+            balanced_sum(terms)
+                .refine_to_default(epsilon(1))
+                .expect("should succeed"),
+        )
     }
-
-    group.finish();
 }
 
-criterion_group! {
-    name = benches;
-    config = Criterion::default();
-    targets = bench_complex
-}
-criterion_main!(benches);
+bench_main!(complex);

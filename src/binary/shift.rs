@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn shift_mantissa_chunks_large_shift() {
-        let mantissa = BigInt::from(1);
+        let mantissa = BigInt::from(1_i32);
         let shift = BigUint::from(128u32);
         let chunk_limit = BigUint::from(64u32);
         let chunked = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, &chunk_limit);
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn shift_zero_returns_original() {
-        let mantissa = BigInt::from(42);
+        let mantissa = BigInt::from(42_i32);
         let shift = BigUint::zero();
         let chunk_limit = BigUint::from(64u32);
         let result = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, &chunk_limit);
@@ -81,10 +81,10 @@ mod tests {
 
     #[test]
     fn shift_within_single_chunk() {
-        let mantissa = BigInt::from(1);
+        let mantissa = BigInt::from(1_i32);
         let shift = BigUint::from(10u32);
         let chunk_limit = BigUint::from(64u32);
         let result = shift_mantissa_chunked::<BigInt>(&mantissa, &shift, &chunk_limit);
-        assert_eq!(result, BigInt::from(1024)); // 1 << 10 = 1024
+        assert_eq!(result, BigInt::from(1024_i32)); // 1 << 10 = 1024
     }
 }

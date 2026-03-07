@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, Mul, Neg, Shl, Shr, Sub};
 
 use num_traits::{Signed, Zero};
 
@@ -180,6 +180,30 @@ impl Mul for XBinary {
     }
 }
 
+impl Shl<u32> for XBinary {
+    type Output = Self;
+
+    fn shl(self, rhs: u32) -> Self::Output {
+        match self {
+            Self::NegInf => Self::NegInf,
+            Self::PosInf => Self::PosInf,
+            Self::Finite(v) => Self::Finite(v << rhs),
+        }
+    }
+}
+
+impl Shr<u32> for XBinary {
+    type Output = Self;
+
+    fn shr(self, rhs: u32) -> Self::Output {
+        match self {
+            Self::NegInf => Self::NegInf,
+            Self::PosInf => Self::PosInf,
+            Self::Finite(v) => Self::Finite(v >> rhs),
+        }
+    }
+}
+
 impl num_traits::Zero for XBinary {
     fn zero() -> Self {
         XBinary::zero()
@@ -254,8 +278,8 @@ mod tests {
         let result = XBinary::from_f64(1.5).expect("should succeed");
         if let XBinary::Finite(value) = result {
             // 1.5 = 3 * 2^-1
-            assert_eq!(value.mantissa(), &BigInt::from(3));
-            assert_eq!(value.exponent(), &BigInt::from(-1));
+            assert_eq!(value.mantissa(), &BigInt::from(3_i32));
+            assert_eq!(value.exponent(), &BigInt::from(-1_i32));
         } else {
             panic!("expected finite value");
         }

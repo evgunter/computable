@@ -1,57 +1,36 @@
 mod common;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+#[cfg(not(feature = "criterion-bench"))]
+use gungraun::*;
+use std::hint::black_box;
+
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, bench_id, epsilon, precision_bits, verbose};
+use common::{balanced_sum, bench_group, bench_main, epsilon};
+#[cfg(not(feature = "criterion-bench"))]
+use computable::Bounds;
 use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 100;
 
-fn build_terms(inputs: &[f64]) -> Vec<Computable> {
-    inputs
-        .iter()
-        .map(|&x| Computable::constant(Binary::from_f64(x).unwrap()).inv())
-        .collect()
-}
-
-fn bench_inv(c: &mut Criterion) {
-    let mut rng = StdRng::seed_from_u64(7);
-    let inputs: Vec<f64> = (0..SAMPLE_COUNT)
-        .map(|_| rng.gen_range(0.1..100.0))
-        .collect();
-
-    let mut group = c.benchmark_group("inv");
-    group.sample_size(10);
-
-    for &bits in precision_bits() {
-        let eps = epsilon(bits);
-
-        if verbose() {
-            let bounds = balanced_sum(build_terms(&inputs))
-                .refine_to_default(eps)
-                .expect("refine_to should succeed");
-            eprintln!("[inv/{bits}] width: {}", bounds.width());
-        }
-
-        group.bench_with_input(bench_id(bits), &eps, |b, eps| {
-            b.iter(|| {
-                black_box(
-                    balanced_sum(build_terms(&inputs))
-                        .refine_to_default(*eps)
-                        .expect("refine_to should succeed"),
-                )
+bench_group! {
+    name: inv,
+    fn bench_inv(bits) -> Bounds {
+        let mut rng = StdRng::seed_from_u64(7);
+        let terms: Vec<Computable> = (0..SAMPLE_COUNT)
+            .map(|_| {
+                let x = rng.gen_range(0.1_f64..100.0_f64);
+                Computable::constant(Binary::from_f64(x).unwrap()).inv()
             })
-        });
+            .collect();
+
+        black_box(
+            balanced_sum(terms)
+                .refine_to_default(epsilon(bits))
+                .expect("should succeed"),
+        )
     }
-
-    group.finish();
 }
 
-criterion_group! {
-    name = benches;
-    config = Criterion::default();
-    targets = bench_inv
-}
-criterion_main!(benches);
+bench_main!(inv);

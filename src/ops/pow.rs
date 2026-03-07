@@ -7,7 +7,10 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use crate::binary::{Bounds, XBinary};
+use num_bigint::{BigInt, BigUint};
+use num_traits::Zero;
+
+use crate::binary::{Bounds, UBinary, UXBinary, XBinary};
 use crate::binary_utils::power::{is_negative, is_positive, xbinary_max, xbinary_pow};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -53,7 +56,7 @@ impl NodeOp for PowOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, _precision_bits: usize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: i64) -> Result<bool, ComputableError> {
         // This is a passive combinator - it doesn't refine, just propagates bounds
         Ok(false)
     }
@@ -64,6 +67,59 @@ impl NodeOp for PowOp {
 
     fn is_refiner(&self) -> bool {
         false
+    }
+
+    /// Max derivative of x^n over [lower, upper] is n · max_abs^(n-1).
+    /// Child budget = target / (n · max_abs^(n-1)).
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+        let n = self.exponent.get();
+        if n == 1 {
+            return target_width.clone();
+        }
+        let max_abs = match self.inner.cached_bounds() {
+            Some(b) => {
+                let (lo, hi) = b.abs();
+                std::cmp::max(lo, hi)
+            }
+            None => return target_width.clone(),
+        };
+        // Compute max_abs^(n-1) via exponentiation by squaring.
+        let power = uxbinary_pow(&max_abs, n - 1);
+        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), BigInt::zero()));
+        let denominator = n_ux.mul(&power);
+        target_width.div_floor(&denominator)
+    }
+
+    fn budget_depends_on_bounds(&self) -> bool {
+        self.exponent.get() > 1
+    }
+}
+
+/// Computes base^exp for UXBinary via exponentiation by squaring.
+pub(crate) fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
+    if exp == 0 {
+        return UXBinary::Finite(UBinary::new(BigUint::from(1u32), BigInt::zero()));
+    }
+    match base {
+        UXBinary::Inf => UXBinary::Inf,
+        UXBinary::Finite(b) => {
+            if b.mantissa().is_zero() {
+                return UXBinary::zero();
+            }
+            let mut result = UBinary::new(BigUint::from(1u32), BigInt::zero());
+            let mut base_val = b.clone();
+            let mut e = exp;
+            while e > 0 {
+                if e & 1 == 1 {
+                    result = result.mul(&base_val);
+                }
+                if e > 1 {
+                    base_val = base_val.mul(&base_val);
+                }
+                e >>= 1;
+            }
+            UXBinary::Finite(result)
+        }
     }
 }
 

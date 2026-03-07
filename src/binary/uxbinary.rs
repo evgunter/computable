@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Mul, Shl, Shr, Sub};
 
 use num_traits::Zero;
 
@@ -62,6 +62,13 @@ impl UXBinary {
     }
 
     /// Multiplies two extended unsigned binary numbers.
+    ///
+    /// `0 * Inf = 0` is valid here because UXBinary values represent bounds
+    /// (widths), not instantiated infinite quantities. A zero-width factor
+    /// means the corresponding dimension contributes no uncertainty, regardless
+    /// of the other factor's width. If UXBinary is ever used for values where
+    /// `0 * Inf` should be indeterminate (cf. `detected_computable_with_infinite_value!`),
+    /// this convention would need to change.
     pub fn mul(&self, other: &Self) -> Self {
         use UXBinary::{Finite, Inf};
         // 0 * anything = 0 (including 0 * infinity)
@@ -72,6 +79,31 @@ impl UXBinary {
             (Finite(lhs), Finite(rhs)) => Finite(lhs.mul(rhs)),
             // PosInf * nonzero = PosInf
             (Inf, _) | (_, Inf) => Inf,
+        }
+    }
+
+    /// Conservative floor division: returns a value ≤ self / other.
+    ///
+    /// Special cases follow interval arithmetic conventions for demand budgets:
+    /// - finite / Inf = 0 (dividing by an infinitely large value)
+    /// - Inf / finite(nonzero) = Inf
+    /// - nonzero / zero = Inf (child has zero effect, so any width is fine)
+    /// - zero / anything = zero
+    pub fn div_floor(&self, other: &Self) -> Self {
+        use UXBinary::{Finite, Inf};
+        if self.is_zero() {
+            return Self::zero();
+        }
+        match (self, other) {
+            (_, Inf) => Self::zero(),
+            (Inf, _) => Inf,
+            (Finite(n), Finite(d)) => {
+                if d.mantissa().is_zero() {
+                    Inf // nonzero / 0 → Inf
+                } else {
+                    Finite(n.div_floor(d))
+                }
+            }
         }
     }
 
@@ -136,6 +168,28 @@ impl Mul for UXBinary {
 
     fn mul(self, rhs: Self) -> Self::Output {
         UXBinary::mul(&self, &rhs)
+    }
+}
+
+impl Shl<u32> for UXBinary {
+    type Output = Self;
+
+    fn shl(self, rhs: u32) -> Self::Output {
+        match self {
+            Self::Inf => Self::Inf,
+            Self::Finite(v) => Self::Finite(v << rhs),
+        }
+    }
+}
+
+impl Shr<u32> for UXBinary {
+    type Output = Self;
+
+    fn shr(self, rhs: u32) -> Self::Output {
+        match self {
+            Self::Inf => Self::Inf,
+            Self::Finite(v) => Self::Finite(v >> rhs),
+        }
     }
 }
 
@@ -245,19 +299,19 @@ mod tests {
 
         // Negative finite
         let neg_finite = XBinary::Finite(bin(-5, 2));
-        let result = UXBinary::try_from_xbinary(&neg_finite);
-        assert!(result.is_err());
+        let neg_result = UXBinary::try_from_xbinary(&neg_finite);
+        assert!(neg_result.is_err());
 
         // Positive infinity
         let pos_inf = XBinary::PosInf;
-        let result = UXBinary::try_from_xbinary(&pos_inf);
-        assert!(result.is_ok());
-        assert_eq!(result.expect("should succeed"), UXBinary::Inf);
+        let inf_result = UXBinary::try_from_xbinary(&pos_inf);
+        assert!(inf_result.is_ok());
+        assert_eq!(inf_result.expect("should succeed"), UXBinary::Inf);
 
         // Negative infinity
         let neg_inf = XBinary::NegInf;
-        let result = UXBinary::try_from_xbinary(&neg_inf);
-        assert!(result.is_err());
+        let neg_inf_result = UXBinary::try_from_xbinary(&neg_inf);
+        assert!(neg_inf_result.is_err());
     }
 
     #[test]
@@ -279,12 +333,12 @@ mod tests {
         assert_eq!(width, UXBinary::Finite(ubin(1, 1)));
 
         // Equal bounds
-        let width = one.clone().abs_distance(one.clone());
-        assert_eq!(width, UXBinary::zero());
+        let width_equal = one.clone().abs_distance(one.clone());
+        assert_eq!(width_equal, UXBinary::zero());
 
         // Swapped (lower > upper) - still returns absolute value
-        let width = three.abs_distance(one);
-        assert_eq!(width, UXBinary::Finite(ubin(1, 1)));
+        let width_swapped = three.abs_distance(one);
+        assert_eq!(width_swapped, UXBinary::Finite(ubin(1, 1)));
     }
 
     #[test]

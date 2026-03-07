@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Mul, Shl, Shr, Sub};
 
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
@@ -89,6 +89,32 @@ impl UBinary {
         Self::normalize(mantissa, exponent)
     }
 
+    /// Conservative floor division: returns a value ≤ self / other.
+    ///
+    /// The result is a lower bound on the true quotient, with precision
+    /// proportional to the divisor's mantissa size.
+    ///
+    /// # Precondition
+    ///
+    /// The denominator must be nonzero.
+    pub fn div_floor(&self, other: &Self) -> Self {
+        debug_assert!(
+            !other.mantissa.is_zero(),
+            "div_floor: denominator must be nonzero"
+        );
+        if self.mantissa.is_zero() {
+            return Self::zero();
+        }
+        // a / b = (m_a * 2^e_a) / (m_b * 2^e_b) = (m_a / m_b) * 2^(e_a - e_b)
+        // Shift numerator left until quotient has enough bits for a
+        // meaningful result (at least 1 bit, i.e. quotient >= 1).
+        let extra_bits = other.mantissa.bits();
+        let shifted_num = &self.mantissa << extra_bits;
+        let quotient = shifted_num / &other.mantissa;
+        let exponent = &self.exponent - &other.exponent - BigInt::from(extra_bits);
+        Self::new(quotient, exponent)
+    }
+
     /// Normalizes the representation by factoring out powers of 2 from the mantissa.
     fn normalize(mut mantissa: BigUint, mut exponent: BigInt) -> Self {
         if mantissa.is_zero() {
@@ -98,9 +124,10 @@ impl UBinary {
             };
         }
 
-        while (&mantissa % 2u32).is_zero() {
-            mantissa /= 2u32;
-            exponent += 1_i32;
+        if let Some(tz_u64) = mantissa.trailing_zeros() {
+            let tz = crate::sane::bits_as_usize(tz_u64);
+            mantissa >>= tz;
+            exponent += BigInt::from(tz);
         }
 
         Self { mantissa, exponent }
@@ -181,6 +208,24 @@ impl Mul for UBinary {
     }
 }
 
+impl Shl<u32> for UBinary {
+    type Output = Self;
+
+    #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
+    fn shl(self, rhs: u32) -> Self::Output {
+        Self::new(self.mantissa, self.exponent + BigInt::from(rhs))
+    }
+}
+
+impl Shr<u32> for UBinary {
+    type Output = Self;
+
+    #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
+    fn shr(self, rhs: u32) -> Self::Output {
+        Self::new(self.mantissa, self.exponent - BigInt::from(rhs))
+    }
+}
+
 impl Unsigned for UBinary {}
 
 impl fmt::Display for UBinary {
@@ -198,12 +243,12 @@ mod tests {
     fn ubinary_normalizes_even_mantissa() {
         let value = ubin(8, 0);
         assert_eq!(value.mantissa(), &BigUint::from(1u32));
-        assert_eq!(value.exponent(), &BigInt::from(3));
+        assert_eq!(value.exponent(), &BigInt::from(3_i32));
     }
 
     #[test]
     fn ubinary_zero_uses_zero_exponent() {
-        let value = UBinary::new(BigUint::zero(), BigInt::from(42));
+        let value = UBinary::new(BigUint::zero(), BigInt::from(42_i32));
         assert_eq!(value.mantissa(), &BigUint::zero());
         assert_eq!(value.exponent(), &BigInt::zero());
     }
@@ -246,19 +291,19 @@ mod tests {
         assert!(result.is_ok());
         let ubinary = result.expect("should succeed");
         assert_eq!(ubinary.mantissa(), &BigUint::from(5u32));
-        assert_eq!(ubinary.exponent(), &BigInt::from(2));
+        assert_eq!(ubinary.exponent(), &BigInt::from(2_i32));
 
         let negative = bin(-5, 2);
-        let result = UBinary::try_from_binary(&negative);
-        assert!(result.is_err());
+        let neg_result = UBinary::try_from_binary(&negative);
+        assert!(neg_result.is_err());
     }
 
     #[test]
     fn ubinary_to_binary_works() {
         let ubinary = ubin(7, 3);
         let binary = ubinary.to_binary();
-        assert_eq!(binary.mantissa(), &BigInt::from(7));
-        assert_eq!(binary.exponent(), &BigInt::from(3));
+        assert_eq!(binary.mantissa(), &BigInt::from(7_i32));
+        assert_eq!(binary.exponent(), &BigInt::from(3_i32));
     }
 
     #[test]

@@ -10,4 +10,5 @@
 - To reiterate: code correctness and quality is the most important concern here.
 - Include a `Co-authored-by: <agent name>` trailer on commits you create (e.g., `Co-authored-by: Codex`).
 - Always run `cargo test` before completing a task. Run `cargo clippy && cargo fmt` before creating a pull request.
+- CI runs on GitHub Actions (`.github/workflows/ci.yml`). The `check` job runs fmt, clippy, and tests on ubuntu-latest. The `bench` job runs gungraun (instruction-count) benchmarks under valgrind on Linux. Benchmarks use `gungraun` (v0.17.2, formerly iai-callgrind) with `harness = false`; they compile everywhere but only produce results on Linux with valgrind installed.
 - If the repo state starts out as dirty or you have any other reason to believe another agent might be working in parallel with you, do your work in a new git worktree. When you're done, clean up the worktree and either (a) if you're confident the task was completed correctly, merge it into main; or (b) report the branch you were working on and its status.

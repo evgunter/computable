@@ -15,7 +15,7 @@ use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
-use crate::refinement::{RefinementGraph, XUsize, bounds_width_leq};
+use crate::refinement::{RefinementGraph, XUsize, prefix_width_leq};
 
 use parking_lot::RwLock;
 
@@ -84,9 +84,9 @@ impl Computable {
         tolerance_exp: XUsize,
     ) -> Result<Bounds, ComputableError> {
         loop {
-            let bounds = self.node.get_bounds()?;
-            if bounds_width_leq(&bounds, &tolerance_exp) {
-                return Ok(bounds);
+            let prefix = self.node.get_prefix()?;
+            if prefix_width_leq(&prefix, &tolerance_exp) {
+                return Ok(prefix.to_bounds());
             }
 
             let mut state_guard = self.node.refinement.state.lock();
@@ -303,7 +303,7 @@ mod tests {
     use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
-        Computable::constant(bin(value_int as i64, 0))
+        Computable::constant(bin(i64::try_from(value_int).expect("value fits in i64"), 0))
             .nth_root(NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
@@ -331,8 +331,8 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = bounds.large();
-        let upper = unwrap_finite(&upper);
+        let upper_xb = bounds.large();
+        let upper = unwrap_finite(&upper_xb);
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");
@@ -357,8 +357,8 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = bounds.large();
-        let upper = unwrap_finite(&upper);
+        let upper_xb = bounds.large();
+        let upper = unwrap_finite(&upper_xb);
         let expected = 2.0_f64 * 2.0_f64.sqrt();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");

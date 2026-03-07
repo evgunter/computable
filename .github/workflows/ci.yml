@@ -1,0 +1,206 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets
+      - run: cargo test
+
+  bench:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y valgrind
+      - run: cargo install gungraun-runner --version 0.17.2
+
+      - name: Restore benchmark baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: target/gungraun
+          key: gungraun-baseline-${{ github.sha }}
+          restore-keys: gungraun-baseline-
+
+      - name: Run benchmarks
+        run: |
+          ulimit -s 65536
+          cargo bench --bench summation --bench complex --bench integer_roots \
+            --bench inv --bench sin --bench pi --bench asymmetric_convergence \
+            -- --output-format=json 2>bench_stderr.log | jq -s '
+              [ .[] | {
+                module_path, function_name, id,
+                ir_old: (
+                  .profiles[]?
+                  | select(.tool == "Callgrind")
+                  | .summaries.total.summary.Callgrind.Ir.metrics
+                  | if .Both then .Both[0] else null end
+                ),
+                ir_new: (
+                  .profiles[]?
+                  | select(.tool == "Callgrind")
+                  | .summaries.total.summary.Callgrind.Ir.metrics
+                  | if .Both then .Both[1] elif .Left then .Left else null end
+                )
+              } ]' > bench_results.json
+
+      - name: Save benchmark baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: target/gungraun
+          key: gungraun-baseline-${{ github.sha }}
+
+      - name: Store benchmark history
+        if: github.ref == 'refs/heads/main'
+        run: |
+          SHA="${{ github.sha }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin benchmark-data
+          git worktree add /tmp/bench-data origin/benchmark-data
+          mkdir -p /tmp/bench-data/results
+          cp bench_results.json "/tmp/bench-data/results/${SHA}.json"
+          cp bench_results.json /tmp/bench-data/results/latest.json
+          cd /tmp/bench-data
+          git add results/
+          git commit -m "Benchmark: ${SHA:0:8}"
+          git push origin HEAD:benchmark-data
+
+      - name: Compare against baseline
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/compare_benchmarks.py bench_results.json \
+            --pr ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }}
+
+  time-bench:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: time-bench
+      - name: Install hyperfine
+        run: |
+          wget -qO /tmp/hyperfine.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i /tmp/hyperfine.deb
+
+      - name: Build PR binaries
+        run: |
+          cargo bench --features time-bench --no-run 2>&1
+          mkdir -p pr-bins
+          BENCHES="integer_roots inv sin pi asymmetric_convergence summation complex"
+          for bench in $BENCHES; do
+            bin=$(find target/release/deps -name "${bench}-*" -executable ! -name "*.d" | head -1)
+            cp "$bin" "pr-bins/${bench}"
+          done
+
+      - name: Build main binaries
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          git worktree add /tmp/main-build "${{ github.event.pull_request.base.sha }}"
+          cd /tmp/main-build
+          if ! cargo bench --features time-bench --no-run 2>&1; then
+            echo "::warning::Base branch does not support time-bench feature, skipping comparison"
+            exit 0
+          fi
+          mkdir -p "${{ github.workspace }}/main-bins"
+          BENCHES="integer_roots inv sin pi asymmetric_convergence summation complex"
+          for bench in $BENCHES; do
+            bin=$(find target/release/deps -name "${bench}-*" -executable ! -name "*.d" | head -1)
+            if [ -n "$bin" ]; then
+              cp "$bin" "${{ github.workspace }}/main-bins/${bench}"
+            fi
+          done
+
+      - name: Run benchmarks
+        run: |
+          mkdir -p results
+          SWEEP="integer_roots inv sin pi asymmetric_convergence"
+          NO_SWEEP="summation complex"
+          HAS_MAIN=false
+          if [ -d main-bins ] && [ -n "$(ls -A main-bins 2>/dev/null)" ]; then
+            HAS_MAIN=true
+          fi
+
+          if [ "$HAS_MAIN" = "true" ]; then
+            for bench in $SWEEP; do
+              for bits in 1 4 16 64 256; do
+                hyperfine --export-json "results/${bench}_${bits}.json" \
+                  --warmup 3 --runs 10 \
+                  "./main-bins/${bench} ${bits}" "./pr-bins/${bench} ${bits}"
+              done
+            done
+            for bench in $NO_SWEEP; do
+              hyperfine --export-json "results/${bench}.json" \
+                --warmup 3 --runs 10 \
+                "./main-bins/${bench}" "./pr-bins/${bench}"
+            done
+          else
+            for bench in $SWEEP; do
+              for bits in 1 4 16 64 256; do
+                hyperfine --export-json "results/${bench}_${bits}.json" \
+                  --warmup 3 --runs 10 \
+                  "./pr-bins/${bench} ${bits}"
+              done
+            done
+            for bench in $NO_SWEEP; do
+              hyperfine --export-json "results/${bench}.json" \
+                --warmup 3 --runs 10 \
+                "./pr-bins/${bench}"
+            done
+          fi
+
+      - name: Store benchmark history
+        if: github.ref == 'refs/heads/main'
+        run: |
+          SHA="${{ github.sha }}"
+          python3 .github/scripts/compare_time_benchmarks.py \
+            --mode store --results-dir results > time_results.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin benchmark-data
+          git worktree add /tmp/bench-data origin/benchmark-data
+          mkdir -p /tmp/bench-data/time-results
+          cp time_results.json "/tmp/bench-data/time-results/${SHA}.json"
+          cp time_results.json /tmp/bench-data/time-results/latest.json
+          cd /tmp/bench-data
+          git add time-results/
+          git commit -m "Time benchmark: ${SHA:0:8}"
+          git push origin HEAD:benchmark-data
+
+      - name: Compare and comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -d main-bins ] && [ -n "$(ls -A main-bins 2>/dev/null)" ]; then
+            python3 .github/scripts/compare_time_benchmarks.py \
+              --mode pr --results-dir results \
+              --pr ${{ github.event.pull_request.number }} \
+              --repo ${{ github.repository }}
+          else
+            echo "Skipping comparison: main binaries not available (base branch may lack time-bench feature)"
+          fi
