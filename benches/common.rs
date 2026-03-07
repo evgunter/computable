@@ -183,7 +183,11 @@ macro_rules! bench_main {
     // Without valgrind_args.
     ($($group:ident),+ $(,)?) => {
         #[cfg(not(any(feature = "criterion-bench", feature = "time-bench")))]
-        main!(library_benchmark_groups = $($group),+);
+        main!(
+            config = LibraryBenchmarkConfig::default()
+                .valgrind_args(["--fair-sched=yes"]);
+            library_benchmark_groups = $($group),+
+        );
 
         #[cfg(feature = "criterion-bench")]
         ::criterion::criterion_group!(benches, $($group),+);
