@@ -1,5 +1,21 @@
 # TODOs - Ranked by Ease of Completion
 
+## Tier 0: Easy (Unblocked)
+
+### <a id="op-constructors"></a>op-constructors: Give ops proper constructors so callers don't couple to internal structure
+**File:** `src/computable.rs`
+`Computable::sin` currently reaches into `SinOp`, `InvOp`, `NthRootOp` etc. to construct them with internal `RwLock` fields. Each op should expose a constructor (e.g., `SinOp::new(inner, pi_node)`) that encapsulates initialization, so callers only depend on the public API.
+
+---
+
+### <a id="incremental-arctan"></a>incremental-arctan: Cache arctan Taylor series intermediate state for incremental computation
+**File:** `src/ops/pi.rs`
+**Prior attempt:** `mng/pi-no-double` branch (commit `7de0fcd`)
+An `ArctanCache` struct was added to store partial sums and k-power state so additional Taylor terms could be appended in O(delta) instead of recomputing from scratch. The cache was invalidated and rebuilt whenever `precision_bits` increased past the cached precision. In practice, `num_terms` and `precision_bits` increase together (since `precision_bits_for_num_terms` is monotonic), so the cache was invalidated on nearly every refinement step — paying management overhead on top of the same O(N) computation. This caused +80–490% regressions on pi-related benchmarks at higher precision levels.
+A working approach needs to avoid cache invalidation entirely. One idea: compute all terms at a fixed high precision from the start (or use a precision that only grows in large steps), so the cache is extended incrementally without rebuilds.
+
+---
+
 ## Tier 1: Medium (Unblocked)
 
 ### <a id="kill-slow-refiners"></a>kill-slow-refiners: Kill outstanding refiners once precision is achieved

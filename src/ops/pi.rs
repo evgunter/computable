@@ -148,10 +148,12 @@ impl NodeOp for PiOp {
             }
         }
 
-        // Fall through: double the number of terms (handles Inf / large targets)
-        let current = *num_terms;
-        *num_terms = crate::sane_arithmetic!(current; current * 2).max(1_usize);
-        Ok(true)
+        // With per-refiner budgets, the leap formula always produces needed > num_terms
+        // when the coordinator dispatches (otherwise the refiner would have been skipped).
+        unreachable!(
+            "PiOp: leap did not advance; target_width_exp={:?}, num_terms={}",
+            target_width_exp, *num_terms
+        )
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
