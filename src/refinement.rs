@@ -926,11 +926,11 @@ mod tests {
         let expected = xbin(1, 0);
         let upper = bounds.large();
 
-        assert!(bounds.small() <= &expected && &expected <= &upper);
+        assert!(bounds.small() <= &expected && expected <= upper);
         assert!(bounds_width_leq(&bounds, &tolerance_exp));
         let refined_bounds = computable.bounds().expect("bounds should succeed");
         let refined_upper = refined_bounds.large();
-        assert!(refined_bounds.small() <= &expected && &expected <= &refined_upper);
+        assert!(refined_bounds.small() <= &expected && expected <= refined_upper);
     }
 
     #[test]
