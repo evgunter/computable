@@ -246,7 +246,7 @@ fn refine_node_to_precision(
         let bounds = node.get_bounds()?;
         match bounds.width() {
             UXBinary::Finite(w) if *w <= tolerance => return Ok(()),
-            _ => {}
+            UXBinary::Finite(_) | UXBinary::Inf => {}
         }
         let target_exp = XIsize::Finite(
             isize::try_from(refine_precision)
