@@ -16,7 +16,7 @@ use crate::binary::{
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane;
+use crate::sane::{self, XIsize, XUsize};
 
 /// Minimum seed precision bits for Newton-Raphson initialization.
 ///
@@ -104,20 +104,17 @@ impl NodeOp for InvOp {
         }
     }
 
-    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.newton_state.write();
 
         match &mut *state {
             None => {
-                // Convert target to seed precision. Use absolute value of target
-                // (negative exponent = high precision). Cap at MAX_COMPUTATION_BITS.
-                let raw_precision =
-                    usize::try_from(target_width_exp.unsigned_abs()).unwrap_or(usize::MAX);
-                let seed_precision = if raw_precision <= crate::MAX_COMPUTATION_BITS {
-                    raw_precision.max(MIN_SEED_PRECISION_BITS)
-                } else {
-                    MIN_SEED_PRECISION_BITS
+                let seed_precision = match target_width_exp.to_precision_bits() {
+                    XUsize::Finite(bits) if bits <= crate::MAX_COMPUTATION_BITS => {
+                        bits.max(MIN_SEED_PRECISION_BITS)
+                    }
+                    XUsize::Finite(_) | XUsize::Inf => MIN_SEED_PRECISION_BITS,
                 };
                 *state = try_initialize(&input_bounds, seed_precision)?;
                 Ok(true)
@@ -398,7 +395,8 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
 #[cfg(test)]
 mod tests {
     use crate::binary::{Bounds, XBinary};
-    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::refinement::bounds_width_leq;
+    use crate::sane::XUsize;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
 
     #[test]

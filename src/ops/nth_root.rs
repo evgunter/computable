@@ -38,6 +38,7 @@ use crate::binary_utils::bisection::{
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::sane::XIsize;
 
 /// N-th root operation with binary search refinement.
 ///
@@ -102,7 +103,7 @@ impl NodeOp for NthRootOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, target_width_exp: i64) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
         // Ensure bisection state is initialized (compute_bounds is always called
         // before refine_step by the coordinator, but be defensive).
         {
@@ -289,7 +290,8 @@ fn initialize_nth_root_bisection_state(
 mod tests {
     use super::*;
     use crate::computable::Computable;
-    use crate::refinement::{XUsize, bounds_width_leq};
+    use crate::refinement::bounds_width_leq;
+    use crate::sane::XUsize;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
     /// Helper to create NonZeroU32 from a literal in tests.

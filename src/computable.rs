@@ -15,7 +15,8 @@ use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
-use crate::refinement::{RefinementGraph, XUsize, prefix_width_leq};
+use crate::refinement::{RefinementGraph, prefix_width_leq};
+use crate::sane::XUsize;
 
 use parking_lot::RwLock;
 
@@ -299,7 +300,7 @@ impl std::ops::Div for Computable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::refinement::XUsize;
+    use crate::sane::XUsize;
     use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
