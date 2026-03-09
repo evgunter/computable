@@ -1008,26 +1008,37 @@ fn taylor_sin_bounds_rational(
     }
 
     // sum = numerator * 2^common_exp / common_factorial
-    let common_exp_big = BigInt::from(common_exp);
     let (sum_lo, sum_hi) = divide_bigint_directed(
         &numerator,
-        &common_exp_big,
+        common_exp,
         &common_factorial,
         target_precision,
     );
 
     // Error bound: |x|^(2n+1) / (2n+1)!
     power_m *= &m_sq; // advance to m^(2n+1)
-    let error_exp = BigInt::from(e * (n_i64 * 2 + 1));
+    let two_n = n_i64.checked_mul(2).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "2n overflow in taylor_sin_bounds_rational"
+        )
+    });
+    let two_n_plus_1 = two_n.checked_add(1).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "2n+1 overflow in taylor_sin_bounds_rational"
+        )
+    });
+    let error_exp = e.checked_mul(two_n_plus_1).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "error exponent overflow in taylor_sin_bounds_rational"
+        )
+    });
 
-    let two_n = n_i64 * 2;
-    let two_n_plus_1 = two_n + 1;
     let error_factorial = &common_factorial * two_n * two_n_plus_1;
 
     let abs_power_m = BigInt::from(power_m.magnitude().clone());
     let (_, error) = divide_bigint_directed(
         &abs_power_m,
-        &error_exp,
+        error_exp,
         &error_factorial,
         target_precision,
     );
@@ -1045,7 +1056,7 @@ fn taylor_sin_bounds_rational(
 /// magnitude without losing precision.
 fn divide_bigint_directed(
     numerator: &BigInt,
-    exponent: &BigInt,
+    exponent: i64,
     denominator: &BigInt,
     target_precision: usize,
 ) -> (Binary, Binary) {
@@ -1092,12 +1103,12 @@ fn divide_bigint_directed(
     // For ceil (toward +inf):
     //   positive: if has_remainder, add 1 to quotient (round away from zero = toward +inf)
     //   negative: use quotient as-is (truncation = ceil for negative)
-    let result_exp = {
-        let result_exp_bi = exponent - BigInt::from(extra_shift);
-        result_exp_bi.to_i64().unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in divide_bigint_directed")
-        })
-    };
+    let extra_shift_i64 = i64::try_from(extra_shift).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("extra_shift exceeds i64 in divide_bigint_directed")
+    });
+    let result_exp = exponent.checked_sub(extra_shift_i64).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!("exponent overflow in divide_bigint_directed")
+    });
 
     let floor_quotient = if is_negative && has_remainder {
         &quotient + 1u32
