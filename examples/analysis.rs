@@ -410,7 +410,10 @@ fn pi_analysis() {
         let duration = start.elapsed();
         let width = upper.sub(&lower);
         let sum = lower.add(&upper);
-        let mid = Binary::new(sum.mantissa().clone(), sum.exponent().checked_sub(1).expect("exponent overflow"));
+        let mid = Binary::new(
+            sum.mantissa().clone(),
+            sum.exponent().checked_sub(1).expect("exponent overflow"),
+        );
         println!(
             "  {bits:>4} bits: {duration:>12?}  width: {:<30}  midpoint: {mid}",
             width
@@ -434,9 +437,7 @@ fn pi_analysis() {
         (
             "pi/2",
             std::f64::consts::FRAC_PI_2,
-            Box::new(|| {
-                Computable::constant(Binary::new(BigInt::from(1), -1_i64)) * pi()
-            }),
+            Box::new(|| Computable::constant(Binary::new(BigInt::from(1), -1_i64)) * pi()),
         ),
         (
             "pi^2",
