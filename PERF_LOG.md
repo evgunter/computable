@@ -133,3 +133,28 @@ Status: COMPLETE
 | sqrt2_256 | ~38ms | 10.3ms | ~4x |
 
 Note: NthRoot Newton's method still pending - sqrt2_256 would improve further.
+
+### Experiment 8: Sin Taylor Rational Accumulation (commit ea9757c)
+Status: COMPLETE - MERGED
+- Replace per-term BigInt reciprocal with single-fraction P/Q accumulation
+- Only 2 divisions at end instead of ~170 at 256 bits
+- Hybrid: per-term for n<=16, rational for n>16
+- Impact: sin/64 29x, sin/256 22x (agent's isolated measurements)
+
+### Experiment 9: Combined Targeted Benchmark After All Optimizations (commit ea9757c)
+
+| Benchmark | Baseline | After All | Speedup |
+|-----------|----------|-----------|---------|
+| sqrt2_64 | ~31ms | 376us | **~82x** |
+| sqrt2_256 | ~38ms | 1.53ms | **~25x** |
+| inv_10_64 | ~4ms | 344us | **~12x** |
+| inv_10_256 | ~41ms | 356us | **~115x** |
+| sin_5_64 | ~11ms | 705us | **~16x** |
+| sin_2_256 | ~11ms | 528us | **~21x** |
+| pi_64 | ~7ms | 99us | **~71x** |
+| pi_256 | ~15ms | 216us | **~69x** |
+| seq_refine | ~4.3ms | 226us | **~19x** |
+| inv_sum_64 | ~5ms | 153us | **~33x** |
+
+### Experiment 10: NthRoot Newton's Method
+Status: IN PROGRESS (435 insertions, benchmarking)
