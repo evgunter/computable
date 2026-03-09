@@ -62,13 +62,12 @@ impl NodeOp for SinOp {
         // Check cache: if inputs haven't changed, return the cached result.
         {
             let cache = self.bounds_cache.read();
-            if let Some(cached) = cache.as_ref() {
-                if cached.input_bounds == input_bounds
-                    && cached.pi_bounds == pi_bounds
-                    && cached.num_terms == num_terms
-                {
-                    return Ok(cached.result.clone());
-                }
+            if let Some(cached) = cache.as_ref()
+                && cached.input_bounds == input_bounds
+                && cached.pi_bounds == pi_bounds
+                && cached.num_terms == num_terms
+            {
+                return Ok(cached.result.clone());
             }
         }
 

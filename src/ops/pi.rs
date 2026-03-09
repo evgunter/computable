@@ -142,10 +142,10 @@ impl NodeOp for PiOp {
         // Check cache: if num_terms hasn't changed, return the cached result.
         {
             let cache = self.bounds_cache.read();
-            if let Some(cached) = cache.as_ref() {
-                if cached.num_terms == num_terms {
-                    return Ok(cached.result.clone());
-                }
+            if let Some(cached) = cache.as_ref()
+                && cached.num_terms == num_terms
+            {
+                return Ok(cached.result.clone());
             }
         }
 
@@ -185,7 +185,8 @@ impl NodeOp for PiOp {
         // dispatches this refiner in edge cases (e.g. needed <= num_terms due
         // to imprecision in the leap estimate). Double num_terms to guarantee
         // forward progress.
-        *num_terms = (*num_terms).checked_mul(2).unwrap_or(usize::MAX);
+        let current = *num_terms;
+        *num_terms = crate::sane_arithmetic!(current; current * 2);
         Ok(true)
     }
 
