@@ -278,8 +278,12 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
 
     for i in 0..num_terms {
         // Term i: (-1)^i / ((2i+1) * k^(2i+1))
-        let coeff = BigInt::from(i) * 2_i64 + 1_i64; // 2i+1
-        let denominator = &coeff * &k_power; // (2i+1) * k^(2i+1)
+        // coeff = 2i+1 always fits in i64 (guarded by sane_arithmetic!), avoiding
+        // the BigInt::from(i) * 2 + 1 allocation chain in the original code.
+        let coeff_usize = crate::sane_arithmetic!(i; 2 * i + 1);
+        let coeff_i64 = i64::try_from(coeff_usize)
+            .unwrap_or_else(|_| crate::detected_computable_would_exhaust_memory!("coeff overflow"));
+        let denominator = &k_power * coeff_i64; // (2i+1) * k^(2i+1)
 
         let is_positive_term = i % 2 == 0;
 
@@ -301,8 +305,10 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
     // Derive error bound from the loop's final k_power state.
     // After the loop, k_power = k^(2*num_terms + 1) (advanced one past the last term).
     // Error = 1 / ((2n+1) * k^(2n+1))
-    let error_coeff = BigInt::from(crate::sane_arithmetic!(num_terms; 2 * num_terms + 1));
-    let error_denom = &error_coeff * &k_power;
+    let error_coeff_usize = crate::sane_arithmetic!(num_terms; 2 * num_terms + 1);
+    let error_coeff_i64 = i64::try_from(error_coeff_usize)
+        .unwrap_or_else(|_| crate::detected_computable_would_exhaust_memory!("error coeff overflow"));
+    let error_denom = &k_power * error_coeff_i64;
     let error = reciprocal_of_biguint(
         error_denom.magnitude(),
         precision_bits,

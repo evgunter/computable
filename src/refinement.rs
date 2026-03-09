@@ -313,7 +313,8 @@ impl RefinementGraph {
                         Ok(prefix_width_leq(&prefix, tol))
                     };
 
-                let mut cached_budget_map = self.compute_propagated_budgets(tolerance_exp, None);
+                let target_width = tolerance_to_uxbinary(tolerance_exp);
+                let mut cached_budget_map = self.compute_propagated_budgets(&target_width, None);
                 let mut refiner_budgets: Vec<Option<UXBinary>> = {
                     refiner_nodes
                         .iter()
@@ -376,7 +377,7 @@ impl RefinementGraph {
                         current_we < last_refresh_root_we
                     };
                     if needs_refresh {
-                        let map = self.compute_propagated_budgets(tolerance_exp, Some(&cached_budget_map));
+                        let map = self.compute_propagated_budgets(&target_width, Some(&cached_budget_map));
                         for (i, node) in refiner_nodes.iter().enumerate() {
                             if !budget_is_static[i] {
                                 refiner_budgets[i] = map.get(&node.id).cloned();
@@ -781,12 +782,11 @@ impl RefinementGraph {
     /// of other refiners) will not appear in the returned map.
     fn compute_propagated_budgets(
         &self,
-        tolerance_exp: &XUsize,
+        target_width: &UXBinary,
         cached_budgets: Option<&HashMap<usize, UXBinary>>,
     ) -> HashMap<usize, UXBinary> {
-        let target_width = tolerance_to_uxbinary(tolerance_exp);
-        let mut budgets: HashMap<usize, UXBinary> = HashMap::new();
-        budgets.insert(self.root.id, target_width);
+        let mut budgets: HashMap<usize, UXBinary> = HashMap::with_capacity(self.nodes.len());
+        budgets.insert(self.root.id, target_width.clone());
 
         let mut queue = VecDeque::new();
         queue.push_back(self.root.id);
