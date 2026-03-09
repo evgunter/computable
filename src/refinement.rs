@@ -205,7 +205,7 @@ impl RefinementGraph {
                 //   Leaf refiners are self-improving and can always be
                 //   re-dispatched. Non-leaf refiners should only be
                 //   re-dispatched when another refiner responds (inputs
-                //   may have changed via apply_update propagation).
+                //   may have changed via batched propagation).
                 //
                 // budget_is_static: the path from root to this refiner
                 //   passes only through ops with static budgets (AddOp,
@@ -465,9 +465,9 @@ impl RefinementGraph {
                     // 4. Receive responses and update state.
                     //
                     //    Block for one response, drain any immediately available
-                    //    via try_recv, then loop back to dispatch. Checking
-                    //    precision after each response allows early exit when
-                    //    apply_update propagation meets the target mid-batch.
+                    //    via try_recv, then batch-propagate once (deduplicating
+                    //    ancestor visits when multiple siblings update), check
+                    //    precision, then loop back to dispatch.
                     //
                     //    After each response, mark OTHER refiners as needing
                     //    re-dispatch (their inputs may have changed). The
@@ -476,23 +476,22 @@ impl RefinementGraph {
                     //    re-dispatches when compute_bounds reads stale inputs
                     //    from slow refiners that haven't responded yet.
 
-                    // Process a response: apply the update and return the refiner
-                    // index + exhaustion info so the caller can update bookkeeping
-                    // arrays without borrow conflicts with the `outstanding` loop.
-                    let apply_response = |message: RefinerMessage| -> Result<
-                        (usize, Option<ExhaustionReason>, Vec<usize>),
+                    // Parse a response without propagation: extract the update,
+                    // refiner index, and exhaustion info. Propagation is deferred
+                    // to a single batched BFS after all available responses are
+                    // collected, deduplicating ancestor visits.
+                    let parse_response = |message: RefinerMessage| -> Result<
+                        (usize, Option<ExhaustionReason>, NodeUpdate),
                         ComputableError,
                     > {
                         match message {
                             RefinerMessage::Update(update) => {
                                 let idx = refiner_index[&update.node_id];
-                                let changed = self.apply_update(update)?;
-                                Ok((idx, None, changed))
+                                Ok((idx, None, update))
                             }
                             RefinerMessage::Exhausted { update, reason } => {
                                 let idx = refiner_index[&update.node_id];
-                                let changed = self.apply_update(update)?;
-                                Ok((idx, Some(reason), changed))
+                                Ok((idx, Some(reason), update))
                             }
                             RefinerMessage::Error(error) => Err(error),
                         }
@@ -545,7 +544,7 @@ impl RefinementGraph {
                                 dispatch_queue.push_back(idx);
                                 in_queue[idx] = true;
                             }
-                            // Use the apply_update propagation path to
+                            // Use the batched propagation path to
                             // determine which non-leaf refiners had their
                             // inputs changed. If a non-leaf refiner's node
                             // was recomputed during propagation, its
@@ -580,26 +579,44 @@ impl RefinementGraph {
                         }};
                     }
 
-                    // Block for the first response.
+                    // Block for the first response, then drain all immediately
+                    // available. Collect parsed responses (without propagation)
+                    // so we can batch-propagate once, deduplicating ancestor
+                    // visits when multiple siblings update in the same batch.
+                    let root_id = self.root.id;
+                    let mut batch: Vec<(usize, Option<ExhaustionReason>, NodeUpdate)> =
+                        Vec::new();
                     {
                         let first = match update_rx.recv() {
                             Ok(msg) => msg,
                             Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
-                        let (idx, exhaustion, changed) = apply_response(first)?;
-                        record_completion!(idx, exhaustion, changed);
-                        if precision_met(&self.root, tolerance_exp)? {
-                            return self.root.get_bounds();
-                        }
+                        batch.push(parse_response(first)?);
+                    }
+                    while let Ok(msg) = update_rx.try_recv() {
+                        batch.push(parse_response(msg)?);
                     }
 
-                    // Drain any immediately available responses.
-                    while let Ok(msg) = update_rx.try_recv() {
-                        let (idx, exhaustion, changed) = apply_response(msg)?;
+                    // Collect the updates and apply them all with a single
+                    // batched BFS propagation (deduplicating ancestor visits).
+                    let updates: Vec<NodeUpdate> =
+                        batch.iter().map(|(_, _, u)| u.clone()).collect();
+                    let changed = self.apply_updates_batched(&updates)?;
+
+                    // Track whether root bounds changed for precision check.
+                    let root_dirty = updates.iter().any(|u| u.node_id == root_id)
+                        || changed.contains(&root_id);
+
+                    // Run record_completion for each response, sharing the
+                    // batched propagation's changed set.
+                    for (idx, exhaustion, _update) in batch {
                         record_completion!(idx, exhaustion, changed);
-                        if precision_met(&self.root, tolerance_exp)? {
-                            return self.root.get_bounds();
-                        }
+                    }
+
+                    // Check precision once after processing all responses,
+                    // but only if the root's bounds actually changed.
+                    if root_dirty && precision_met(&self.root, tolerance_exp)? {
+                        return self.root.get_bounds();
                     }
                 }
             })();
@@ -614,32 +631,63 @@ impl RefinementGraph {
         }
     }
 
-    /// Applies a node update and propagates prefix changes upward.
-    /// Returns the set of node IDs that were changed by propagation
-    /// (excluding the directly-updated node).
+    /// Applies multiple node updates and propagates prefix changes upward
+    /// in a single batched pass, deduplicating ancestor visits.
+    ///
+    /// Instead of propagating each update independently (which can visit
+    /// shared ancestors multiple times when siblings update together),
+    /// this method:
+    /// 1. Applies all leaf prefix updates first
+    /// 2. Collects the unique set of parents needing recomputation
+    /// 3. Processes parents level-by-level, ensuring each parent is only
+    ///    recomputed once per level (after all its children at the current
+    ///    level have been processed)
+    ///
+    /// Returns the set of node IDs whose bounds changed during propagation
+    /// (excluding directly-updated nodes).
     ///
     /// **Bounds-cache preservation**: uses `set_prefix_and_bounds` instead
     /// of `set_prefix` so that each recomputed parent's exact bounds stay
     /// cached. When the next ancestor calls `child.get_bounds()` during
     /// its own `compute_bounds()`, it hits the cache instead of
-    /// recomputing from scratch. (`set_prefix` invalidates bounds_cache,
-    /// forcing every level to redundantly re-derive bounds.)
-    fn apply_update(&self, update: NodeUpdate) -> Result<Vec<usize>, ComputableError> {
+    /// recomputing from scratch.
+    fn apply_updates_batched(
+        &self,
+        updates: &[NodeUpdate],
+    ) -> Result<Vec<usize>, ComputableError> {
         let mut changed_by_propagation = Vec::new();
-        let mut queue = VecDeque::new();
-        if let Some(node) = self.nodes.get(&update.node_id) {
-            node.set_prefix(update.prefix);
-            queue.push_back(node.id);
+
+        // Phase 1: Apply all leaf prefix updates and collect starting nodes.
+        let mut current_level: HashSet<usize> = HashSet::new();
+        for update in updates {
+            if let Some(node) = self.nodes.get(&update.node_id) {
+                node.set_prefix(update.prefix.clone());
+                current_level.insert(node.id);
+            }
         }
 
-        while let Some(changed_id) = queue.pop_front() {
-            let Some(parents) = self.parents.get(&changed_id) else {
-                continue;
-            };
-            for parent_id in parents {
+        // Phase 2: Level-by-level upward propagation with deduplication.
+        // At each level, collect all unique parents of changed nodes,
+        // then recompute each parent exactly once. This ensures parents
+        // see all children's updates before being recomputed.
+        while !current_level.is_empty() {
+            // Collect unique parents of all nodes at the current level.
+            let mut next_level: HashSet<usize> = HashSet::new();
+            for &changed_id in &current_level {
+                let Some(parents) = self.parents.get(&changed_id) else {
+                    continue;
+                };
+                for parent_id in parents {
+                    next_level.insert(*parent_id);
+                }
+            }
+
+            // Process each parent once, checking if bounds actually changed.
+            current_level.clear();
+            for &parent_id in &next_level {
                 let parent = self
                     .nodes
-                    .get(parent_id)
+                    .get(&parent_id)
                     .ok_or(ComputableError::RefinementChannelClosed)?;
                 let next_bounds = parent.op.compute_bounds()?;
                 let next_prefix = Prefix::from_lower_upper(
@@ -650,8 +698,8 @@ impl RefinementGraph {
                     // Cache both prefix AND exact bounds so ancestors'
                     // compute_bounds() hits the bounds cache.
                     parent.set_prefix_and_bounds(next_prefix, next_bounds);
-                    changed_by_propagation.push(*parent_id);
-                    queue.push_back(*parent_id);
+                    changed_by_propagation.push(parent_id);
+                    current_level.insert(parent_id);
                 }
             }
         }
