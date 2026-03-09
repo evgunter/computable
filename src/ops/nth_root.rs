@@ -26,7 +26,7 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
@@ -177,7 +177,6 @@ impl NodeOp for NthRootOp {
     /// to compute an nth root inside the budget function.
     fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
         use crate::binary::UBinary;
-        use num_bigint::BigUint;
 
         let n = self.degree.get();
         if n == 1 {
@@ -335,8 +334,12 @@ fn newton_step_nth_root(
     let n = degree;
     let n_minus_1 = n.saturating_sub(1);
 
-    // Compute y^(n-1)
-    let y_pow = binary_pow(y, n_minus_1);
+    // Compute y^(n-1). For sqrt (n=2), n_minus_1 == 1 so just clone y.
+    let y_pow = if n_minus_1 == 1 {
+        y.clone()
+    } else {
+        binary_pow(y, n_minus_1)
+    };
 
     // If y^(n-1) is zero (shouldn't happen for positive upper), bail
     if y_pow.mantissa().is_zero() {
@@ -353,13 +356,18 @@ fn newton_step_nth_root(
     // Lower bound: target / upper_new^{n-1}, rounded down
     // Use the better upper (new if improved, old otherwise).
     let upper_improved = new_upper < state.upper;
-    let effective_upper = if upper_improved {
-        &new_upper
-    } else {
-        &state.upper
-    };
 
-    let effective_upper_pow = binary_pow(effective_upper, n_minus_1);
+    // Reuse y_pow when upper didn't improve (effective_upper == y, so
+    // effective_upper^(n-1) == y_pow already computed above).
+    let effective_upper_pow = if upper_improved {
+        if n_minus_1 == 1 {
+            new_upper.clone()
+        } else {
+            binary_pow(&new_upper, n_minus_1)
+        }
+    } else {
+        y_pow
+    };
     let new_lower = if effective_upper_pow.mantissa().is_zero() {
         state.lower.clone()
     } else {
@@ -367,6 +375,13 @@ fn newton_step_nth_root(
     };
 
     let lower_improved = new_lower > state.lower;
+
+    // Double precision for next step (quadratic convergence),
+    // but cap at the precision limit to prevent runaway growth.
+    state.precision = precision
+        .saturating_mul(2)
+        .min(precision_cap)
+        .min(crate::MAX_COMPUTATION_BITS);
 
     if upper_improved || lower_improved {
         if upper_improved {
@@ -381,21 +396,8 @@ fn newton_step_nth_root(
             state.exact_value = Some(state.lower.clone());
         }
 
-        // Double precision for next step (quadratic convergence),
-        // but cap at the precision limit to prevent runaway growth.
-        state.precision = precision
-            .saturating_mul(2)
-            .min(precision_cap)
-            .min(crate::MAX_COMPUTATION_BITS);
-
         true
     } else {
-        // No improvement; still double precision to try harder next time,
-        // but cap at the precision limit.
-        state.precision = precision
-            .saturating_mul(2)
-            .min(precision_cap)
-            .min(crate::MAX_COMPUTATION_BITS);
         false
     }
 }
@@ -432,7 +434,7 @@ fn binary_div_floor(a: &Binary, b: &Binary, precision: usize) -> Binary {
     // - positive result: use quotient as-is (truncation toward zero = floor)
     // - negative result: if remainder != 0, subtract 1
     let final_quotient = if result_negative && !remainder.is_zero() {
-        quotient + BigInt::from(1_u32).magnitude().clone()
+        quotient + BigUint::from(1_u32)
     } else {
         quotient
     };
@@ -483,7 +485,7 @@ fn binary_div_ceil(a: &Binary, b: &Binary, precision: usize) -> Binary {
     // - positive result with remainder: add 1
     // - negative result: use quotient as-is (truncation toward zero = ceil for negatives)
     let final_quotient = if !result_negative && !remainder.is_zero() {
-        quotient + BigInt::from(1_u32).magnitude().clone()
+        quotient + BigUint::from(1_u32)
     } else {
         quotient
     };
@@ -557,12 +559,11 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
     let shifted = x.mantissa().magnitude() >> shift;
 
     // For positive values, truncation toward zero IS floor.
-    // For negative values, truncation toward zero is ceil, so subtract 1 if remainder.
-    let has_remainder = (&shifted << shift) != *x.mantissa().magnitude();
-    let signed = if x.mantissa().is_negative() && has_remainder {
+    // For negative values, truncation toward zero is ceil, so subtract 1.
+    // Note: shift > 0 on an odd (normalized) mantissa always loses bits,
+    // so there is always a remainder for negative values.
+    let signed = if x.mantissa().is_negative() {
         -BigInt::from(shifted) - BigInt::from(1_i32)
-    } else if x.mantissa().is_negative() {
-        -BigInt::from(shifted)
     } else {
         BigInt::from(shifted)
     };
@@ -587,16 +588,15 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
         return x.clone();
     };
     let shifted = x.mantissa().magnitude() >> shift;
-    let has_remainder = (&shifted << shift) != *x.mantissa().magnitude();
 
-    // For positive values, truncation toward zero is floor, so add 1 if remainder.
+    // For positive values, truncation toward zero is floor, so add 1.
     // For negative values, truncation toward zero IS ceil.
-    let signed = if !x.mantissa().is_negative() && has_remainder {
+    // Note: shift > 0 on an odd (normalized) mantissa always loses bits,
+    // so there is always a remainder for positive values.
+    let signed = if !x.mantissa().is_negative() {
         BigInt::from(shifted) + BigInt::from(1_i32)
-    } else if x.mantissa().is_negative() {
-        -BigInt::from(shifted)
     } else {
-        BigInt::from(shifted)
+        -BigInt::from(shifted)
     };
 
     Binary::new(signed, x.exponent()
