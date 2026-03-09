@@ -678,28 +678,39 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
 
     let shifted_mx = mx << precision_bits;
     let quotient = &shifted_mx / mp;
-    let result_exp = BigInt::from(ex) - BigInt::from(ep) - BigInt::from(precision_bits);
+    let precision_bits_i64 = i64::try_from(precision_bits).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!(
+            "precision_bits exceeds i64 in compute_reduction_factor"
+        )
+    });
+    let result_exp = ex.checked_sub(ep)
+        .and_then(|v| v.checked_sub(precision_bits_i64))
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "exponent overflow in compute_reduction_factor"
+            )
+        });
 
-    if result_exp >= BigInt::zero() {
-        let shift = result_exp
-            .to_biguint()
-            .unwrap_or_else(|| unreachable!("result_exp is non-negative"));
-        crate::binary::shift_mantissa_chunked(&quotient, &shift, usize::MAX)
+    if result_exp >= 0 {
+        let shift = usize::try_from(result_exp).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!(
+                "shift exceeds usize in compute_reduction_factor"
+            )
+        });
+        crate::assert_sane_computation_size!(shift);
+        &quotient << shift
     } else {
-        let magnitude = (-&result_exp)
-            .to_biguint()
-            .unwrap_or_else(|| unreachable!("negated negative is positive"));
+        let magnitude = result_exp.unsigned_abs();
         let quotient_bits = quotient.bits();
-        if magnitude > num_bigint::BigUint::from(quotient_bits) {
+        if magnitude > quotient_bits {
             if quotient.is_negative() {
                 return BigInt::from(-1_i32);
             } else {
                 return BigInt::zero();
             }
         }
-        let shift_val = magnitude
-            .to_usize()
-            .unwrap_or_else(|| unreachable!("magnitude <= quotient.bits() which fits in u64"));
+        let shift_val = usize::try_from(magnitude)
+            .unwrap_or_else(|_| unreachable!("magnitude <= quotient.bits() which fits in u64"));
         match std::num::NonZeroUsize::new(shift_val) {
             None => quotient.clone(),
             Some(shift) => {

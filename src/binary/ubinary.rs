@@ -14,7 +14,6 @@ use crate::ordered_pair::Unsigned;
 
 use super::binary_impl::Binary;
 use super::error::BinaryError;
-use super::shift::shift_mantissa_chunked;
 
 /// Unsigned binary number represented as `mantissa * 2^exponent` where mantissa >= 0.
 ///
@@ -200,22 +199,56 @@ impl UBinary {
         };
         (lhs_mantissa, rhs_mantissa, exponent)
     }
-    /// Shifts a mantissa left by the given amount, handling large shifts.
-    #[allow(dead_code)]
-    fn shift_mantissa(mantissa: &BigUint, shift: &BigUint) -> BigUint {
-        if shift.is_zero() {
-            return mantissa.clone();
-        }
-        shift_mantissa_chunked::<BigUint>(mantissa, shift, usize::MAX)
-    }
 }
 
 impl Ord for UBinary {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Use the same comparison logic as Binary but with unsigned mantissas
-        let self_binary = self.to_binary();
-        let other_binary = other.to_binary();
-        self_binary.cmp(&other_binary)
+        // Both non-negative. Compare by bit length first (O(1)), then mantissa if needed.
+        if self.mantissa.is_zero() {
+            return if other.mantissa.is_zero() {
+                Ordering::Equal
+            } else {
+                Ordering::Less
+            };
+        }
+        if other.mantissa.is_zero() {
+            return Ordering::Greater;
+        }
+        // For non-zero: value = mantissa * 2^exponent, mantissa is odd
+        // Bit length of value = mantissa.bits() + exponent
+        // Compare bit lengths first for O(1) fast path
+        let self_bits = i128::from(self.mantissa.bits()).saturating_add(i128::from(self.exponent));
+        let other_bits =
+            i128::from(other.mantissa.bits()).saturating_add(i128::from(other.exponent));
+        match self_bits.cmp(&other_bits) {
+            Ordering::Equal => {
+                // Same bit length — need to align and compare mantissas
+                match self.exponent.cmp(&other.exponent) {
+                    Ordering::Equal => self.mantissa.cmp(&other.mantissa),
+                    Ordering::Greater => {
+                        let shift = self.exponent.abs_diff(other.exponent);
+                        let shift_usize = usize::try_from(shift).unwrap_or_else(|_| {
+                            crate::detected_computable_would_exhaust_memory!(
+                                "shift overflow in UBinary::cmp"
+                            )
+                        });
+                        crate::assert_sane_computation_size!(shift_usize);
+                        (&self.mantissa << shift_usize).cmp(&other.mantissa)
+                    }
+                    Ordering::Less => {
+                        let shift = other.exponent.abs_diff(self.exponent);
+                        let shift_usize = usize::try_from(shift).unwrap_or_else(|_| {
+                            crate::detected_computable_would_exhaust_memory!(
+                                "shift overflow in UBinary::cmp"
+                            )
+                        });
+                        crate::assert_sane_computation_size!(shift_usize);
+                        self.mantissa.cmp(&(&other.mantissa << shift_usize))
+                    }
+                }
+            }
+            ord @ Ordering::Less | ord @ Ordering::Greater => ord,
+        }
     }
 }
 

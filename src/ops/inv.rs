@@ -10,6 +10,7 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use num_traits::Signed;
 use parking_lot::RwLock;
+use std::convert::TryFrom;
 
 use crate::binary::{
     Binary, Bounds, ReciprocalRounding, UXBinary, XBinary, reciprocal_rounded_abs_extended,
@@ -208,13 +209,17 @@ fn seed_reciprocal(
     denom: &Binary,
     seed_precision: usize,
 ) -> Result<ReciprocalApprox, ComputableError> {
-    let precision = BigInt::from(seed_precision);
+    let precision = i64::try_from(seed_precision).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!(
+            "seed_precision exceeds i64 in seed_reciprocal"
+        )
+    });
     let xb_denom = XBinary::Finite(denom.clone());
 
     let lower_xb =
-        reciprocal_rounded_abs_extended(&xb_denom, &precision, ReciprocalRounding::Floor)?;
+        reciprocal_rounded_abs_extended(&xb_denom, precision, ReciprocalRounding::Floor)?;
     let upper_xb =
-        reciprocal_rounded_abs_extended(&xb_denom, &precision, ReciprocalRounding::Ceil)?;
+        reciprocal_rounded_abs_extended(&xb_denom, precision, ReciprocalRounding::Ceil)?;
 
     let lower = match lower_xb {
         XBinary::Finite(b) => b,

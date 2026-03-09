@@ -7,12 +7,10 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, Mul, Neg, Shl, Shr, Sub};
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 use num_traits::{Float, Signed, Zero};
 
 use super::error::BinaryError;
-
-use super::shift::shift_mantissa_chunked;
 
 /// Exact binary number represented as `mantissa * 2^exponent`.
 ///
@@ -212,22 +210,52 @@ impl Binary {
         (lhs_mantissa, rhs_mantissa, exponent)
     }
 
-    /// Shifts a mantissa left by the given amount, handling large shifts.
-    #[allow(dead_code)]
-    fn shift_mantissa(mantissa: &BigInt, shift: &BigUint) -> BigInt {
-        if shift.is_zero() {
-            return mantissa.clone();
-        }
-        shift_mantissa_chunked::<BigInt>(mantissa, shift, usize::MAX)
-    }
-
     /// Compares two binary values with potentially different exponents.
+    ///
+    /// Uses a bit-length fast path: for values with different magnitude bit lengths,
+    /// the comparison is determined in O(1) without shifting. Only falls back to
+    /// mantissa alignment when bit lengths are equal.
     pub(crate) fn cmp_shifted(
         mantissa: &BigInt,
         exponent: i64,
         other: &BigInt,
         other_exp: i64,
     ) -> Ordering {
+        // 1. Sign-based fast path
+        let self_sign = mantissa.sign();
+        let other_sign = other.sign();
+        match self_sign.cmp(&other_sign) {
+            Ordering::Equal => {}
+            ord @ Ordering::Less | ord @ Ordering::Greater => return ord,
+        }
+
+        // Both have the same sign. Handle zero cases.
+        if mantissa.is_zero() {
+            // Both zero (same sign and self is zero means other is also zero)
+            return Ordering::Equal;
+        }
+
+        // Both non-zero with the same sign.
+        // 2. Bit-length fast path on magnitudes
+        // For non-zero: |value| = |mantissa| * 2^exponent, |mantissa| is odd
+        // Bit length of |value| = magnitude.bits() + exponent
+        let self_bits = i128::from(mantissa.magnitude().bits()).saturating_add(i128::from(exponent));
+        let other_bits =
+            i128::from(other.magnitude().bits()).saturating_add(i128::from(other_exp));
+
+        if self_bits != other_bits {
+            // Different magnitude bit lengths — determined by bit length.
+            // For positive values: larger bit length means larger value.
+            // For negative values: larger magnitude bit length means smaller (more negative) value.
+            let mag_ord = self_bits.cmp(&other_bits);
+            return if mantissa.is_positive() {
+                mag_ord
+            } else {
+                mag_ord.reverse()
+            };
+        }
+
+        // 3. Same bit length — must align and compare mantissas
         fn cmp_with_shift(
             large_mantissa: &BigInt,
             small_mantissa: &BigInt,
@@ -239,8 +267,9 @@ impl Binary {
             let max_shift = crate::MAX_COMPUTATION_BITS as u64;
             if shift_amount <= max_shift {
                 // SAFETY: shift_amount <= MAX_COMPUTATION_BITS <= usize::MAX on 64-bit
-                let shift_usize = usize::try_from(shift_amount)
-                    .unwrap_or_else(|_| unreachable!("shift_amount <= MAX_COMPUTATION_BITS <= usize::MAX"));
+                let shift_usize = usize::try_from(shift_amount).unwrap_or_else(|_| {
+                    unreachable!("shift_amount <= MAX_COMPUTATION_BITS <= usize::MAX")
+                });
                 let shifted: BigInt = large_mantissa << shift_usize;
                 shifted.cmp(small_mantissa)
             } else if large_mantissa.is_zero() {
