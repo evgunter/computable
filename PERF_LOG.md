@@ -345,3 +345,24 @@ Status: COMPLETE - MERGED
 - Skip binary_pow for sqrt n=2 (clone instead)
 - BigUint::from(1u32) directly instead of BigInt roundtrip
 - Deduplicate precision doubling logic
+
+### Experiment 21: Demand Propagation Optimizations (commit ab1f823)
+Status: COMPLETE - MERGED
+Three coordinator optimizations:
+1. Carry Bounds in NodeUpdate, use set_prefix_and_bounds consistently (avoid cache invalidation)
+2. Refresh backoff: only refresh budgets when root width improved by >=1 bit
+3. Cache static-budget subtree budgets across refreshes (skip BFS over AddOp/NegOp subtrees)
+
+### Experiment 22: Single-Refiner Fast Path (commit 71f9818)
+Status: COMPLETE - MERGED
+- When only 1 refiner exists, skip thread spawning, channels, budget computation
+- Execute refine_step directly in calling thread with apply_update propagation
+- Eliminates per-step context switches for pi(), sqrt(), inv() etc.
+- Expected 5-15% improvement for single-refiner benchmarks
+
+### Experiment 23: Sin Taylor i64 Shift Optimization (commit 423a03d)
+Status: COMPLETE - MERGED
+- Replace BigInt shift_per_step/current_shift with i64 in Taylor accumulation loop
+- Eliminate power_m.clone() for even k (use reference instead)
+- Compute remaining_factors with i64 intermediates
+- Use i64 for error bound exponent computation
