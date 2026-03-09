@@ -207,5 +207,44 @@ Results:
 - Summation (200K terms): ~485ms → ~156ms (**3.1x faster**)
 - Complex (5K terms): ~115ms → ~27ms (**4.3x faster**)
 
-### Experiment 14: Inline i64 Exponents
+### Experiment 14: Clean Serial Full Criterion Benchmarks (post all wave 1-3)
+
+These numbers were gathered on a quiet system with serial runs (no contention).
+Commit state includes worker pool, bounds-cache, sin caching, binary arithmetic,
+NthRoot Newton, sin rational accumulation. Does NOT include sin range reduction
+(0757e21) or coordinator large-graph optimization (3b1b51b).
+
+| Benchmark | 1 bit | 4 bits | 16 bits | 64 bits | 256 bits |
+|-----------|-------|--------|---------|---------|----------|
+| pi_refinement | 14.9us | 15.2us | 14.9us | 69.8us | 192us |
+| inv (100 terms) | 815us | 830us | 868us | 1.29ms | 1.61ms |
+| sin (100 terms) | 14.2ms | 12.4ms | 8.70ms | 19.3ms | 153ms |
+| integer_roots (1000) | 116ms | 111ms | 127ms | 137ms | 167ms |
+| sqrt2+pi | 20.1us | 20.1us | 58.6us | 110us | 222us |
+| complex (5000 terms) | 24.2ms | — | — | — | — |
+| sin(1pi) | 58.1us | 59.0us | 56.8us | 264us | 2.24ms |
+| sin(100pi) | 41.9us | 42.3us | 48.9us | 283us | 1.76ms |
+
+Comparison vs baseline (a158cd9):
+
+| Benchmark | 1 bit | 4 bits | 16 bits | 64 bits | 256 bits |
+|-----------|-------|--------|---------|---------|----------|
+| pi | ~1x | ~1x | ~1x | **1.4x** | **1.5x** |
+| inv | **3.1x** | **3.0x** | **2.9x** | **2.6x** | **2.2x** |
+| sin | 0.7x | 0.8x | **1.4x** | **3.9x** | **41.4x** |
+| integer_roots | **2.9x** | **3.4x** | **4.6x** | **10.5x** | **29.8x** |
+| sqrt2+pi | **3.5x** | **6.8x** | **3.8x** | **7.3x** | **13.8x** |
+| complex | **3.3x** | — | — | — | — |
+| sin(1pi) | ~1x | ~1x | ~1x | **2.4x** | **5.8x** |
+| sin(100pi) | ~1x | ~1x | ~1x | **2.1x** | **12.5x** |
+
+Note: sin at 1-4 bits shows slight regression (14.2ms vs 9.51ms baseline).
+This is worker pool overhead for very low-precision work where thread setup dominates.
+
+### Experiment 15: Inline i64 Exponents
 Status: IN PROGRESS (agent working on massive refactor)
+
+### Experiment 16: Batch Precision Checks + Batch apply_update
+Status: IN PROGRESS (two agents working in parallel)
+- Batch precision checks: only check root.get_prefix() after draining all responses
+- Batch apply_update: deduplicate ancestor propagation when multiple siblings update
