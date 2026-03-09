@@ -2,10 +2,16 @@
 """Compare hyperfine wall-clock benchmark results and optionally post a PR comment.
 
 Modes:
-  --mode pr       Parse hyperfine JSONs with two commands (main vs PR), build
-                  comparison table, post PR comment.
-  --mode store    Parse hyperfine JSONs with one command, aggregate into a single
-                  JSON keyed by benchmark name, print to stdout for storage.
+  --mode pr               Parse hyperfine JSONs with two commands (main vs PR),
+                          build comparison table, post PR comment.
+  --mode store            Parse hyperfine JSONs, aggregate into a single JSON
+                          keyed by benchmark name, print to stdout for storage.
+                          Use --command-index to select which command entry
+                          (default -1 = last).
+  --mode store-comparison Parse hyperfine JSONs with two commands (base vs head),
+                          aggregate into a comparison JSON with metadata, print
+                          to stdout for storage.  Requires --base-sha and
+                          --head-sha.
 """
 
 import argparse
@@ -96,39 +102,107 @@ def compare_pr(results_dir, pr_number, repo):
             print(f"Warning: Failed to post PR comment: {e}", file=sys.stderr)
 
 
-def store_results(results_dir):
-    """Aggregate single-command hyperfine results into one JSON object."""
+def store_results(results_dir, command_index=-1):
+    """Aggregate hyperfine results into one JSON object.
+
+    *command_index* selects which command entry to use from each hyperfine
+    JSON file (default ``-1``, i.e. the last command).  When hyperfine is
+    run with two commands (A/B comparison on main pushes), ``-1`` picks the
+    current commit (the second command).
+    """
     all_results = load_hyperfine_results(results_dir)
 
     aggregated = {}
     for bench_name, commands in sorted(all_results.items()):
         if not commands:
             continue
+        cmd = commands[command_index]
         aggregated[bench_name] = {
-            "median": commands[0]["median"],
-            "mean": commands[0]["mean"],
-            "stddev": commands[0]["stddev"],
-            "min": commands[0]["min"],
-            "max": commands[0]["max"],
+            "median": cmd["median"],
+            "mean": cmd["mean"],
+            "stddev": cmd["stddev"],
+            "min": cmd["min"],
+            "max": cmd["max"],
         }
 
     print(json.dumps(aggregated, indent=2))
 
 
+def store_comparison(results_dir, base_sha, head_sha):
+    """Aggregate two-command hyperfine results into a comparison JSON.
+
+    Each hyperfine file is expected to have two command entries:
+    commands[0] = base (previous commit), commands[1] = head (current commit).
+
+    Prints JSON to stdout with the structure::
+
+        {
+            "base_sha": "...",
+            "head_sha": "...",
+            "benchmarks": {
+                "<name>": {
+                    "base": {"median": ..., "mean": ..., "stddev": ..., "min": ..., "max": ..., "times": [...]},
+                    "head": {"median": ..., "mean": ..., "stddev": ..., "min": ..., "max": ..., "times": [...]}
+                }
+            }
+        }
+    """
+    all_results = load_hyperfine_results(results_dir)
+
+    benchmarks = {}
+    for bench_name, commands in sorted(all_results.items()):
+        if len(commands) < 2:
+            continue
+
+        def _extract(cmd):
+            entry = {
+                "median": cmd["median"],
+                "mean": cmd["mean"],
+                "stddev": cmd["stddev"],
+                "min": cmd["min"],
+                "max": cmd["max"],
+            }
+            if "times" in cmd:
+                entry["times"] = cmd["times"]
+            return entry
+
+        benchmarks[bench_name] = {
+            "base": _extract(commands[0]),
+            "head": _extract(commands[1]),
+        }
+
+    output = {
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "benchmarks": benchmarks,
+    }
+    print(json.dumps(output, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare hyperfine benchmark results")
-    parser.add_argument("--mode", choices=["pr", "store"], required=True,
-                        help="pr: compare and comment; store: aggregate for storage")
+    parser.add_argument("--mode", choices=["pr", "store", "store-comparison"],
+                        required=True,
+                        help="pr: compare and comment; store: aggregate for storage; "
+                             "store-comparison: aggregate A/B comparison for storage")
     parser.add_argument("--results-dir", required=True,
                         help="Directory containing hyperfine JSON files")
     parser.add_argument("--pr", type=int, help="PR number (pr mode only)")
     parser.add_argument("--repo", help="GitHub repository owner/name (pr mode only)")
+    parser.add_argument("--base-sha", help="Base commit SHA (store-comparison mode)")
+    parser.add_argument("--head-sha", help="Head commit SHA (store-comparison mode)")
+    parser.add_argument("--command-index", type=int, default=-1,
+                        help="Which command index to store (store mode, default -1)")
     args = parser.parse_args()
 
     if args.mode == "pr":
         compare_pr(args.results_dir, args.pr, args.repo)
     elif args.mode == "store":
-        store_results(args.results_dir)
+        store_results(args.results_dir, command_index=args.command_index)
+    elif args.mode == "store-comparison":
+        if not args.base_sha or not args.head_sha:
+            parser.error("--base-sha and --head-sha are required for store-comparison mode")
+        store_comparison(args.results_dir, args.base_sha, args.head_sha)
 
 
 if __name__ == "__main__":
