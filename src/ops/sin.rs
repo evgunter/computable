@@ -927,7 +927,7 @@ fn taylor_sin_bounds_rational(
     target_precision: usize,
 ) -> (Binary, Binary) {
     let m = x.mantissa();
-    let e = BigInt::from(x.exponent());
+    let e = x.exponent(); // i64 — no BigInt needed for exponent arithmetic
 
     // Precompute m^2 for the recurrence power_{k} = power_{k-1} * m^2
     let m_sq = m * m;
@@ -939,37 +939,37 @@ fn taylor_sin_bounds_rational(
     let n_minus_1 = crate::sane_arithmetic!(n; n - 1);
     remaining_factors[n_minus_1] = BigInt::one();
     for k in (1..n).rev() {
-        let k_big = BigInt::from(k);
-        let two_k = &k_big * 2_i64;
-        let two_k_plus_1 = &two_k + 1_i64;
+        let two_k = (k as i64) * 2;
+        let two_k_plus_1 = two_k + 1;
         let k_minus_1 = crate::sane_arithmetic!(k; k - 1);
-        remaining_factors[k_minus_1] = &remaining_factors[k] * &two_k * &two_k_plus_1;
+        remaining_factors[k_minus_1] =
+            &remaining_factors[k] * two_k * two_k_plus_1;
     }
 
     // The common denominator Q = (2n-1)! = R_0
     let common_factorial = remaining_factors[0].clone();
 
-    // Compute the common exponent for alignment.
+    // Compute the common exponent for alignment using i64 arithmetic.
     // Term k has exponent e*(2k+1). We align all to the minimum exponent.
-    let common_exp: BigInt;
-    let shift_per_step: BigInt;
-    let first_shift: BigInt;
+    let n_i64 = n as i64;
+    let common_exp: i64;
+    let shift_per_step: i64;
+    let first_shift: i64;
 
-    let n_big = BigInt::from(n);
-    if e.is_negative() {
-        let two_n_minus_1 = &n_big * 2_i64 - 1_i64;
-        common_exp = &e * &two_n_minus_1;
-        let neg_two_e = BigInt::from(-2_i64) * &e;
-        first_shift = &neg_two_e * (&n_big - 1_i64);
+    if e < 0 {
+        let two_n_minus_1 = n_i64 * 2 - 1;
+        common_exp = e * two_n_minus_1;
+        let neg_two_e = -2 * e;
+        first_shift = neg_two_e * (n_i64 - 1);
         shift_per_step = -neg_two_e;
-    } else if e.is_positive() {
-        common_exp = e.clone();
-        first_shift = BigInt::zero();
-        shift_per_step = BigInt::from(2_i64) * &e;
+    } else if e > 0 {
+        common_exp = e;
+        first_shift = 0;
+        shift_per_step = 2 * e;
     } else {
-        common_exp = BigInt::zero();
-        first_shift = BigInt::zero();
-        shift_per_step = BigInt::zero();
+        common_exp = 0;
+        first_shift = 0;
+        shift_per_step = 0;
     };
 
     // Accumulate: P = sum_k { (-1)^k * m^(2k+1) * R_k * 2^(shift_k) }
@@ -978,42 +978,40 @@ fn taylor_sin_bounds_rational(
     let mut current_shift = first_shift;
 
     for (k, remaining_factor) in remaining_factors.iter().enumerate() {
-        let signed_power = if k % 2 == 0 {
-            power_m.clone()
+        let mut contribution = if k % 2 == 0 {
+            &power_m * remaining_factor
         } else {
-            -&power_m
+            -(&power_m * remaining_factor)
         };
-        let mut contribution = signed_power * remaining_factor;
 
-        if let Some(shift_usize) = current_shift.to_usize()
-            && shift_usize > 0
-        {
-            contribution <<= shift_usize;
+        if current_shift > 0 {
+            contribution <<= current_shift as usize;
         }
 
         numerator += contribution;
 
         if k < n_minus_1 {
             power_m *= &m_sq;
-            current_shift = &current_shift + &shift_per_step;
+            current_shift += shift_per_step;
         }
     }
 
     // sum = numerator * 2^common_exp / common_factorial
+    let common_exp_big = BigInt::from(common_exp);
     let (sum_lo, sum_hi) = divide_bigint_directed(
         &numerator,
-        &common_exp,
+        &common_exp_big,
         &common_factorial,
         target_precision,
     );
 
     // Error bound: |x|^(2n+1) / (2n+1)!
     power_m *= &m_sq; // advance to m^(2n+1)
-    let error_exp = &e * (&n_big * 2_i64 + 1_i64);
+    let error_exp = BigInt::from(e * (n_i64 * 2 + 1));
 
-    let two_n = &n_big * 2_i64;
-    let two_n_plus_1 = &two_n + 1_i64;
-    let error_factorial = &common_factorial * &two_n * &two_n_plus_1;
+    let two_n = n_i64 * 2;
+    let two_n_plus_1 = two_n + 1;
+    let error_factorial = &common_factorial * two_n * two_n_plus_1;
 
     let abs_power_m = BigInt::from(power_m.magnitude().clone());
     let (_, error) = divide_bigint_directed(
