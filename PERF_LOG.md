@@ -79,14 +79,32 @@ Create faster, more targeted benchmarks for iteration speed.
 ### Experiment 1: Baseline
 Status: COMPLETE (see above)
 
-### Experiment 2: NthRoot Newton's Method
-Status: STARTING (multiple strategies in parallel)
+### Experiment 2: Combined Coordinator Optimization (commit 9b432f5)
+Status: COMPLETE - MERGED
+Three optimizations in one commit:
+1. **Worker pool threading**: Replace thread-per-refiner with capped pool (num_cpus threads)
+2. **Bounds-cache preservation**: `apply_update` uses `set_prefix_and_bounds` instead of
+   `set_prefix`, so parent bounds stay cached for ancestor recomputation
+3. **Sin bounds caching**: Cache `SinOp::compute_bounds` results keyed on
+   (input_bounds, pi_bounds, num_terms)
 
-### Experiment 3: Sin Taylor Caching
-Status: STARTING (multiple strategies in parallel)
+Results (from coordinator agent benchmarking):
+- integer_roots bits=1: 1.05s → 0.38s (2.8x)
+- integer_roots bits=4: 1.00s → 0.47s (2.1x)
+- integer_roots bits=16: 1.49s → 0.79s (1.9x)
+- integer_roots bits=64: 3.79s → 2.79s (1.4x)
+- Memory: 24MB → 6MB for integer_roots (4x reduction)
 
-### Experiment 4: Threading Improvements
-Status: STARTING
+### Experiment 3: NthRoot Newton's Method
+Status: IN PROGRESS (agent ad128659, 468 insertions)
 
-### Experiment 5: Fast Benchmarks
-Status: STARTING (creating targeted benchmark suite)
+### Experiment 4: Binary Arithmetic Optimizations
+Status: IN PROGRESS (agent a089f37f, 399 insertions across 9 files)
+
+### Experiment 5: Fast Benchmarks (commit b937c07)
+Status: COMPLETE - MERGED
+14 targeted benchmarks in benches/targeted.rs covering diverse scenarios.
+Total runtime ~30s with criterion.
+
+### Experiment 6: Post-Optimization Benchmark Run
+Status: RUNNING (full criterion suite after combined optimization)
