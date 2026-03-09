@@ -8,7 +8,7 @@ use std::fmt;
 use std::ops::{Add, Mul, Shl, Shr};
 
 use num_bigint::BigUint;
-use num_traits::Zero;
+use num_traits::{ToPrimitive, Zero};
 
 use crate::ordered_pair::Unsigned;
 
@@ -116,6 +116,41 @@ impl UBinary {
         if self.mantissa.is_zero() {
             return Self::zero();
         }
+
+        // Fast path: divisor mantissa is 1 (pure power of 2).
+        // Since UBinary is odd-normalized, mantissa==1 means bits()==1.
+        // Division is just exponent subtraction; self.mantissa is already odd.
+        if other.mantissa.bits() == 1 {
+            let exponent = self
+                .exponent
+                .checked_sub(other.exponent)
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "exponent overflow in UBinary::div_floor"
+                    )
+                });
+            return Self::new_normalized(self.mantissa.clone(), exponent);
+        }
+
+        // Fast path: both mantissas fit in u64 — use native arithmetic.
+        if let (Some(m_a), Some(m_b)) = (self.mantissa.to_u64(), other.mantissa.to_u64()) {
+            let extra_bits = 64 - m_b.leading_zeros(); // == other.mantissa.bits() as u32
+            let shifted = (m_a as u128) << extra_bits;
+            let quotient = shifted / (m_b as u128);
+            let exponent = self
+                .exponent
+                .checked_sub(other.exponent)
+                .and_then(|e| e.checked_sub(i64::from(extra_bits)))
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "exponent overflow in UBinary::div_floor"
+                    )
+                });
+            // quotient may have trailing zeros, so normalize via Self::new.
+            return Self::new(BigUint::from(quotient), exponent);
+        }
+
+        // General path: BigUint shift and division.
         // a / b = (m_a * 2^e_a) / (m_b * 2^e_b) = (m_a / m_b) * 2^(e_a - e_b)
         // Shift numerator left until quotient has enough bits for a
         // meaningful result (at least 1 bit, i.e. quotient >= 1).
