@@ -963,13 +963,15 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
     let n_minus_1 = crate::sane_arithmetic!(n; n - 1);
     remaining_factors[n_minus_1] = BigInt::one();
     for k in (1..n).rev() {
-        // k is bounded by n which is a small Taylor-series term count (fits in i64),
-        // so the `as i64` cast and multiplications cannot overflow.
-        #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
-        let (two_k, two_k_plus_1) = {
-            let two_k = (k as i64) * 2;
-            (two_k, two_k + 1)
-        };
+        let k_i64 = i64::try_from(k).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("k overflows i64 in Taylor sin")
+        });
+        let two_k = k_i64.checked_mul(2).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("2*k overflows in Taylor sin")
+        });
+        let two_k_plus_1 = two_k.checked_add(1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("2*k+1 overflows in Taylor sin")
+        });
         let k_minus_1 = crate::sane_arithmetic!(k; k - 1);
         remaining_factors[k_minus_1] = &remaining_factors[k] * two_k * two_k_plus_1;
     }
@@ -977,34 +979,41 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
     // The common denominator Q = (2n-1)! = R_0
     let common_factorial = remaining_factors[0].clone();
 
-    // Compute the common exponent for alignment using i64 arithmetic.
+    // Compute the common exponent for alignment using i64 checked arithmetic.
     // Term k has exponent e*(2k+1). We align all to the minimum exponent.
-    // n is a small Taylor-series term count and e is a bounded exponent,
-    // so the casts and arithmetic here cannot overflow in practice.
-    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
-    let (n_i64, common_exp, shift_per_step, first_shift) = {
-        let n_i64 = n as i64;
-        let common_exp: i64;
-        let shift_per_step: i64;
-        let first_shift: i64;
-
-        if e < 0 {
-            let two_n_minus_1 = n_i64 * 2 - 1;
-            common_exp = e * two_n_minus_1;
-            let neg_two_e = -2 * e;
-            first_shift = neg_two_e * (n_i64 - 1);
-            shift_per_step = -neg_two_e;
-        } else if e > 0 {
-            common_exp = e;
-            first_shift = 0;
-            shift_per_step = 2 * e;
-        } else {
-            common_exp = 0;
-            first_shift = 0;
-            shift_per_step = 0;
-        };
-
-        (n_i64, common_exp, shift_per_step, first_shift)
+    let n_i64 = i64::try_from(n).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("n overflows i64 in Taylor sin")
+    });
+    let (common_exp, shift_per_step, first_shift) = if e < 0 {
+        let two_n_minus_1 = n_i64.checked_mul(2).and_then(|v| v.checked_sub(1)).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("2n-1 overflows in Taylor sin")
+        });
+        let common_exp = e.checked_mul(two_n_minus_1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("e*(2n-1) overflows in Taylor sin")
+        });
+        let neg_e = e.checked_neg().unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("-e overflows in Taylor sin")
+        });
+        let neg_two_e = neg_e.checked_mul(2).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("-2*e overflows in Taylor sin")
+        });
+        let n_i64_minus_1 = n_i64.checked_sub(1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("n-1 overflows in Taylor sin")
+        });
+        let first_shift = neg_two_e.checked_mul(n_i64_minus_1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("-2e*(n-1) overflows in Taylor sin")
+        });
+        let shift_per_step = neg_two_e.checked_neg().unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("shift_per_step overflows in Taylor sin")
+        });
+        (common_exp, shift_per_step, first_shift)
+    } else if e > 0 {
+        let shift_per_step = e.checked_mul(2).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("2*e overflows in Taylor sin")
+        });
+        (e, shift_per_step, 0_i64)
+    } else {
+        (0_i64, 0_i64, 0_i64)
     };
 
     // Accumulate: P = sum_k { (-1)^k * m^(2k+1) * R_k * 2^(shift_k) }
@@ -1020,10 +1029,11 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
         };
 
         if current_shift > 0 {
-            // current_shift is non-negative (checked above) and bounded by term count * exponent,
-            // so the cast to usize is safe.
-            #[allow(clippy::as_conversions)]
-            let shift = current_shift as usize;
+            let shift = usize::try_from(current_shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "current_shift overflows usize in Taylor sin"
+                )
+            });
             contribution <<= shift;
         }
 
@@ -1031,11 +1041,11 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
 
         if k < n_minus_1 {
             power_m *= &m_sq;
-            // shift_per_step and current_shift are bounded by small Taylor-series parameters.
-            #[allow(clippy::arithmetic_side_effects)]
-            {
-                current_shift += shift_per_step;
-            }
+            current_shift = current_shift.checked_add(shift_per_step).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "current_shift accumulation overflows in Taylor sin"
+                )
+            });
         }
     }
 
