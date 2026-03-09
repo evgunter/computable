@@ -39,7 +39,7 @@ use crate::sane::{XIsize, XUsize};
 pub struct SinBoundsCache {
     input_bounds: Bounds,
     pi_bounds: Bounds,
-    num_terms: BigInt,
+    num_terms: usize,
     result: Bounds,
 }
 
@@ -47,7 +47,7 @@ pub struct SinBoundsCache {
 pub struct SinOp {
     pub inner: Arc<Node>,
     pub pi_node: Arc<Node>,
-    pub num_terms: RwLock<BigInt>,
+    pub num_terms: RwLock<usize>,
     /// Cache of the last `sin_bounds` result, keyed on inputs.
     /// Eliminates redundant Taylor series recomputation during bound propagation.
     pub bounds_cache: RwLock<Option<SinBoundsCache>>,
@@ -57,7 +57,7 @@ impl NodeOp for SinOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let pi_bounds = self.pi_node.get_bounds()?;
-        let num_terms = self.num_terms.read().clone();
+        let num_terms = *self.num_terms.read();
 
         // Check cache: if inputs haven't changed, return the cached result.
         {
@@ -72,7 +72,7 @@ impl NodeOp for SinOp {
             }
         }
 
-        let result = sin_bounds(&input_bounds, &pi_bounds, &num_terms)?;
+        let result = sin_bounds(&input_bounds, &pi_bounds, num_terms)?;
 
         // Store in cache for future calls with the same inputs.
         {
@@ -95,11 +95,11 @@ impl NodeOp for SinOp {
         if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits()
             && precision_bits <= crate::MAX_COMPUTATION_BITS
         {
-            // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.
-            let needed_n = (precision_bits / 3).max(1);
-            let needed = BigInt::from(needed_n);
-            if needed > *num_terms {
-                *num_terms = needed;
+            // Each Taylor term contributes ~3.5-7 bits; precision_bits / 4 is
+            // conservative yet ~25% tighter than the previous / 3 estimate.
+            let needed_n = (precision_bits / 4).max(1);
+            if needed_n > *num_terms {
+                *num_terms = needed_n;
             }
         }
 
@@ -108,15 +108,14 @@ impl NodeOp for SinOp {
         if let Ok(input_bounds) = self.inner.get_bounds()
             && let Some(width_bits) = estimate_precision_bits(&input_bounds)
         {
-            let needed_n = (width_bits / 3).max(1);
-            let needed = BigInt::from(needed_n);
-            if needed > *num_terms {
-                *num_terms = needed;
+            let needed_n = (width_bits / 4).max(1);
+            if needed_n > *num_terms {
+                *num_terms = needed_n;
             }
         }
 
         // Always +1: keeps refiner alive, sole driver for exact inputs
-        *num_terms += BigInt::one();
+        *num_terms = num_terms.saturating_add(1);
         Ok(true)
     }
 
@@ -178,7 +177,7 @@ impl NodeOp for SinOp {
 fn sin_bounds(
     input_bounds: &Bounds,
     pi_bounds: &Bounds,
-    num_terms: &BigInt,
+    num_terms: usize,
 ) -> Result<Bounds, ComputableError> {
     let pos_one = Binary::one();
     let neg_one = pos_one.neg();
@@ -196,13 +195,7 @@ fn sin_bounds(
         }
     };
 
-    // Convert num_terms to usize (capped at reasonable limit)
-    let n = num_terms
-        .to_usize()
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("num_terms exceeds usize")
-        })
-        .max(1);
+    let n = num_terms.max(1);
 
     // Range reduction subtracts k * 2π from the input, introducing error
     // proportional to max_abs(input) * width(π). When input is 0 this
@@ -460,7 +453,7 @@ fn reduce_to_half_pi_range_interval(
     let reduced = reduce_to_pi_range_interval(input, two_pi, pi);
 
     // Pre-compute hi() values that are used multiple times below.
-    // Each hi() call recomputes lower + width, so caching these avoids
+    // Each hi() call computes lower + width, so caching these avoids
     // redundant BigInt additions.
     let reduced_hi = reduced.hi();
     let half_pi_hi = half_pi.hi();
@@ -549,10 +542,13 @@ fn reduce_to_half_pi_range_interval(
         // The interval contains -pi/2 where sin = -1
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
         let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced_hi, n, pi, half_pi);
-        let sin_max = if sin_bounds_at_lo.hi() > sin_bounds_at_hi.hi() {
-            sin_bounds_at_lo.hi()
+        // Cache hi() to avoid cloning twice per FiniteBounds.
+        let hi_at_lo = sin_bounds_at_lo.hi();
+        let hi_at_hi = sin_bounds_at_hi.hi();
+        let sin_max = if hi_at_lo > hi_at_hi {
+            hi_at_lo
         } else {
-            sin_bounds_at_hi.hi()
+            hi_at_hi
         };
 
         return ReductionResult::ContainsMin { sin_max };
@@ -1276,7 +1272,7 @@ mod tests {
         let input_bounds = Bounds::new(xbin(0, 0), xbin(0, 0));
         let pi_bounds = Bounds::new(XBinary::NegInf, XBinary::PosInf);
 
-        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(10_i32))
+        let result = sin_bounds(&input_bounds, &pi_bounds, 10)
             .expect("sin_bounds should succeed");
         let lower = unwrap_finite(result.small());
         let upper = unwrap_finite(&result.large());
@@ -1776,7 +1772,7 @@ mod tests {
         let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
         let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
         let pi_bounds = Bounds::new(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
-        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(5_i32))
+        let result = sin_bounds(&input_bounds, &pi_bounds, 5)
             .expect("sin_bounds should succeed");
 
         // Because the width >= two_pi_lo, the conservative check should trigger

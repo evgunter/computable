@@ -7,9 +7,6 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use num_bigint::BigInt;
-use num_traits::One;
-
 use crate::binary::Bounds;
 use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
@@ -143,7 +140,7 @@ impl Computable {
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
             pi_node,
-            num_terms: RwLock::new(BigInt::one()),
+            num_terms: RwLock::new(1),
             bounds_cache: RwLock::new(None),
         }));
         Self { node }
