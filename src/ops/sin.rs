@@ -781,10 +781,11 @@ enum RoundingDirection {
 /// Taylor series: sin(x) = sum_{k=0}^{n-1} (-1)^k * x^(2k+1) / (2k+1)!
 /// Error after n terms: |R_n| <= |x|^(2n+1) / (2n+1)!
 ///
-/// Uses a single loop to compute both the lower (round-down) and upper (round-up)
-/// partial sums simultaneously, then derives the error bound from the loop's final
-/// power/factorial state. This eliminates 2/3 of the expensive BigInt power and
-/// factorial multiplications compared to running three independent loops.
+/// For small n (≤ 16), uses per-term division which has lower overhead.
+/// For larger n, accumulates the exact rational sum as a single fraction P/Q
+/// (where Q is the common factorial denominator), then performs only two BigInt
+/// divisions at the end (one for floor, one for ceil), eliminating O(n)
+/// expensive reciprocal computations.
 fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
     if n == 0 {
         // No terms: error bound is |x|^1 / 1! = |x|
@@ -798,6 +799,19 @@ fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, 
         return (error.neg(), error);
     }
 
+    // For small n, per-term division has less overhead than rational accumulation.
+    if n <= 16 {
+        return taylor_sin_bounds_per_term(x, n, target_precision);
+    }
+
+    taylor_sin_bounds_rational(x, n, target_precision)
+}
+
+/// Per-term Taylor series computation. Each term is divided by its factorial
+/// independently using directed rounding. Efficient for small n due to low
+/// overhead, but performs O(n) expensive reciprocal computations.
+fn taylor_sin_bounds_per_term(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
+    let x_squared = x.mul(x);
     let mut sum_lo = Binary::zero();
     let mut sum_hi = Binary::zero();
     let mut power = x.clone(); // x^1
@@ -817,7 +831,7 @@ fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, 
 
     for k in 1..n {
         // Advance state: power *= x^2, factorial *= (2k)(2k+1)
-        power = power.mul(x).mul(x);
+        power = power.mul(&x_squared);
         let k_big = BigInt::from(k);
         factorial *= &k_big * 2_i64 * (&k_big * 2_i64 + 1_i64);
 
@@ -846,7 +860,7 @@ fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, 
     // Derive error bound from the loop's final power/factorial state.
     // After the loop, power = x^(2(n-1)+1) = x^(2n-1) and factorial = (2n-1)!.
     // The error term needs |x|^(2n+1) / (2n+1)!, so advance one more step.
-    power = power.mul(x).mul(x); // x^(2n+1)
+    power = power.mul(&x_squared); // x^(2n+1)
     let n_big = BigInt::from(n);
     factorial *= &n_big * 2_i64 * (&n_big * 2_i64 + 1_i64); // (2n+1)!
 
@@ -862,6 +876,204 @@ fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, 
     );
 
     (sum_lo.sub(&error), sum_hi.add(&error))
+}
+
+/// Rational accumulation Taylor series computation. Accumulates the exact sum
+/// as a single fraction P/Q, performing only two BigInt divisions at the end.
+///
+/// The mantissa powers x^(2k+1) have varying binary exponents e*(2k+1). To sum
+/// them as integers over a common denominator, all terms are aligned to a common
+/// exponent by shifting mantissas appropriately.
+fn taylor_sin_bounds_rational(
+    x: &Binary,
+    n: usize,
+    target_precision: usize,
+) -> (Binary, Binary) {
+    let m = x.mantissa();
+    let e = x.exponent();
+
+    // Precompute m^2 for the recurrence power_{k} = power_{k-1} * m^2
+    let m_sq = m * m;
+
+    // Compute remaining factorial ratios: R_k = (2n-1)! / (2k+1)!
+    // R_{n-1} = 1, R_{k-1} = R_k * (2k) * (2k+1)
+    let mut remaining_factors: Vec<BigInt> = Vec::with_capacity(n);
+    remaining_factors.resize(n, BigInt::zero());
+    let n_minus_1 = crate::sane_arithmetic!(n; n - 1);
+    remaining_factors[n_minus_1] = BigInt::one();
+    for k in (1..n).rev() {
+        let k_big = BigInt::from(k);
+        let two_k = &k_big * 2_i64;
+        let two_k_plus_1 = &two_k + 1_i64;
+        let k_minus_1 = crate::sane_arithmetic!(k; k - 1);
+        remaining_factors[k_minus_1] = &remaining_factors[k] * &two_k * &two_k_plus_1;
+    }
+
+    // The common denominator Q = (2n-1)! = R_0
+    let common_factorial = remaining_factors[0].clone();
+
+    // Compute the common exponent for alignment.
+    // Term k has exponent e*(2k+1). We align all to the minimum exponent.
+    let common_exp: BigInt;
+    let shift_per_step: BigInt;
+    let first_shift: BigInt;
+
+    let n_big = BigInt::from(n);
+    if e.is_negative() {
+        let two_n_minus_1 = &n_big * 2_i64 - 1_i64;
+        common_exp = e * &two_n_minus_1;
+        let neg_two_e = BigInt::from(-2_i64) * e;
+        first_shift = &neg_two_e * (&n_big - 1_i64);
+        shift_per_step = -neg_two_e;
+    } else if e.is_positive() {
+        common_exp = e.clone();
+        first_shift = BigInt::zero();
+        shift_per_step = BigInt::from(2_i64) * e;
+    } else {
+        common_exp = BigInt::zero();
+        first_shift = BigInt::zero();
+        shift_per_step = BigInt::zero();
+    };
+
+    // Accumulate: P = sum_k { (-1)^k * m^(2k+1) * R_k * 2^(shift_k) }
+    let mut numerator = BigInt::zero();
+    let mut power_m = m.clone(); // m^(2k+1), starts at m^1
+    let mut current_shift = first_shift;
+
+    for (k, remaining_factor) in remaining_factors.iter().enumerate() {
+        let signed_power = if k % 2 == 0 {
+            power_m.clone()
+        } else {
+            -&power_m
+        };
+        let mut contribution = signed_power * remaining_factor;
+
+        if let Some(shift_usize) = current_shift.to_usize()
+            && shift_usize > 0
+        {
+            contribution <<= shift_usize;
+        }
+
+        numerator += contribution;
+
+        if k < n_minus_1 {
+            power_m *= &m_sq;
+            current_shift = &current_shift + &shift_per_step;
+        }
+    }
+
+    // sum = numerator * 2^common_exp / common_factorial
+    let (sum_lo, sum_hi) = divide_bigint_directed(
+        &numerator,
+        &common_exp,
+        &common_factorial,
+        target_precision,
+    );
+
+    // Error bound: |x|^(2n+1) / (2n+1)!
+    power_m *= &m_sq; // advance to m^(2n+1)
+    let error_exp = e * (&n_big * 2_i64 + 1_i64);
+
+    let two_n = &n_big * 2_i64;
+    let two_n_plus_1 = &two_n + 1_i64;
+    let error_factorial = &common_factorial * &two_n * &two_n_plus_1;
+
+    let abs_power_m = BigInt::from(power_m.magnitude().clone());
+    let (_, error) = divide_bigint_directed(
+        &abs_power_m,
+        &error_exp,
+        &error_factorial,
+        target_precision,
+    );
+
+    (sum_lo.sub(&error), sum_hi.add(&error))
+}
+
+/// Computes `numerator * 2^exponent / denominator` with directed rounding,
+/// returning both (floor, ceil) as Binary values.
+///
+/// This performs a single BigInt division with enough extra precision bits to
+/// produce `target_precision` significant bits in the quotient. Unlike
+/// `divide_by_factorial_directed` (which computes a reciprocal then multiplies),
+/// this function handles the case where numerator and denominator are of comparable
+/// magnitude without losing precision.
+fn divide_bigint_directed(
+    numerator: &BigInt,
+    exponent: &BigInt,
+    denominator: &BigInt,
+    target_precision: usize,
+) -> (Binary, Binary) {
+    use num_integer::Integer;
+
+    if denominator.is_zero() || numerator.is_zero() {
+        return (Binary::zero(), Binary::zero());
+    }
+
+    // We want to compute numerator * 2^exponent / denominator with target_precision
+    // significant bits. To do this as integer arithmetic, shift the numerator left
+    // by enough bits so the integer quotient has the desired precision.
+    //
+    // The quotient |numerator| / |denominator| has roughly
+    // (bits(numerator) - bits(denominator)) bits. We need target_precision bits in
+    // the result, so shift by: target_precision + bits(denominator) - bits(numerator) + 1
+    // (the +1 ensures we don't lose a bit from rounding).
+    let num_bits = crate::sane::bits_as_usize(numerator.magnitude().bits());
+    let den_bits = crate::sane::bits_as_usize(denominator.magnitude().bits());
+    // We need target_precision significant bits in the quotient.
+    // extra_shift = target_precision + max(0, den_bits - num_bits) + 1
+    let deficit = den_bits.saturating_sub(num_bits);
+    let extra_shift = crate::sane_arithmetic!(target_precision, deficit;
+        target_precision + deficit + 1);
+
+    let is_negative = numerator.is_negative();
+    let abs_num = numerator.magnitude();
+    let abs_den = denominator.magnitude();
+
+    // Shift numerator left by extra_shift bits
+    let shifted_num = abs_num << extra_shift;
+
+    // Integer division: quotient = floor(shifted_num / abs_den)
+    let (quotient, remainder) = shifted_num.div_rem(abs_den);
+    let has_remainder = !remainder.is_zero();
+
+    // The exact value is:
+    //   sign * quotient * 2^(exponent - extra_shift) / 1
+    //   (with possible +1 to quotient for ceiling)
+    //
+    // For floor (toward -inf):
+    //   positive: use quotient as-is (truncation = floor for positive)
+    //   negative: if has_remainder, add 1 to quotient (round away from zero = toward -inf)
+    // For ceil (toward +inf):
+    //   positive: if has_remainder, add 1 to quotient (round away from zero = toward +inf)
+    //   negative: use quotient as-is (truncation = ceil for negative)
+    let result_exp = exponent - BigInt::from(extra_shift);
+
+    let floor_quotient = if is_negative && has_remainder {
+        &quotient + 1u32
+    } else {
+        quotient.clone()
+    };
+    let ceil_quotient = if !is_negative && has_remainder {
+        &quotient + 1u32
+    } else {
+        quotient
+    };
+
+    let floor_mantissa = if is_negative {
+        -BigInt::from(floor_quotient)
+    } else {
+        BigInt::from(floor_quotient)
+    };
+    let ceil_mantissa = if is_negative {
+        -BigInt::from(ceil_quotient)
+    } else {
+        BigInt::from(ceil_quotient)
+    };
+
+    (
+        Binary::new(floor_mantissa, result_exp.clone()),
+        Binary::new(ceil_mantissa, result_exp),
+    )
 }
 
 /// Divides a Binary by a BigInt factorial with directed rounding.
@@ -1554,4 +1766,5 @@ mod tests {
         assert!(lower <= bin(-1, 0), "lower bound should be <= -1");
         assert!(upper >= bin(1, 0), "upper bound should be >= 1");
     }
+
 }
