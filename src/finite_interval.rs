@@ -51,9 +51,9 @@ impl FiniteInterval {
         &self.lower
     }
 
-    /// Returns the upper bound (cloned for ownership).
-    pub fn hi(&self) -> Binary {
-        self.upper.clone()
+    /// Returns the upper bound.
+    pub fn hi(&self) -> &Binary {
+        &self.upper
     }
 
     /// Alias for `lo()` (compatibility with code that used `Interval::small()`).
