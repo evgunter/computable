@@ -151,8 +151,9 @@ impl Computable {
 
     /// Computes the n-th root of this computable number.
     ///
-    /// Uses binary search (bisection) for guaranteed convergence with provably
-    /// correct bounds. For each refinement step, the interval is halved.
+    /// Uses Newton-Raphson iteration for quadratic convergence with provably
+    /// correct bounds. Each refinement step approximately doubles the number
+    /// of correct bits.
     ///
     /// # Arguments
     /// * `degree` - The root degree (n in x^(1/n)). Must be >= 1, enforced by the type system.
@@ -169,7 +170,7 @@ impl Computable {
         let node = Node::new(Arc::new(NthRootOp {
             inner: Arc::clone(&self.node),
             degree,
-            bisection_state: RwLock::new(None),
+            newton_state: RwLock::new(None),
         }));
         Self { node }
     }
