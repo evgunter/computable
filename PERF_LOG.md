@@ -156,5 +156,43 @@ Status: COMPLETE - MERGED
 | seq_refine | ~4.3ms | 226us | **~19x** |
 | inv_sum_64 | ~5ms | 153us | **~33x** |
 
-### Experiment 10: NthRoot Newton's Method
-Status: IN PROGRESS (435 insertions, benchmarking)
+### Experiment 10: NthRoot Newton's Method (commit 22ad53f)
+Status: COMPLETE - MERGED
+- Complete replacement of bisection with Newton-Raphson
+- Quadratic convergence: ~9 steps for 256 bits instead of ~256 bisection steps
+- Precision cap from target_width_exp prevents runaway mantissa growth
+- Directed rounding: binary_div_ceil for upper, binary_div_floor for lower
+- Impact: sqrt2_256 ~35% faster on top of all prior optimizations
+
+### Experiment 11: Hyperfine A/B Interleaved Comparison (commit 22ad53f vs a158cd9)
+Status: COMPLETE
+Method: Built targeted.rs at both commits, hyperfine with --warmup 2 --min-runs 10,
+criterion with --warm-up-time 1 --measurement-time 5 --sample-size 100, all serial.
+
+| Benchmark | Baseline (a158cd9) | Optimized (22ad53f) | Speedup |
+|-----------|-------------------|---------------------|---------|
+| sqrt2_256 | 1.38ms | 71.7us | **19.3x** |
+| sin_2_256 | 1.85ms | 447us | **4.1x** |
+| pi_256 | 276.6us | 206.3us | **1.3x** |
+| inv_10_256 | 342.7us | 281.5us | **1.2x** |
+| inv_sum_64 | 145.4us | 98.6us | **1.5x** |
+| seq_refine | 246.2us | 146.6us | **1.7x** |
+
+Note: These are per-iteration criterion numbers measured on a quiet system.
+The targeted benchmarks measure individual operations, not the full multi-term
+benchmarks (integer_roots=1000 terms, sin=100 terms) which have additional
+coordinator overhead.
+
+### Experiment 12: Sin Range Reduction Optimization (commit 0757e21)
+Status: COMPLETE - MERGED
+Four optimizations:
+1. Exponent-shift for two_pi/half_pi (avoid BigInt multiply + normalize)
+2. Early return in reduce_to_pi_range if input already in [-pi, pi]
+3. Pre-compute hi() values to avoid redundant BigInt additions
+4. Eliminate interval_neg() allocations with direct negation
+- Impact: sin benchmarks ~35% faster (agent's measurements: bits=4 37%, bits=16 36%, bits=64 32%)
+
+### Experiment 13: Wave 3 Optimization Agents
+Status: IN PROGRESS
+- Inline i64 exponents for Binary type (avoid BigInt allocation for exponents)
+- Coordinator batch updates for summation/complex benchmarks
