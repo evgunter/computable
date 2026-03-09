@@ -76,7 +76,8 @@ impl Prefix {
                         XExponent::NegInf => XBinary::Finite(inner.clone()),
                         XExponent::PosInf => XBinary::NegInf,
                         XExponent::Finite(e) => {
-                            let width = Binary::new(BigInt::one(), BigInt::from(*e));
+                            let width =
+                                Binary::new_normalized(BigInt::one(), BigInt::from(*e));
                             XBinary::Finite(inner.sub(&width))
                         }
                     }
@@ -93,7 +94,7 @@ impl Prefix {
                 XExponent::NegInf => XBinary::Finite(Binary::zero()),
                 XExponent::Finite(e) => {
                     // lower = -2^e
-                    XBinary::Finite(Binary::new(-BigInt::one(), BigInt::from(*e)))
+                    XBinary::Finite(Binary::new_normalized(-BigInt::one(), BigInt::from(*e)))
                 }
             },
         }
@@ -116,7 +117,8 @@ impl Prefix {
                         XExponent::NegInf => XBinary::Finite(inner.clone()),
                         XExponent::PosInf => XBinary::PosInf,
                         XExponent::Finite(e) => {
-                            let width = Binary::new(BigInt::one(), BigInt::from(*e));
+                            let width =
+                                Binary::new_normalized(BigInt::one(), BigInt::from(*e));
                             XBinary::Finite(inner.add(&width))
                         }
                     }
@@ -130,7 +132,7 @@ impl Prefix {
                 XExponent::NegInf => XBinary::Finite(Binary::zero()),
                 XExponent::Finite(e) => {
                     // upper = 2^e
-                    XBinary::Finite(Binary::new(BigInt::one(), BigInt::from(*e)))
+                    XBinary::Finite(Binary::new_normalized(BigInt::one(), BigInt::from(*e)))
                 }
             },
         }
@@ -438,9 +440,10 @@ impl From<&PrefixBounds> for Prefix {
     ///
     /// PrefixBounds represents `[mantissa * 2^exponent, (mantissa + 1) * 2^exponent]`.
     fn from(pb: &PrefixBounds) -> Self {
-        let lower = Binary::new(pb.mantissa.clone(), pb.exponent.clone());
+        let exponent = pb.exponent.clone();
+        let lower = Binary::new(pb.mantissa.clone(), exponent.clone());
         let upper_mantissa = &pb.mantissa + BigInt::one();
-        let upper = Binary::new(upper_mantissa, pb.exponent.clone());
+        let upper = Binary::new(upper_mantissa, exponent);
 
         // Determine if zero-crossing
         if lower.mantissa().is_negative() && upper.mantissa().is_positive() {

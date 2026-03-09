@@ -180,8 +180,8 @@ fn sin_bounds(
     pi_bounds: &Bounds,
     num_terms: &BigInt,
 ) -> Result<Bounds, ComputableError> {
-    let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
-    let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
+    let pos_one = Binary::one();
+    let neg_one = pos_one.neg();
 
     // Extract finite bounds, or return [-1, 1] for any infinite bounds
     let lower = input_bounds.small();
@@ -533,8 +533,8 @@ fn reduce_to_half_pi_range_interval(
     // This happens when the interval crosses a branch boundary (e.g., between
     // center and upper regions) without containing pi/2 or -pi/2.
     // Compute conservative bounds at both endpoints and take their union.
-    let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
-    let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
+    let pos_one = Binary::one();
+    let neg_one = pos_one.neg();
 
     let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
     let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);

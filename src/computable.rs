@@ -138,6 +138,7 @@ impl Computable {
     pub fn sin(self) -> Self {
         let pi_node = Node::new(Arc::new(PiOp {
             num_terms: RwLock::new(crate::ops::pi::INITIAL_PI_TERMS),
+            bounds_cache: RwLock::new(None),
         }));
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
@@ -208,10 +209,7 @@ impl Computable {
                         );
                     }
                 }
-                Computable::constant(Binary::new(
-                    num_bigint::BigInt::from(1),
-                    num_bigint::BigInt::from(0),
-                ))
+                Computable::constant(Binary::one())
             }
             Some(nonzero_exp) => {
                 let node = Node::new(Arc::new(PowOp {

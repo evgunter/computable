@@ -93,6 +93,7 @@ fn precision_bits_for_num_terms(num_terms: usize) -> usize {
 pub fn pi() -> Computable {
     let node = Node::new(Arc::new(PiOp {
         num_terms: RwLock::new(INITIAL_PI_TERMS),
+        bounds_cache: RwLock::new(None),
     }));
     Computable::from_node(node)
 }
@@ -119,19 +120,52 @@ pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
     compute_pi_bounds(num_terms, reciprocal_precision)
 }
 
+/// Cached inputs and result for `compute_bounds`, avoiding redundant Machin
+/// formula recomputation when `compute_bounds` is called multiple times at the
+/// same `num_terms` (which happens between `refine_step` calls).
+pub struct PiBoundsCache {
+    num_terms: usize,
+    result: Bounds,
+}
+
 /// Pi computation operation using Machin's formula.
 pub struct PiOp {
     pub num_terms: RwLock<usize>,
+    /// Cache of the last `compute_bounds` result, keyed on `num_terms`.
+    /// Eliminates redundant Taylor series recomputation during bound propagation.
+    pub bounds_cache: RwLock<Option<PiBoundsCache>>,
 }
 
 impl NodeOp for PiOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let num_terms = *self.num_terms.read();
+
+        // Check cache: if num_terms hasn't changed, return the cached result.
+        {
+            let cache = self.bounds_cache.read();
+            if let Some(cached) = cache.as_ref() {
+                if cached.num_terms == num_terms {
+                    return Ok(cached.result.clone());
+                }
+            }
+        }
+
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
         // Normalize to prefix form to prevent precision accumulation
         let finite = FiniteBounds::new(pi_lo, pi_hi);
-        normalize_finite_to_bounds(&finite)
+        let result = normalize_finite_to_bounds(&finite)?;
+
+        // Store in cache for future calls with the same num_terms.
+        {
+            let mut cache = self.bounds_cache.write();
+            *cache = Some(PiBoundsCache {
+                num_terms,
+                result: result.clone(),
+            });
+        }
+
+        Ok(result)
     }
 
     fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {

@@ -28,7 +28,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
@@ -237,7 +237,7 @@ fn initialize_nth_root_bisection_state(
     };
 
     // Initial bounds for bisection: [0 or small, max(1, target)]
-    let one = Binary::new(BigInt::one(), BigInt::zero());
+    let one = Binary::one();
 
     let bisection_lower = if actual_target.mantissa().is_zero() {
         Binary::zero()

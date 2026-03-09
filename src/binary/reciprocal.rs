@@ -90,9 +90,14 @@ pub fn reciprocal_rounded_abs_extended(
 }
 
 /// Computes the exponent for a reciprocal result given the precision.
+///
+/// The reciprocal exponent is `-precision_bits`. Returns an error if
+/// `precision_bits` is negative, which would indicate an invalid precision.
 fn reciprocal_exponent(precision_bits: &BigInt) -> Result<BigInt, BinaryError> {
-    let precision = precision_bits_to_exponent(precision_bits)?;
-    Ok(-precision)
+    if precision_bits.is_negative() {
+        return Err(BinaryError::ReciprocalOverflow);
+    }
+    Ok(-precision_bits.clone())
 }
 
 /// Converts precision bits to a usize shift amount.
@@ -103,14 +108,6 @@ fn precision_bits_to_usize(precision_bits: &BigInt) -> Result<usize, BinaryError
     precision_bits
         .to_usize()
         .ok_or(BinaryError::ReciprocalOverflow)
-}
-
-/// Converts precision bits to an exponent value.
-fn precision_bits_to_exponent(precision_bits: &BigInt) -> Result<BigInt, BinaryError> {
-    if precision_bits.is_negative() {
-        return Err(BinaryError::ReciprocalOverflow);
-    }
-    Ok(precision_bits.clone())
 }
 
 #[cfg(test)]

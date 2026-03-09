@@ -93,7 +93,8 @@ impl PrefixBounds {
 
     /// Returns the midpoint: (2 * mantissa + 1) * 2^(exponent - 1).
     pub fn midpoint(&self) -> Binary {
-        Binary::new(&self.mantissa * 2 + 1, self.exponent.clone() - 1)
+        // 2*k + 1 is always odd, so skip normalization.
+        Binary::new_normalized(&self.mantissa * 2 + 1, self.exponent.clone() - 1)
     }
 }
 

@@ -256,7 +256,7 @@ fn update_denominators(
         (lower_finite, upper_finite)
     };
 
-    let one = Binary::new(BigInt::from(1_i32), BigInt::from(0_i32));
+    let one = Binary::one();
 
     // Update abs_upper (denominator for lo sequence).
     if new_abs_upper != state.abs_upper {
@@ -308,7 +308,8 @@ fn newton_step(approx: &mut ReciprocalApprox, denom: &Binary) {
     let gap = approx.upper.sub(x);
 
     // x_new = x * (2 - a * x)
-    let two = Binary::new(BigInt::from(1_i32), BigInt::from(1_i32));
+    // 2 = 1 * 2^1; mantissa 1 is odd, so skip normalization.
+    let two = Binary::new_normalized(BigInt::from(1_i32), BigInt::from(1_i32));
     let ax = denom.mul(x);
     let two_minus_ax = two.sub(&ax);
     let x_new = x.mul(&two_minus_ax);

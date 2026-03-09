@@ -6,8 +6,7 @@
 
 use std::num::NonZeroU32;
 
-use num_bigint::BigInt;
-use num_traits::{One, Signed};
+use num_traits::Signed;
 
 use crate::binary::{Binary, XBinary};
 
@@ -35,12 +34,12 @@ use crate::binary::{Binary, XBinary};
 /// ```
 pub fn binary_pow(x: &Binary, n: u32) -> Binary {
     if n == 0 {
-        return Binary::new(BigInt::one(), BigInt::from(0));
+        return Binary::one();
     }
 
     // Use exponentiation by squaring for O(log n) complexity.
     // Algorithm: x^n = (x^2)^(n/2) if n is even, x * (x^2)^((n-1)/2) if n is odd.
-    let mut result = Binary::new(BigInt::one(), BigInt::from(0_i32));
+    let mut result = Binary::one();
     let mut base = x.clone();
     let mut exp = n;
 

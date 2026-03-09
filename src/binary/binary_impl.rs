@@ -55,6 +55,14 @@ impl Binary {
         }
     }
 
+    /// Returns the value one (1 = 1 * 2^0).
+    pub fn one() -> Self {
+        Self {
+            mantissa: BigInt::from(1_i32),
+            exponent: BigInt::zero(),
+        }
+    }
+
     /// Returns a reference to the mantissa.
     pub fn mantissa(&self) -> &BigInt {
         &self.mantissa
