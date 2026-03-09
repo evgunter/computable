@@ -96,6 +96,8 @@ pub struct RefinementGraph {
     pub nodes: HashMap<usize, Arc<Node>>,    // node id -> node
     pub parents: HashMap<usize, Vec<usize>>, // child id -> parent ids
     pub refiners: Vec<Arc<Node>>,
+    /// Size for Vec-based budget maps (max node ID + 1).
+    budget_vec_len: usize,
 }
 
 impl RefinementGraph {
@@ -121,11 +123,23 @@ impl RefinementGraph {
             }
         }
 
+        // Pre-compute Vec size for budget maps: max_node_id + 1.
+        // Safe: nodes is non-empty (contains at least root), and node IDs
+        // are sequential from a global AtomicUsize counter.
+        let budget_vec_len = nodes
+            .keys()
+            .copied()
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .unwrap_or_else(|| unreachable!("node ID at usize::MAX implies memory exhaustion"));
+
         let graph = Self {
             root,
             nodes,
             parents,
             refiners,
+            budget_vec_len,
         };
 
         Ok(graph)
@@ -254,18 +268,20 @@ impl RefinementGraph {
                 // the BFS used for budget propagation and tracking whether
                 // any ancestor had budget_depends_on_bounds.
                 let budget_is_static: Vec<bool> = {
-                    let mut node_is_static: HashMap<usize, bool> = HashMap::new();
-                    node_is_static.insert(self.root.id, true);
+                    let mut node_is_static: Vec<Option<bool>> =
+                        vec![None; self.budget_vec_len];
+                    node_is_static[self.root.id] = Some(true);
                     let mut queue = VecDeque::new();
                     queue.push_back(self.root.id);
                     while let Some(node_id) = queue.pop_front() {
                         let Some(node) = self.nodes.get(&node_id) else {
                             continue;
                         };
-                        let parent_static = node_is_static.get(&node_id).copied().unwrap_or(true);
-                        let child_static = parent_static && !node.op.budget_depends_on_bounds();
+                        let parent_static = node_is_static[node_id].unwrap_or(true);
+                        let child_static =
+                            parent_static && !node.op.budget_depends_on_bounds();
                         for child in node.children() {
-                            let entry = node_is_static.entry(child.id).or_insert(true);
+                            let entry = node_is_static[child.id].get_or_insert(true);
                             // If ANY path is non-static, mark non-static.
                             *entry = *entry && child_static;
                             queue.push_back(child.id);
@@ -273,7 +289,7 @@ impl RefinementGraph {
                     }
                     refiner_nodes
                         .iter()
-                        .map(|node| node_is_static.get(&node.id).copied().unwrap_or(true))
+                        .map(|node| node_is_static[node.id].unwrap_or(true))
                         .collect()
                 };
                 // Count of active non-leaf refiners with dynamic budgets.
@@ -318,7 +334,7 @@ impl RefinementGraph {
                 let mut refiner_budgets: Vec<Option<UXBinary>> = {
                     refiner_nodes
                         .iter()
-                        .map(|node| cached_budget_map.get(&node.id).cloned())
+                        .map(|node| cached_budget_map[node.id].clone())
                         .collect()
                 };
                 let mut last_refresh_root_we = self.root.get_prefix()?.width_exponent();
@@ -380,7 +396,7 @@ impl RefinementGraph {
                         let map = self.compute_propagated_budgets(&target_width, Some(&cached_budget_map));
                         for (i, node) in refiner_nodes.iter().enumerate() {
                             if !budget_is_static[i] {
-                                refiner_budgets[i] = map.get(&node.id).cloned();
+                                refiner_budgets[i] = map[node.id].clone();
                             }
                         }
                         cached_budget_map = map;
@@ -779,14 +795,15 @@ impl RefinementGraph {
     /// tightest (minimum) budget.
     ///
     /// Refiners that are not reachable through passive combinators (e.g. children
-    /// of other refiners) will not appear in the returned map.
+    /// of other refiners) will not appear in the returned vec (their slot will
+    /// be `None`).
     fn compute_propagated_budgets(
         &self,
         target_width: &UXBinary,
-        cached_budgets: Option<&HashMap<usize, UXBinary>>,
-    ) -> HashMap<usize, UXBinary> {
-        let mut budgets: HashMap<usize, UXBinary> = HashMap::with_capacity(self.nodes.len());
-        budgets.insert(self.root.id, target_width.clone());
+        cached_budgets: Option<&[Option<UXBinary>]>,
+    ) -> Vec<Option<UXBinary>> {
+        let mut budgets: Vec<Option<UXBinary>> = vec![None; self.budget_vec_len];
+        budgets[self.root.id] = Some(target_width.clone());
 
         let mut queue = VecDeque::new();
         queue.push_back(self.root.id);
@@ -796,7 +813,7 @@ impl RefinementGraph {
                 continue;
             };
 
-            let Some(budget) = budgets.get(&node_id).cloned() else {
+            let Some(budget) = budgets[node_id].clone() else {
                 continue;
             };
 
@@ -805,14 +822,16 @@ impl RefinementGraph {
             // and copy their cached budgets instead.
             if let Some(cached) = cached_budgets
                 && !node.op.budget_depends_on_bounds()
-                && let Some(cached_budget) = cached.get(&node_id)
+                && let Some(cached_budget) = cached.get(node_id).and_then(|b| b.as_ref())
                 && *cached_budget == budget
             {
                 let children = node.children();
                 let mut all_cached = true;
                 for child in &children {
-                    if let Some(cached_child) = cached.get(&child.id) {
-                        let entry = budgets.entry(child.id).or_insert(UXBinary::Inf);
+                    if let Some(cached_child) =
+                        cached.get(child.id).and_then(|b| b.as_ref())
+                    {
+                        let entry = budgets[child.id].get_or_insert(UXBinary::Inf);
                         if *cached_child < *entry {
                             *entry = cached_child.clone();
                             queue.push_back(child.id);
@@ -830,7 +849,7 @@ impl RefinementGraph {
             let children = node.children();
             for (child_idx, child) in children.iter().enumerate() {
                 let child_budget = node.op.child_demand_budget(&budget, child_idx);
-                let entry = budgets.entry(child.id).or_insert(UXBinary::Inf);
+                let entry = budgets[child.id].get_or_insert(UXBinary::Inf);
                 if child_budget < *entry {
                     *entry = child_budget;
                     queue.push_back(child.id);
