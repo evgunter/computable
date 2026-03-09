@@ -141,21 +141,33 @@ impl RefinementGraph {
             return Ok(root_prefix.to_bounds());
         }
 
+        // Only refine nodes whose bounds aren't already exact.
+        let refiner_nodes: Vec<Arc<Node>> = self
+            .refiners
+            .iter()
+            .filter(|node| {
+                !node
+                    .cached_bounds()
+                    .is_some_and(|b| b.width().is_zero())
+            })
+            .map(Arc::clone)
+            .collect();
+
+        // Fast path: single leaf refiner — skip thread spawn and channel overhead.
+        // When there's exactly one non-exact refiner, it's trivially a leaf (no
+        // other active refiners can appear in its subtree). We run the refinement
+        // loop synchronously, propagating updates via apply_update.
+        if refiner_nodes.len() == 1 {
+            return self.refine_single::<MAX_REFINEMENT_ITERATIONS>(
+                &refiner_nodes[0],
+                tolerance_exp,
+            );
+        }
+
         let mut outcome = None;
         thread::scope(|scope| {
             let stop_flag = Arc::new(StopFlag::new());
             let (update_tx, update_rx) = unbounded();
-
-            // Only spawn threads for refiners whose bounds aren't already exact.
-            let mut refiner_nodes: Vec<Arc<Node>> = Vec::new();
-            for node in &self.refiners {
-                let exact = node
-                    .cached_bounds()
-                    .is_some_and(|b| b.width().is_zero());
-                if !exact {
-                    refiner_nodes.push(Arc::clone(node));
-                }
-            }
 
             // Spawn a capped worker pool with a shared command channel.
             // All workers pull from the same queue, so no single worker
@@ -632,6 +644,85 @@ impl RefinementGraph {
             Some(result) => result,
             None => Err(ComputableError::RefinementChannelClosed),
         }
+    }
+
+    /// Synchronous single-refiner refinement loop.
+    ///
+    /// Executes the refinement loop directly without spawning threads or
+    /// creating channels. For single-refiner graphs (e.g. `pi()`, `sqrt()`,
+    /// `inv()`), this avoids significant per-call overhead from thread spawn,
+    /// channel creation, and worker pool management.
+    ///
+    /// The refiner may or may not be the root node. When it's not the root
+    /// (e.g. a BaseOp child under a NthRootOp), `apply_update` propagates
+    /// bounds changes upward through the graph.
+    fn refine_single<const MAX_REFINEMENT_ITERATIONS: usize>(
+        &self,
+        node: &Arc<Node>,
+        tolerance_exp: &XUsize,
+    ) -> Result<Bounds, ComputableError> {
+        let target_width_exp = tolerance_to_exp(tolerance_exp);
+
+        for _step in 0..MAX_REFINEMENT_ITERATIONS {
+            let old_prefix = node.cached_prefix();
+            let mut extra_steps = 0usize;
+
+            // Inner loop: keep refining until the prefix visibly changes or
+            // we exhaust, mirroring the logic in execute_refine_step.
+            loop {
+                match node.refine_step(target_width_exp) {
+                    Ok(true) => {
+                        let bounds = node.op.compute_bounds()?;
+                        let prefix =
+                            Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
+                        let changed = old_prefix.as_ref() != Some(&prefix);
+                        node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
+
+                        if changed || extra_steps >= 16 {
+                            // Propagate upward to parents (handles root != refiner).
+                            self.apply_update(NodeUpdate {
+                                node_id: node.id,
+                                prefix,
+                                bounds,
+                            })?;
+                            break;
+                        }
+                        extra_steps = extra_steps.checked_add(1).unwrap_or_else(|| {
+                            unreachable!("extra_steps bounded by loop break at 16")
+                        });
+                    }
+                    Ok(false) => {
+                        // Converged: update, propagate, and return.
+                        let bounds = node.op.compute_bounds()?;
+                        let prefix =
+                            Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
+                        node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
+                        self.apply_update(NodeUpdate {
+                            node_id: node.id,
+                            prefix,
+                            bounds,
+                        })?;
+                        return self.root.get_bounds();
+                    }
+                    Err(ComputableError::StateUnchanged) => {
+                        // Precision wasn't met (checked at loop top and at
+                        // refine_to entry), and the refiner can't improve.
+                        return Err(ComputableError::StateUnchanged);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+
+            // Check if root precision now meets the target.
+            let root_prefix = self.root.get_prefix()?;
+            if prefix_width_leq(&root_prefix, tolerance_exp) {
+                return Ok(root_prefix.to_bounds());
+            }
+        }
+
+        Err(ComputableError::MaxRefinementIterations {
+            max: MAX_REFINEMENT_ITERATIONS,
+        })
     }
 
     /// Applies a node update and propagates prefix changes upward.
