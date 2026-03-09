@@ -35,7 +35,7 @@
 //!   skip refiners whose bounds are already narrow enough for their position
 //!   in the computation, avoiding wasted work on fast-converging operands
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::thread;
 
@@ -93,8 +93,8 @@ enum RefinerMessage {
 /// Snapshot of the node graph used to coordinate parallel refinement.
 pub struct RefinementGraph {
     pub root: Arc<Node>,
-    pub nodes: HashMap<usize, Arc<Node>>,    // node id -> node
-    pub parents: HashMap<usize, Vec<usize>>, // child id -> parent ids
+    pub nodes: Vec<Option<Arc<Node>>>,  // node id -> node (indexed by node_id)
+    pub parents: Vec<Vec<usize>>,       // child id -> parent ids (indexed by node_id)
     pub refiners: Vec<Arc<Node>>,
     /// Size for Vec-based budget maps (max node ID + 1).
     budget_vec_len: usize,
@@ -102,37 +102,53 @@ pub struct RefinementGraph {
 
 impl RefinementGraph {
     pub fn new(root: Arc<Node>) -> Result<Self, ComputableError> {
-        let mut nodes = HashMap::new();
-        let mut parents: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut refiners = Vec::new();
-
-        let mut stack = vec![Arc::clone(&root)];
-        while let Some(node) = stack.pop() {
-            if nodes.contains_key(&node.id) {
-                continue;
-            }
-            let node_id = node.id;
-            nodes.insert(node_id, Arc::clone(&node));
-
-            if node.is_refiner() {
-                refiners.push(Arc::clone(&node));
-            }
-            for child in node.children() {
-                parents.entry(child.id).or_default().push(node_id);
-                stack.push(child);
+        // First pass: collect all node IDs to determine the Vec size.
+        let mut all_ids = Vec::new();
+        {
+            let mut seen = HashSet::new();
+            let mut stack = vec![Arc::clone(&root)];
+            while let Some(node) = stack.pop() {
+                if !seen.insert(node.id) {
+                    continue;
+                }
+                all_ids.push(node.id);
+                for child in node.children() {
+                    stack.push(child);
+                }
             }
         }
 
-        // Pre-compute Vec size for budget maps: max_node_id + 1.
-        // Safe: nodes is non-empty (contains at least root), and node IDs
+        // Pre-compute Vec size for all indexed Vecs: max_node_id + 1.
+        // Safe: all_ids is non-empty (contains at least root), and node IDs
         // are sequential from a global AtomicUsize counter.
-        let budget_vec_len = nodes
-            .keys()
+        let budget_vec_len = all_ids
+            .iter()
             .copied()
             .max()
             .unwrap_or(0)
             .checked_add(1)
             .unwrap_or_else(|| unreachable!("node ID at usize::MAX implies memory exhaustion"));
+
+        let mut nodes: Vec<Option<Arc<Node>>> = vec![None; budget_vec_len];
+        let mut parents: Vec<Vec<usize>> = vec![Vec::new(); budget_vec_len];
+        let mut refiners = Vec::new();
+
+        let mut stack = vec![Arc::clone(&root)];
+        while let Some(node) = stack.pop() {
+            if nodes[node.id].is_some() {
+                continue;
+            }
+            let node_id = node.id;
+            nodes[node_id] = Some(Arc::clone(&node));
+
+            if node.is_refiner() {
+                refiners.push(Arc::clone(&node));
+            }
+            for child in node.children() {
+                parents[child.id].push(node_id);
+                stack.push(child);
+            }
+        }
 
         let graph = Self {
             root,
@@ -221,9 +237,9 @@ impl RefinementGraph {
                 let mut eligible_count = num_refiners;
 
                 // Build node_id → refiner index mapping for routing responses.
-                let mut refiner_index: HashMap<usize, usize> = HashMap::new();
+                let mut refiner_index: Vec<Option<usize>> = vec![None; self.budget_vec_len];
                 for (i, node) in refiner_nodes.iter().enumerate() {
-                    refiner_index.insert(node.id, i);
+                    refiner_index[node.id] = Some(i);
                 }
 
                 // Determine two properties per refiner:
@@ -238,7 +254,10 @@ impl RefinementGraph {
                 //   passes only through ops with static budgets (AddOp,
                 //   NegOp). Static budgets don't change as bounds tighten,
                 //   so they never need refreshing at wave boundaries.
-                let refiner_id_set: HashSet<usize> = refiner_nodes.iter().map(|n| n.id).collect();
+                let mut refiner_id_set: Vec<bool> = vec![false; self.budget_vec_len];
+                for node in &refiner_nodes {
+                    refiner_id_set[node.id] = true;
+                }
                 // For each refiner, collect the indices of sub-refiners in
                 // its subtree. Leaf refiners have no sub-refiners.
                 let sub_refiner_indices: Vec<Vec<usize>> = refiner_nodes
@@ -248,8 +267,8 @@ impl RefinementGraph {
                         let mut seen = HashSet::new();
                         let mut stack: Vec<Arc<Node>> = node.children();
                         while let Some(child) = stack.pop() {
-                            if refiner_id_set.contains(&child.id)
-                                && let Some(&idx) = refiner_index.get(&child.id)
+                            if refiner_id_set[child.id]
+                                && let Some(&idx) = refiner_index[child.id].as_ref()
                                 && seen.insert(idx)
                             {
                                 subs.push(idx);
@@ -274,7 +293,7 @@ impl RefinementGraph {
                     let mut queue = VecDeque::new();
                     queue.push_back(self.root.id);
                     while let Some(node_id) = queue.pop_front() {
-                        let Some(node) = self.nodes.get(&node_id) else {
+                        let Some(node) = self.nodes[node_id].as_ref() else {
                             continue;
                         };
                         let parent_static = node_is_static[node_id].unwrap_or(true);
@@ -522,12 +541,16 @@ impl RefinementGraph {
                     > {
                         match message {
                             RefinerMessage::Update(update) => {
-                                let idx = refiner_index[&update.node_id];
+                                let idx = refiner_index[update.node_id].unwrap_or_else(|| {
+                                    unreachable!("refiner_index populated for all refiner node IDs")
+                                });
                                 let changed = self.apply_update(update)?;
                                 Ok((idx, None, changed))
                             }
                             RefinerMessage::Exhausted { update, reason } => {
-                                let idx = refiner_index[&update.node_id];
+                                let idx = refiner_index[update.node_id].unwrap_or_else(|| {
+                                    unreachable!("refiner_index populated for all refiner node IDs")
+                                });
                                 let changed = self.apply_update(update)?;
                                 Ok((idx, Some(reason), changed))
                             }
@@ -590,7 +613,7 @@ impl RefinementGraph {
                             // it should count toward that refiner's
                             // sub-responded gate.
                             for &changed_id in changed_nodes {
-                                if let Some(&j) = refiner_index.get(&changed_id) {
+                                if let Some(&j) = refiner_index[changed_id].as_ref() {
                                     if j != idx && !is_leaf_refiner[j] {
                                         if let Some(sub_pos) =
                                             sub_refiner_indices[j].iter().position(|&s| s == idx)
@@ -755,19 +778,19 @@ impl RefinementGraph {
     fn apply_update(&self, update: NodeUpdate) -> Result<Vec<usize>, ComputableError> {
         let mut changed_by_propagation = Vec::new();
         let mut queue = VecDeque::new();
-        if let Some(node) = self.nodes.get(&update.node_id) {
+        if let Some(node) = self.nodes[update.node_id].as_ref() {
             node.set_prefix_and_bounds(update.prefix, update.bounds);
             queue.push_back(node.id);
         }
 
         while let Some(changed_id) = queue.pop_front() {
-            let Some(parents) = self.parents.get(&changed_id) else {
+            let parents = &self.parents[changed_id];
+            if parents.is_empty() {
                 continue;
-            };
+            }
             for parent_id in parents {
-                let parent = self
-                    .nodes
-                    .get(parent_id)
+                let parent = self.nodes[*parent_id]
+                    .as_ref()
                     .ok_or(ComputableError::RefinementChannelClosed)?;
                 let next_bounds = parent.op.compute_bounds()?;
                 let next_prefix = Prefix::from_lower_upper(
@@ -809,7 +832,7 @@ impl RefinementGraph {
         queue.push_back(self.root.id);
 
         while let Some(node_id) = queue.pop_front() {
-            let Some(node) = self.nodes.get(&node_id) else {
+            let Some(node) = self.nodes[node_id].as_ref() else {
                 continue;
             };
 
