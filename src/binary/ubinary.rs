@@ -139,9 +139,16 @@ impl UBinary {
 
         // Fast path: both mantissas fit in u64 — use native arithmetic.
         if let (Some(m_a), Some(m_b)) = (self.mantissa.to_u64(), other.mantissa.to_u64()) {
-            let extra_bits = 64 - m_b.leading_zeros(); // == other.mantissa.bits() as u32
-            let shifted = (m_a as u128) << extra_bits;
-            let quotient = shifted / (m_b as u128);
+            // Safety: subtraction can't underflow because leading_zeros() <= 64,
+            // and the `as u128` widenings are lossless for u64 values.
+            // Division is safe because m_b != 0 (other.mantissa is non-zero by UBinary invariant).
+            #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+            let (extra_bits, quotient) = {
+                let extra_bits = 64 - m_b.leading_zeros();
+                let shifted = (m_a as u128) << extra_bits;
+                let quotient = shifted / (m_b as u128);
+                (extra_bits, quotient)
+            };
             let exponent = self
                 .exponent
                 .checked_sub(other.exponent)

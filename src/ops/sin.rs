@@ -964,8 +964,13 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
     let n_minus_1 = crate::sane_arithmetic!(n; n - 1);
     remaining_factors[n_minus_1] = BigInt::one();
     for k in (1..n).rev() {
-        let two_k = (k as i64) * 2;
-        let two_k_plus_1 = two_k + 1;
+        // k is bounded by n which is a small Taylor-series term count (fits in i64),
+        // so the `as i64` cast and multiplications cannot overflow.
+        #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
+        let (two_k, two_k_plus_1) = {
+            let two_k = (k as i64) * 2;
+            (two_k, two_k + 1)
+        };
         let k_minus_1 = crate::sane_arithmetic!(k; k - 1);
         remaining_factors[k_minus_1] = &remaining_factors[k] * two_k * two_k_plus_1;
     }
@@ -975,25 +980,32 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
 
     // Compute the common exponent for alignment using i64 arithmetic.
     // Term k has exponent e*(2k+1). We align all to the minimum exponent.
-    let n_i64 = n as i64;
-    let common_exp: i64;
-    let shift_per_step: i64;
-    let first_shift: i64;
+    // n is a small Taylor-series term count and e is a bounded exponent,
+    // so the casts and arithmetic here cannot overflow in practice.
+    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
+    let (n_i64, common_exp, shift_per_step, first_shift) = {
+        let n_i64 = n as i64;
+        let common_exp: i64;
+        let shift_per_step: i64;
+        let first_shift: i64;
 
-    if e < 0 {
-        let two_n_minus_1 = n_i64 * 2 - 1;
-        common_exp = e * two_n_minus_1;
-        let neg_two_e = -2 * e;
-        first_shift = neg_two_e * (n_i64 - 1);
-        shift_per_step = -neg_two_e;
-    } else if e > 0 {
-        common_exp = e;
-        first_shift = 0;
-        shift_per_step = 2 * e;
-    } else {
-        common_exp = 0;
-        first_shift = 0;
-        shift_per_step = 0;
+        if e < 0 {
+            let two_n_minus_1 = n_i64 * 2 - 1;
+            common_exp = e * two_n_minus_1;
+            let neg_two_e = -2 * e;
+            first_shift = neg_two_e * (n_i64 - 1);
+            shift_per_step = -neg_two_e;
+        } else if e > 0 {
+            common_exp = e;
+            first_shift = 0;
+            shift_per_step = 2 * e;
+        } else {
+            common_exp = 0;
+            first_shift = 0;
+            shift_per_step = 0;
+        };
+
+        (n_i64, common_exp, shift_per_step, first_shift)
     };
 
     // Accumulate: P = sum_k { (-1)^k * m^(2k+1) * R_k * 2^(shift_k) }
@@ -1009,14 +1021,22 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
         };
 
         if current_shift > 0 {
-            contribution <<= current_shift as usize;
+            // current_shift is non-negative (checked above) and bounded by term count * exponent,
+            // so the cast to usize is safe.
+            #[allow(clippy::as_conversions)]
+            let shift = current_shift as usize;
+            contribution <<= shift;
         }
 
         numerator += contribution;
 
         if k < n_minus_1 {
             power_m *= &m_sq;
-            current_shift += shift_per_step;
+            // shift_per_step and current_shift are bounded by small Taylor-series parameters.
+            #[allow(clippy::arithmetic_side_effects)]
+            {
+                current_shift += shift_per_step;
+            }
         }
     }
 
