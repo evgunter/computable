@@ -366,3 +366,57 @@ Status: COMPLETE - MERGED
 - Eliminate power_m.clone() for even k (use reference instead)
 - Compute remaining_factors with i64 intermediates
 - Use i64 for error bound exponent computation
+
+## Wave 5: Micro-optimizations
+
+### Experiment 24: MulOp Sign-Based Endpoint Reduction (commit aa68fd3)
+Status: COMPLETE - MERGED
+- MulOp::compute_bounds previously computed all 4 endpoint products for every multiplication
+- Checks signs of interval endpoints to determine which 2 products are relevant
+- Both-positive: [a*c, b*d]; Both-negative: [b*d, a*c]; Mixed: 2 products each
+- Falls back to 4 products only when both intervals straddle zero
+
+### Experiment 25: Comparison Bit-Length Fast Paths (commit 1a96508)
+Status: COMPLETE - MERGED
+- UBinary::cmp: replaced Binary conversion (BigUint→BigInt alloc) with O(1) bit-length comparison
+- Binary::cmp_shifted: sign check (O(1)), then magnitude bit-length (O(1)), then shift fallback
+- effective_bit_length = mantissa.bits() + exponent via i128
+
+### Experiment 26: Sin Taylor i64 Exponent Arithmetic (commit 8fcf34d)
+Status: COMPLETE - MERGED
+- divide_bigint_directed: exponent &BigInt → i64
+- Replaced unchecked i64 arithmetic with checked_mul/checked_add
+
+### Experiment 27: Pi Arctan i64 + Budget Pre-allocation (commit e9fee35)
+Status: COMPLETE - MERGED
+- Pi arctan loop: BigInt::from(i) * 2 + 1 → i64→BigInt (2 fewer allocs/iter)
+- Budget propagation: HashMap::with_capacity + cached tolerance_to_uxbinary
+
+## Wave 6: Data Structure + Allocation Optimizations
+
+### Experiment 28: UBinary div_floor Fast Paths (commit 5e0245a)
+Status: COMPLETE - MERGED
+- Power-of-2 divisor (mantissa.bits()==1): exponent subtraction only, skip BigUint division
+- Small mantissa (both fit u64): native u128 arithmetic instead of BigUint
+- Hot path in demand budget propagation (MulOp, InvOp, NthRootOp, SinOp)
+
+### Experiment 29: Prefix from_lower_upper Allocation Reduction (commit b7d728f)
+Status: COMPLETE - MERGED
+- Binary::neg_owned(self) + XBinary::neg_owned(self): avoid clone for owned negation
+- from_lower_upper: match on owned values, eliminate 3 clone() calls
+- finite_bounds_to_prefix: takes owned Binary, eliminates 5 clone() calls
+- magnitude_exponent_abs: works on any sign (4 fewer .neg() allocations)
+- Power-of-two detection: bits==1 check instead of BigUint::one() comparison
+
+### Experiment 30: Sin Taylor Term Estimate + usize (commit eeed001)
+Status: COMPLETE - MERGED
+- Tightened term estimate from precision_bits/3 to precision_bits/4 (~25% fewer terms)
+- num_terms: RwLock<BigInt> → RwLock<usize> (eliminates BigInt::one() alloc per step)
+- Taylor function signatures: &BigInt → usize throughout
+
+### Experiment 31: Budget Maps HashMap→Vec (commit 1f0559f)
+Status: COMPLETE - MERGED
+- compute_propagated_budgets: HashMap<usize, UXBinary> → Vec<Option<UXBinary>>
+- node_is_static: HashMap<usize, bool> → Vec<Option<bool>>
+- No hashing overhead, cache-friendly sequential access
+- Pre-allocated to max_node_id + 1
