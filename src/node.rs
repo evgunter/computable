@@ -244,22 +244,50 @@ impl Node {
     }
 
     /// Returns exact bounds, computing and caching if needed.
+    ///
+    /// Only caches bounds (not prefix) to avoid the overhead of
+    /// `Prefix::from_lower_upper` on every intermediate node during
+    /// cascading evaluation. The prefix is derived lazily by
+    /// `get_prefix()` when needed.
     pub fn get_bounds(&self) -> Result<Bounds, ComputableError> {
         if let Some(bounds) = self.cached_bounds() {
             return Ok(bounds);
         }
         let bounds = self.op.compute_bounds()?;
-        self.set_bounds(bounds.clone());
+        {
+            let mut cache = self.bounds_cache.write();
+            *cache = Some(bounds.clone());
+        }
         Ok(bounds)
     }
 
     /// Returns cached prefix, computing and caching if needed.
+    ///
+    /// If bounds are already cached (from `get_bounds()`), derives the
+    /// prefix from those bounds without recomputing them. This avoids
+    /// redundant `compute_bounds()` calls during cascading evaluation
+    /// where `get_bounds()` has already been called on children.
+    ///
+    /// Uses direct cache writes (no condvar notification) since this is
+    /// initial lazy evaluation, not a refinement update. Notifications
+    /// are only needed when bounds *change* during refinement (via
+    /// `set_prefix` / `set_prefix_and_bounds`).
     pub fn get_prefix(&self) -> Result<Prefix, ComputableError> {
         if let Some(prefix) = self.cached_prefix() {
             return Ok(prefix);
         }
-        let prefix = self.compute_prefix()?;
-        self.set_prefix(prefix.clone());
+        // If bounds are cached, derive prefix from them. This is
+        // cheaper than compute_prefix() which would re-call
+        // compute_bounds() on children.
+        let prefix = if let Some(bounds) = self.cached_bounds() {
+            Prefix::from_lower_upper(bounds.small().clone(), bounds.large())
+        } else {
+            self.compute_prefix()?
+        };
+        {
+            let mut cache = self.prefix_cache.write();
+            *cache = Some(prefix.clone());
+        }
         Ok(prefix)
     }
 
@@ -277,6 +305,7 @@ impl Node {
     }
 
     /// Sets the exact bounds cache and derives prefix from it.
+    #[allow(dead_code)]
     pub fn set_bounds(&self, bounds: Bounds) {
         let prefix = Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
         self.set_prefix_and_bounds(prefix, bounds);

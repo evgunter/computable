@@ -149,8 +149,8 @@ impl RefinementGraph {
             let mut refiner_nodes: Vec<Arc<Node>> = Vec::new();
             for node in &self.refiners {
                 let exact = node
-                    .cached_prefix()
-                    .is_some_and(|p| p.width_exponent() == XIsize::NegInf);
+                    .cached_bounds()
+                    .is_some_and(|b| b.width().is_zero());
                 if !exact {
                     refiner_nodes.push(Arc::clone(node));
                 }
@@ -190,6 +190,7 @@ impl RefinementGraph {
                 let mut all_state_unchanged = true;
                 let mut steps = vec![0usize; num_refiners];
                 let mut outstanding = vec![false; num_refiners];
+                let mut outstanding_count = 0usize;
                 let mut eligible_count = num_refiners;
 
                 // Build node_id → refiner index mapping for routing responses.
@@ -262,7 +263,12 @@ impl RefinementGraph {
                         .map(|node| node_is_static.get(&node.id).copied().unwrap_or(true))
                         .collect()
                 };
-                let _any_budget_dynamic = budget_is_static.iter().any(|&s| !s);
+                // Count of active non-leaf refiners with dynamic budgets.
+                // Used to quickly check if budget refresh is needed without
+                // scanning all N refiners each iteration.
+                let mut dynamic_nonleaf_count = (0..num_refiners)
+                    .filter(|&i| !budget_is_static[i] && !is_leaf_refiner[i])
+                    .count();
 
                 // Track whether each refiner should be re-dispatched.
                 // True initially (first dispatch) and when another refiner
@@ -308,7 +314,7 @@ impl RefinementGraph {
                     //    phase, and before the loop via the pre-spawn check at the
                     //    top of refine_to. No need to re-check here.)
                     let any_eligible = eligible_count > 0;
-                    let any_outstanding = outstanding.iter().any(|&o| o);
+                    let any_outstanding = outstanding_count > 0;
 
                     if !any_eligible && !any_outstanding {
                         let all_exhausted = active.iter().all(|&a| !a);
@@ -350,9 +356,7 @@ impl RefinementGraph {
                     // with dynamic budgets. Leaf refiners always
                     // self-redispatch, so budget loosening doesn't change
                     // their dispatch behavior.
-                    let needs_refresh = !any_outstanding
-                        && (0..num_refiners)
-                            .any(|i| active[i] && !budget_is_static[i] && !is_leaf_refiner[i]);
+                    let needs_refresh = !any_outstanding && dynamic_nonleaf_count > 0;
                     if needs_refresh {
                         let map = self.compute_propagated_budgets(tolerance_exp);
                         for (i, node) in refiner_nodes.iter().enumerate() {
@@ -374,8 +378,8 @@ impl RefinementGraph {
                         }
                         let skip = refiner_budgets[i].as_ref().is_some_and(|budget| {
                             refiner_nodes[i]
-                                .cached_prefix()
-                                .is_some_and(|p| p.width() <= *budget)
+                                .cached_bounds()
+                                .is_some_and(|b| *b.width() <= *budget)
                         });
                         if !skip {
                             // Convert budget to target_width_exp for the refiner.
@@ -390,6 +394,9 @@ impl RefinementGraph {
                                 })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             outstanding[i] = true;
+                            outstanding_count = outstanding_count.checked_add(1).unwrap_or_else(|| {
+                                unreachable!("outstanding_count <= num_refiners, cannot overflow")
+                            });
                             needs_redispatch[i] = false;
                             // Reset sub-refiner tracking for non-leaf refiners.
                             // Keep exhausted sub-refiners marked as responded
@@ -424,7 +431,7 @@ impl RefinementGraph {
                     // it (its dependencies have all responded or been skipped,
                     // so there's nothing to wait for). If no such refiner
                     // exists, it's a true stall.
-                    if dispatched == 0 && !outstanding.iter().any(|&o| o) {
+                    if dispatched == 0 && outstanding_count == 0 {
                         let mut any_forced = false;
                         for i in 0..num_refiners {
                             if active[i]
@@ -434,8 +441,8 @@ impl RefinementGraph {
                                 let above_budget =
                                     !refiner_budgets[i].as_ref().is_some_and(|budget| {
                                         refiner_nodes[i]
-                                            .cached_prefix()
-                                            .is_some_and(|p| p.width() <= *budget)
+                                            .cached_bounds()
+                                            .is_some_and(|b| *b.width() <= *budget)
                                     });
                                 if above_budget {
                                     needs_redispatch[i] = true;
@@ -499,6 +506,9 @@ impl RefinementGraph {
                             let idx = $idx;
                             let changed_nodes: &[usize] = &$changed;
                             outstanding[idx] = false;
+                            outstanding_count = outstanding_count.checked_sub(1).unwrap_or_else(|| {
+                                unreachable!("outstanding_count > 0: each completion decrements at most once")
+                            });
                             steps[idx] = steps[idx].checked_add(1).unwrap_or_else(|| {
                                 unreachable!("steps <= MAX_REFINEMENT_ITERATIONS, cannot overflow")
                             });
@@ -509,6 +519,9 @@ impl RefinementGraph {
                                 eligible_count = eligible_count.checked_sub(1).unwrap_or_else(|| {
                                     unreachable!("eligible_count > 0: each refiner decrements at most once")
                                 });
+                                if !budget_is_static[idx] && !is_leaf_refiner[idx] {
+                                    dynamic_nonleaf_count = dynamic_nonleaf_count.saturating_sub(1);
+                                }
                                 if !matches!(reason, ExhaustionReason::StateUnchanged) {
                                     all_state_unchanged = false;
                                 }

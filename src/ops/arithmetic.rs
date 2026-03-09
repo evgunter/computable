@@ -15,6 +15,10 @@ pub struct NegOp {
 impl NodeOp for NegOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let existing = self.inner.get_bounds()?;
+        // Fast path: exact input → exact output.
+        if existing.width().is_zero() {
+            return Ok(Bounds::point(existing.small().neg()));
+        }
         let lower = existing.small().neg();
         let upper = existing.large().neg();
         Ok(Bounds::new_checked(upper, lower)?)
@@ -48,6 +52,13 @@ impl NodeOp for AddOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let left_bounds = self.left.get_bounds()?;
         let right_bounds = self.right.get_bounds()?;
+        // Fast path: when both inputs are exact (zero width), the sum is
+        // exact. Skip the redundant upper-bound computation and the
+        // width derivation in new_checked.
+        if left_bounds.width().is_zero() && right_bounds.width().is_zero() {
+            let sum = left_bounds.small().add_lower(right_bounds.small());
+            return Ok(Bounds::point(sum));
+        }
         let lower = left_bounds.small().add_lower(right_bounds.small());
         let upper = left_bounds.large().add_upper(&right_bounds.large());
         Ok(Bounds::new_checked(lower, upper)?)
@@ -81,6 +92,12 @@ impl NodeOp for MulOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let left_bounds = self.left.get_bounds()?;
         let right_bounds = self.right.get_bounds()?;
+        // Fast path: when both inputs are exact, only one multiplication
+        // is needed (instead of 4 endpoint products + 6 comparisons).
+        if left_bounds.width().is_zero() && right_bounds.width().is_zero() {
+            let product = left_bounds.small().mul(right_bounds.small());
+            return Ok(Bounds::point(product));
+        }
         let left_lower = left_bounds.small();
         let left_upper = left_bounds.large();
         let right_lower = right_bounds.small();
