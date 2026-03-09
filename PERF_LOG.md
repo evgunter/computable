@@ -308,9 +308,40 @@ Comparison vs baseline (a158cd9):
 Bug found: inv_pi/bits=64 panics on unreachable! in PiOp (commit a158cd9 removed
 the doubling fallback). Needs fix.
 
-### Experiment 18: Inline i64 Exponents
+### Experiment 18: Inline i64 Exponents (commit b837cf7)
 Status: COMPLETE - MERGED
 - Changed Binary/UBinary exponent field from BigInt to i64 across 16 files
 - All exponent arithmetic uses checked_add/checked_sub with overflow detection
 - Eliminates heap allocation for every exponent operation
 - 240 tests pass, clippy clean
+
+Targeted benchmark results (vs pre-i64, Experiment 17):
+| Benchmark | Before (BigInt) | After (i64) | Speedup |
+|-----------|-----------------|-------------|---------|
+| sqrt2_64 | 49.7us | 43.4us | **12.7%** |
+| sqrt2_256 | 70.1us | 58.2us | **17.0%** |
+| inv_10_64 | 201us | 186us | **7.4%** |
+| inv_10_256 | 209us | 194us | **7.3%** |
+| sin_5_64 | 450us | 363us | **19.4%** |
+| sin_2_256 | 334us | 231us | **30.7%** |
+| pi_64 | 65.0us | 61.2us | **5.8%** |
+| pi_256 | 158us | 132us | **16.8%** |
+| near_cancel | 1.4us | 0.99us | **29.3%** |
+| deep_chain | 6.5us | 4.0us | **38.5%** |
+| inv_sum_64 | 71.8us | 57.7us | **19.6%** |
+
+Consistent 6-39% speedups across all benchmarks. Heaviest exponent-operation
+workloads (sin, deep_chain, near_cancel) see largest gains.
+
+### Experiment 19: PiOp Panic Fix (commit 772eeb8)
+Status: COMPLETE - MERGED
+- Replaced unreachable!() with doubling fallback in PiOp::refine_step
+- Fixes inv_pi/bits=64 panic
+
+### Experiment 20: NthRoot Micro-optimizations (commit 514d530)
+Status: COMPLETE - MERGED
+- Eliminate dead has_remainder check in truncate_floor/ceil (B-bit alloc saved)
+- Reuse y_pow when upper bound doesn't improve (skip redundant binary_pow)
+- Skip binary_pow for sqrt n=2 (clone instead)
+- BigUint::from(1u32) directly instead of BigInt roundtrip
+- Deduplicate precision doubling logic
