@@ -119,7 +119,10 @@ impl FiniteInterval {
     /// Returns the midpoint: `(lower + upper) / 2`.
     pub fn midpoint(&self) -> Binary {
         let sum = self.lower.add(&self.upper);
-        Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
+        if sum.mantissa().is_zero() {
+            return Binary::zero();
+        }
+        Binary::new_normalized(sum.mantissa().clone(), sum.exponent() - BigInt::one())
     }
 
     /// Returns the join (smallest enclosing interval) of two intervals.

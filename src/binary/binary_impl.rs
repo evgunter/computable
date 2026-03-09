@@ -12,8 +12,6 @@ use num_traits::{Float, Signed, Zero};
 
 use super::error::BinaryError;
 
-use crate::ordered_pair::Interval;
-
 use super::shift::shift_mantissa_chunked;
 
 /// Exact binary number represented as `mantissa * 2^exponent`.
@@ -30,6 +28,23 @@ impl Binary {
     /// Creates a new Binary number, normalizing the representation.
     pub fn new(mantissa: BigInt, exponent: BigInt) -> Self {
         Self::normalize(mantissa, exponent)
+    }
+
+    /// Creates a Binary from components that are already in canonical form
+    /// (mantissa is odd or zero). Skips the normalize step.
+    ///
+    /// # Safety invariant (unchecked)
+    ///
+    /// The caller must ensure: if `mantissa` is nonzero, it is odd.
+    /// If `mantissa` is zero, `exponent` must be zero.
+    pub(crate) fn new_normalized(mantissa: BigInt, exponent: BigInt) -> Self {
+        debug_assert!(
+            mantissa.is_zero() && exponent.is_zero()
+                || !mantissa.is_zero()
+                    && mantissa.magnitude().trailing_zeros() == Some(0),
+            "new_normalized: mantissa must be odd (or both zero), got mantissa={mantissa}, exponent={exponent}"
+        );
+        Self { mantissa, exponent }
     }
 
     /// Returns the zero value.
@@ -81,12 +96,24 @@ impl Binary {
 
     /// Adds two Binary numbers.
     pub fn add(&self, other: &Self) -> Self {
+        if self.mantissa.is_zero() {
+            return other.clone();
+        }
+        if other.mantissa.is_zero() {
+            return self.clone();
+        }
         let (lhs, rhs, exponent) = Self::align_mantissas(self, other);
         Self::normalize(lhs + rhs, exponent)
     }
 
     /// Subtracts another Binary number from this one.
     pub fn sub(&self, other: &Self) -> Self {
+        if other.mantissa.is_zero() {
+            return self.clone();
+        }
+        if self.mantissa.is_zero() {
+            return other.neg();
+        }
         let (lhs, rhs, exponent) = Self::align_mantissas(self, other);
         Self::normalize(lhs - rhs, exponent)
     }
@@ -103,16 +130,28 @@ impl Binary {
     }
 
     /// Multiplies two Binary numbers.
+    ///
+    /// Since both mantissas are odd (canonical form), their product is also odd,
+    /// so normalization is unnecessary.
     pub fn mul(&self, other: &Self) -> Self {
+        if self.mantissa.is_zero() || other.mantissa.is_zero() {
+            return Self::zero();
+        }
         let exponent = &self.exponent + &other.exponent;
         let mantissa = &self.mantissa * &other.mantissa;
-        Self::normalize(mantissa, exponent)
+        Self::new_normalized(mantissa, exponent)
     }
 
     /// Returns the magnitude (absolute value) of this Binary number as a UBinary.
+    ///
+    /// Since `self` is already normalized (odd mantissa), the magnitude is also odd,
+    /// so we skip re-normalization in UBinary.
     pub fn magnitude(&self) -> super::ubinary::UBinary {
         use super::ubinary::UBinary;
-        UBinary::new(self.mantissa.magnitude().clone(), self.exponent.clone())
+        if self.mantissa.is_zero() {
+            return UBinary::zero();
+        }
+        UBinary::new_normalized(self.mantissa.magnitude().clone(), self.exponent.clone())
     }
 
     /// Normalizes the representation by factoring out powers of 2 from the mantissa.
@@ -136,17 +175,39 @@ impl Binary {
     /// Aligns the mantissas of two Binary numbers to a common exponent.
     /// Returns (lhs_mantissa, rhs_mantissa, common_exponent) where both mantissas
     /// are shifted to the minimum exponent of the two inputs.
+    ///
+    /// One of the two mantissas is always returned without shifting (the one with
+    /// the smaller exponent). The other is shifted left by the exponent difference.
     pub fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigInt, BigInt, BigInt) {
-        let exponent = if lhs.exponent <= rhs.exponent {
-            lhs.exponent.clone()
-        } else {
-            rhs.exponent.clone()
-        };
-        let lhs_shift = BigUint::try_from(&lhs.exponent - &exponent).unwrap_or_default();
-        let rhs_shift = BigUint::try_from(&rhs.exponent - &exponent).unwrap_or_default();
-        let lhs_mantissa = Self::shift_mantissa(&lhs.mantissa, &lhs_shift);
-        let rhs_mantissa = Self::shift_mantissa(&rhs.mantissa, &rhs_shift);
-        (lhs_mantissa, rhs_mantissa, exponent)
+        use num_traits::ToPrimitive;
+
+        match lhs.exponent.cmp(&rhs.exponent) {
+            Ordering::Equal => {
+                (lhs.mantissa.clone(), rhs.mantissa.clone(), lhs.exponent.clone())
+            }
+            Ordering::Less => {
+                let diff = &rhs.exponent - &lhs.exponent;
+                let rhs_mantissa = if let Some(shift) = diff.to_usize() {
+                    crate::assert_sane_computation_size!(shift);
+                    &rhs.mantissa << shift
+                } else {
+                    let shift_bu = BigUint::try_from(diff).unwrap_or_default();
+                    Self::shift_mantissa(&rhs.mantissa, &shift_bu)
+                };
+                (lhs.mantissa.clone(), rhs_mantissa, lhs.exponent.clone())
+            }
+            Ordering::Greater => {
+                let diff = &lhs.exponent - &rhs.exponent;
+                let lhs_mantissa = if let Some(shift) = diff.to_usize() {
+                    crate::assert_sane_computation_size!(shift);
+                    &lhs.mantissa << shift
+                } else {
+                    let shift_bu = BigUint::try_from(diff).unwrap_or_default();
+                    Self::shift_mantissa(&lhs.mantissa, &shift_bu)
+                };
+                (lhs_mantissa, rhs.mantissa.clone(), rhs.exponent.clone())
+            }
+        }
     }
 
     /// Shifts a mantissa left by the given amount, handling large shifts.
@@ -164,16 +225,15 @@ impl Binary {
         other: &BigInt,
         other_exp: BigInt,
     ) -> Ordering {
-        fn cmp_large_exp(
+        /// Compares `large_mantissa * 2^shift_amount` against `small_mantissa`.
+        fn cmp_with_shift(
             large_mantissa: &BigInt,
             small_mantissa: &BigInt,
-            pair: Interval<BigInt, BigUint>,
+            shift_diff: BigInt,
         ) -> Ordering {
             use num_traits::ToPrimitive;
 
-            let shift_amount_opt = pair.width().to_usize();
-
-            if let Some(shift_amount) = shift_amount_opt {
+            if let Some(shift_amount) = shift_diff.to_usize() {
                 let shifted = large_mantissa << shift_amount;
                 shifted.cmp(small_mantissa)
             } else if large_mantissa.is_zero() {
@@ -188,12 +248,10 @@ impl Binary {
         match exponent.cmp(&other_exp) {
             Ordering::Equal => mantissa.cmp(other),
             Ordering::Greater => {
-                let pair = Interval::new(exponent, other_exp);
-                cmp_large_exp(mantissa, other, pair)
+                cmp_with_shift(mantissa, other, exponent - other_exp)
             }
             Ordering::Less => {
-                let pair = Interval::new(other_exp, exponent);
-                cmp_large_exp(other, mantissa, pair).reverse()
+                cmp_with_shift(other, mantissa, other_exp - exponent).reverse()
             }
         }
     }
@@ -236,7 +294,10 @@ impl Shl<u32> for Binary {
 
     #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
     fn shl(self, rhs: u32) -> Self::Output {
-        Self::new(self.mantissa, self.exponent + BigInt::from(rhs))
+        if self.mantissa.is_zero() {
+            return self;
+        }
+        Self::new_normalized(self.mantissa, self.exponent + BigInt::from(rhs))
     }
 }
 
@@ -245,7 +306,10 @@ impl Shr<u32> for Binary {
 
     #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
     fn shr(self, rhs: u32) -> Self::Output {
-        Self::new(self.mantissa, self.exponent - BigInt::from(rhs))
+        if self.mantissa.is_zero() {
+            return self;
+        }
+        Self::new_normalized(self.mantissa, self.exponent - BigInt::from(rhs))
     }
 }
 

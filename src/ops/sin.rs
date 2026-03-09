@@ -240,12 +240,12 @@ fn sin_bounds(
     // Derive two_pi and half_pi from pi by scaling
     let two = UBinary::new(num_bigint::BigUint::from(1_u32), BigInt::from(1_i32)); // 2^1 = 2
     let two_pi_interval = pi_interval.scale_positive(&two);
-    let half_pi_lo = Binary::new(
+    let half_pi_lo = Binary::new_normalized(
         pi_interval.lo().mantissa().clone(),
         pi_interval.lo().exponent() - BigInt::one(),
     );
     let half_pi_hi_val = pi_interval.hi();
-    let half_pi_hi = Binary::new(
+    let half_pi_hi = Binary::new_normalized(
         half_pi_hi_val.mantissa().clone(),
         half_pi_hi_val.exponent() - BigInt::one(),
     );

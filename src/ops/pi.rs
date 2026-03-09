@@ -197,8 +197,8 @@ fn compute_pi_bounds(num_terms: usize, precision_bits: usize) -> (Binary, Binary
     // So: pi_lo = 16*atan_5_lo - 4*atan_239_hi
     //     pi_hi = 16*atan_5_hi - 4*atan_239_lo
 
-    let sixteen = Binary::new(BigInt::from(1_i32), BigInt::from(4_i32)); // 2^4 = 16
-    let four = Binary::new(BigInt::from(1_i32), BigInt::from(2_i32)); // 2^2 = 4
+    let sixteen = Binary::new_normalized(BigInt::from(1_i32), BigInt::from(4_i32)); // 2^4 = 16
+    let four = Binary::new_normalized(BigInt::from(1_i32), BigInt::from(2_i32)); // 2^2 = 4
 
     // 16 * arctan(1/5) bounds
     let term1_lo = atan_5_lo.mul(&sixteen);
@@ -331,8 +331,14 @@ pub fn two_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
 pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
     let (pi_lo, pi_hi) = pi_bounds_at_precision(precision_bits);
     // pi/2: divide by 2 (decrement exponent by 1)
-    let half_pi_lo = Binary::new(pi_lo.mantissa().clone(), pi_lo.exponent() - BigInt::one());
-    let half_pi_hi = Binary::new(pi_hi.mantissa().clone(), pi_hi.exponent() - BigInt::one());
+    let half_pi_lo = Binary::new_normalized(
+        pi_lo.mantissa().clone(),
+        pi_lo.exponent() - BigInt::one(),
+    );
+    let half_pi_hi = Binary::new_normalized(
+        pi_hi.mantissa().clone(),
+        pi_hi.exponent() - BigInt::one(),
+    );
     FiniteBounds::new(half_pi_lo, half_pi_hi)
 }
 

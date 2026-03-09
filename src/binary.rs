@@ -168,7 +168,13 @@ impl FiniteBounds {
     /// Returns the midpoint of the interval: lo + width/2
     pub fn midpoint(&self) -> Binary {
         let width = self.width().to_binary();
-        let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
+        if width.mantissa().is_zero() {
+            return self.lo().clone();
+        }
+        let half_width = Binary::new_normalized(
+            width.mantissa().clone(),
+            width.exponent() - BigInt::one(),
+        );
         self.lo().add(&half_width)
     }
 }
