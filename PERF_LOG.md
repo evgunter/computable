@@ -96,15 +96,40 @@ Results (from coordinator agent benchmarking):
 - Memory: 24MB → 6MB for integer_roots (4x reduction)
 
 ### Experiment 3: NthRoot Newton's Method
-Status: IN PROGRESS (agent ad128659, 468 insertions)
+Status: IN PROGRESS (agent ad128659, benchmarking in worktree)
 
-### Experiment 4: Binary Arithmetic Optimizations
-Status: IN PROGRESS (agent a089f37f, 399 insertions across 9 files)
+### Experiment 4: Binary Arithmetic Optimizations (commit 114ac29)
+Status: COMPLETE - MERGED
+- new_normalized() skips trailing_zeros scan (odd * odd = odd)
+- Zero short-circuits in add/sub/mul/magnitude/shift
+- Direct to_usize() fast path in align_mantissas
+- UBinary::Ord direct comparison avoiding 2 BigInt allocations per cmp
+- Impact: sin 3-27x faster, inv 2.6x faster (agent's isolated measurements)
 
 ### Experiment 5: Fast Benchmarks (commit b937c07)
 Status: COMPLETE - MERGED
 14 targeted benchmarks in benches/targeted.rs covering diverse scenarios.
 Total runtime ~30s with criterion.
 
-### Experiment 6: Post-Optimization Benchmark Run
-Status: RUNNING (full criterion suite after combined optimization)
+### Experiment 6: Clone Optimization + Pi Caching (commit 568dfc0)
+Status: COMPLETE - MERGED
+- Binary::one() constant method, used throughout
+- PiOp bounds caching (same pattern as SinBoundsCache)
+- Eliminated redundant clones in prefix.rs and reciprocal.rs
+- new_normalized for known-odd constants in pi/sin/bisection
+
+### Experiment 7: Targeted Benchmark After All Wave 1+2 Optimizations
+Status: COMPLETE
+
+| Benchmark | Before | After (568dfc0) | Speedup |
+|-----------|--------|-----------------|---------|
+| pi_64 | ~7ms | 112us | ~63x |
+| pi_256 | ~15ms | 549us | ~27x |
+| sin_2_256 | ~11ms | 1.3ms | ~8x |
+| inv_10_256 | ~41ms | 0.7ms | ~59x |
+| inv_sum_64 | ~5ms | 345us | ~14x |
+| seq_refine | ~4.3ms | 543us | ~8x |
+| sqrt2_64 | ~31ms | 1.05ms | ~30x |
+| sqrt2_256 | ~38ms | 10.3ms | ~4x |
+
+Note: NthRoot Newton's method still pending - sqrt2_256 would improve further.
