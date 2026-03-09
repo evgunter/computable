@@ -242,18 +242,75 @@ Note: sin at 1-4 bits shows slight regression (14.2ms vs 9.51ms baseline).
 This is worker pool overhead for very low-precision work where thread setup dominates.
 
 ### Experiment 15: Inline i64 Exponents
-Status: IN PROGRESS (agent working on massive refactor)
+Status: COMPLETE - see Experiment 18
 
-### Experiment 16: Batch apply_update Propagation (commit 10ac0dd)
-Status: COMPLETE - MERGED
+### Experiment 16: Batch apply_update Propagation (commits 10ac0dd → 48c676d)
+Status: PARTIALLY REVERTED
 - Level-by-level upward propagation: unique parents computed once per level
 - root_dirty optimization: precision checked only once after entire batch
 - parse_response separates response extraction from propagation
 
-Results (on top of all prior optimizations):
+Initial results (on top of all prior optimizations):
 - integer_roots/256: ~49% faster
 - pi_256: -24%, shared_subexpr: -34%, mixed_expr: -39%, inv_sum: -27%
-- No regressions on any benchmark
 
-### Experiment 17: Inline i64 Exponents
-Status: IN PROGRESS (massive refactor agent still working)
+**Revert (commit 48c676d)**: Batched propagation reverted due to DAG correctness bug.
+When a node is both a direct parent and a distant ancestor, level-by-level batching
+could process it before all its children were updated. The root_dirty optimization
+(skip precision_met() when root bounds didn't change) was kept — this accounts for
+most of the speedup on integer_roots since the coordinator was spending ~59% of time
+on per-response precision checks.
+
+### Experiment 17: Comprehensive Serial Benchmarks (commit 10ac0dd, all optimizations)
+
+Full criterion suite run serially on quiet system. Includes batch apply_update (later
+partially reverted in 48c676d, but root_dirty optimization kept).
+
+Targeted benchmarks:
+| Benchmark | Median |
+|-----------|--------|
+| sqrt2_64 | 49.7us |
+| sqrt2_256 | 70.1us |
+| inv_10_64 | 201us |
+| inv_10_256 | 209us |
+| sin_5_64 | 450us |
+| sin_2_256 | 334us |
+| pi_64 | 65.0us |
+| pi_256 | 158us |
+| near_cancel_64 | 1.4us |
+| deep_chain_64 | 6.5us |
+| shared_sqrt2_64 | 72.9us |
+| seq_refine | 149us |
+| inv_sum_64 | 71.8us |
+| mixed_64 | 88.0us |
+
+Full benchmark suites:
+| Benchmark | 1 bit | 4 bits | 16 bits | 64 bits | 256 bits |
+|-----------|-------|--------|---------|---------|----------|
+| pi_refinement | 14.9us | 15.2us | 14.6us | 70.0us | 174us |
+| inv (100 terms) | 1.09ms | 1.03ms | 1.04ms | 1.51ms | 1.64ms |
+| sin (100 terms) | 4.41ms | 4.40ms | 4.74ms | 9.89ms | 94.7ms |
+| integer_roots (1000) | 113ms | 141ms | 146ms | 143ms | 168ms |
+| complex (5000 terms) | 24.7ms | — | — | — | — |
+| summation (200k terms) | 162ms | — | — | — | — |
+
+Comparison vs baseline (a158cd9):
+| Benchmark | Baseline | Current | Speedup |
+|-----------|----------|---------|---------|
+| pi/256 | 283us | 174us | **1.6x** |
+| inv/256 (100 terms) | 3.57ms | 1.64ms | **2.2x** |
+| sin/256 (100 terms) | 6.34s | 94.7ms | **67x** |
+| integer_roots/256 (1000) | 4.97s | 168ms | **30x** |
+| complex (5000 terms) | 80.6ms | 24.7ms | **3.3x** |
+| summation (200k terms) | 347ms | 162ms | **2.1x** |
+| sqrt2+pi/256 | 3.06ms | 223us | **13.7x** |
+
+Bug found: inv_pi/bits=64 panics on unreachable! in PiOp (commit a158cd9 removed
+the doubling fallback). Needs fix.
+
+### Experiment 18: Inline i64 Exponents
+Status: COMPLETE - MERGED
+- Changed Binary/UBinary exponent field from BigInt to i64 across 16 files
+- All exponent arithmetic uses checked_add/checked_sub with overflow detection
+- Eliminates heap allocation for every exponent operation
+- 240 tests pass, clippy clean

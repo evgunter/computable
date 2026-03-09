@@ -77,7 +77,7 @@ impl Prefix {
                         XExponent::PosInf => XBinary::NegInf,
                         XExponent::Finite(e) => {
                             let width =
-                                Binary::new_normalized(BigInt::one(), BigInt::from(*e));
+                                Binary::new_normalized(BigInt::from(1_i32), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")));
                             XBinary::Finite(inner.sub(&width))
                         }
                     }
@@ -94,7 +94,7 @@ impl Prefix {
                 XExponent::NegInf => XBinary::Finite(Binary::zero()),
                 XExponent::Finite(e) => {
                     // lower = -2^e
-                    XBinary::Finite(Binary::new_normalized(-BigInt::one(), BigInt::from(*e)))
+                    XBinary::Finite(Binary::new_normalized(BigInt::from(-1_i32), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64"))))
                 }
             },
         }
@@ -118,7 +118,7 @@ impl Prefix {
                         XExponent::PosInf => XBinary::PosInf,
                         XExponent::Finite(e) => {
                             let width =
-                                Binary::new_normalized(BigInt::one(), BigInt::from(*e));
+                                Binary::new_normalized(BigInt::from(1_i32), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")));
                             XBinary::Finite(inner.add(&width))
                         }
                     }
@@ -132,7 +132,7 @@ impl Prefix {
                 XExponent::NegInf => XBinary::Finite(Binary::zero()),
                 XExponent::Finite(e) => {
                     // upper = 2^e
-                    XBinary::Finite(Binary::new_normalized(BigInt::one(), BigInt::from(*e)))
+                    XBinary::Finite(Binary::new_normalized(BigInt::from(1_i32), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64"))))
                 }
             },
         }
@@ -148,7 +148,7 @@ impl Prefix {
                 XExponent::NegInf => UXBinary::Finite(UBinary::zero()),
                 XExponent::PosInf => UXBinary::Inf,
                 XExponent::Finite(e) => {
-                    UXBinary::Finite(UBinary::new(1u32.into(), BigInt::from(*e)))
+                    UXBinary::Finite(UBinary::new(1u32.into(), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64"))))
                 }
             },
             Self::ZeroCrossing {
@@ -277,7 +277,7 @@ fn xexponent_to_uxbinary(exp: &XIsize) -> UXBinary {
     match exp {
         XIsize::NegInf => UXBinary::Finite(UBinary::zero()),
         XIsize::PosInf => UXBinary::Inf,
-        XIsize::Finite(e) => UXBinary::Finite(UBinary::new(1u32.into(), BigInt::from(*e))),
+        XIsize::Finite(e) => UXBinary::Finite(UBinary::new(1u32.into(), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")))),
     }
 }
 
@@ -440,8 +440,8 @@ impl From<&PrefixBounds> for Prefix {
     ///
     /// PrefixBounds represents `[mantissa * 2^exponent, (mantissa + 1) * 2^exponent]`.
     fn from(pb: &PrefixBounds) -> Self {
-        let exponent = pb.exponent.clone();
-        let lower = Binary::new(pb.mantissa.clone(), exponent.clone());
+        let exponent = pb.exponent;
+        let lower = Binary::new(pb.mantissa.clone(), exponent);
         let upper_mantissa = &pb.mantissa + BigInt::one();
         let upper = Binary::new(upper_mantissa, exponent);
 
@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn from_prefix_bounds() {
         // PrefixBounds: [3 * 2^(-2), 4 * 2^(-2)] = [0.75, 1.0]
-        let pb = PrefixBounds::new(BigInt::from(3_i32), BigInt::from(-2_i32));
+        let pb = PrefixBounds::new(BigInt::from(3_i32), -2_i64);
         let p = Prefix::from(&pb);
         match &p {
             Prefix::Finite {
@@ -755,7 +755,7 @@ mod tests {
     #[test]
     fn from_prefix_bounds_negative() {
         // PrefixBounds: [-5 * 2^0, -4 * 2^0] = [-5, -4]
-        let pb = PrefixBounds::new(BigInt::from(-5_i32), BigInt::from(0_i32));
+        let pb = PrefixBounds::new(BigInt::from(-5_i32), 0_i64);
         let p = Prefix::from(&pb);
         match &p {
             Prefix::Finite {

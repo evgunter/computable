@@ -279,7 +279,7 @@ mod tests {
         if let XBinary::Finite(value) = result {
             // 1.5 = 3 * 2^-1
             assert_eq!(value.mantissa(), &BigInt::from(3_i32));
-            assert_eq!(value.exponent(), &BigInt::from(-1_i32));
+            assert_eq!(value.exponent(), -1_i64);
         } else {
             panic!("expected finite value");
         }

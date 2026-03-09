@@ -243,20 +243,20 @@ fn sin_bounds(
     let pi_width = pi_interval.width();
     let two_pi_lo = Binary::new_normalized(
         pi_interval.lo().mantissa().clone(),
-        pi_interval.lo().exponent() + BigInt::one(),
+        pi_interval.lo().exponent().checked_add(1_i64).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")),
     );
     let two_pi_width = UBinary::new_normalized(
         pi_width.mantissa().clone(),
-        pi_width.exponent() + BigInt::one(),
+        pi_width.exponent().checked_add(1_i64).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")),
     );
     let two_pi_interval = FiniteBounds::from_lower_and_width(two_pi_lo, two_pi_width);
     let half_pi_lo = Binary::new_normalized(
         pi_interval.lo().mantissa().clone(),
-        pi_interval.lo().exponent() - BigInt::one(),
+        pi_interval.lo().exponent().checked_sub(1_i64).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")),
     );
     let half_pi_width = UBinary::new_normalized(
         pi_width.mantissa().clone(),
-        pi_width.exponent() - BigInt::one(),
+        pi_width.exponent().checked_sub(1_i64).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")),
     );
     let half_pi_interval = FiniteBounds::from_lower_and_width(half_pi_lo, half_pi_width);
 
@@ -678,7 +678,7 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
 
     let shifted_mx = mx << precision_bits;
     let quotient = &shifted_mx / mp;
-    let result_exp = ex - ep - BigInt::from(precision_bits);
+    let result_exp = BigInt::from(ex) - BigInt::from(ep) - BigInt::from(precision_bits);
 
     if result_exp >= BigInt::zero() {
         let shift = result_exp
@@ -767,7 +767,11 @@ fn truncate_precision_directed(
         BigInt::from(abs_result)
     };
 
-    Binary::new(signed_result, exponent + BigInt::from(shift))
+    Binary::new(signed_result, exponent.checked_add(i64::try_from(shift).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("shift exceeds i64")
+    })).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!("exponent overflow")
+    }))
 }
 
 //=============================================================================
@@ -899,7 +903,7 @@ fn taylor_sin_bounds_per_term(x: &Binary, n: usize, target_precision: usize) -> 
 
     let error_power = Binary::new(
         BigInt::from(power.mantissa().magnitude().clone()),
-        power.exponent().clone(),
+        power.exponent(),
     );
     let error = divide_by_factorial_directed(
         &error_power,
@@ -923,7 +927,7 @@ fn taylor_sin_bounds_rational(
     target_precision: usize,
 ) -> (Binary, Binary) {
     let m = x.mantissa();
-    let e = x.exponent();
+    let e = BigInt::from(x.exponent());
 
     // Precompute m^2 for the recurrence power_{k} = power_{k-1} * m^2
     let m_sq = m * m;
@@ -954,14 +958,14 @@ fn taylor_sin_bounds_rational(
     let n_big = BigInt::from(n);
     if e.is_negative() {
         let two_n_minus_1 = &n_big * 2_i64 - 1_i64;
-        common_exp = e * &two_n_minus_1;
-        let neg_two_e = BigInt::from(-2_i64) * e;
+        common_exp = &e * &two_n_minus_1;
+        let neg_two_e = BigInt::from(-2_i64) * &e;
         first_shift = &neg_two_e * (&n_big - 1_i64);
         shift_per_step = -neg_two_e;
     } else if e.is_positive() {
         common_exp = e.clone();
         first_shift = BigInt::zero();
-        shift_per_step = BigInt::from(2_i64) * e;
+        shift_per_step = BigInt::from(2_i64) * &e;
     } else {
         common_exp = BigInt::zero();
         first_shift = BigInt::zero();
@@ -1005,7 +1009,7 @@ fn taylor_sin_bounds_rational(
 
     // Error bound: |x|^(2n+1) / (2n+1)!
     power_m *= &m_sq; // advance to m^(2n+1)
-    let error_exp = e * (&n_big * 2_i64 + 1_i64);
+    let error_exp = &e * (&n_big * 2_i64 + 1_i64);
 
     let two_n = &n_big * 2_i64;
     let two_n_plus_1 = &two_n + 1_i64;
@@ -1079,7 +1083,12 @@ fn divide_bigint_directed(
     // For ceil (toward +inf):
     //   positive: if has_remainder, add 1 to quotient (round away from zero = toward +inf)
     //   negative: use quotient as-is (truncation = ceil for negative)
-    let result_exp = exponent - BigInt::from(extra_shift);
+    let result_exp = {
+        let result_exp_bi = exponent - BigInt::from(extra_shift);
+        result_exp_bi.to_i64().unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in divide_bigint_directed")
+        })
+    };
 
     let floor_quotient = if is_negative && has_remainder {
         &quotient + 1u32
@@ -1104,7 +1113,7 @@ fn divide_bigint_directed(
     };
 
     (
-        Binary::new(floor_mantissa, result_exp.clone()),
+        Binary::new(floor_mantissa, result_exp),
         Binary::new(ceil_mantissa, result_exp),
     )
 }
@@ -1585,7 +1594,7 @@ mod tests {
 
         let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
         let pi_mid = pi_lo.add(&pi_hi);
-        let pi_approx = Binary::new(pi_mid.mantissa().clone(), pi_mid.exponent() - BigInt::one());
+        let pi_approx = Binary::new(pi_mid.mantissa().clone(), pi_mid.exponent().checked_sub(1_i64).unwrap());
 
         let sin_pi = Computable::constant(pi_approx).sin();
         let epsilon = XUsize::Finite(10);

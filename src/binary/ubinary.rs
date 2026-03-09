@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, Mul, Shl, Shr};
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigUint;
 use num_traits::Zero;
 
 use crate::ordered_pair::Unsigned;
@@ -23,19 +23,19 @@ use super::shift::shift_mantissa_chunked;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UBinary {
     mantissa: BigUint,
-    exponent: BigInt,
+    exponent: i64,
 }
 
 impl UBinary {
     /// Creates a new UBinary number, normalizing the representation.
-    pub fn new(mantissa: BigUint, exponent: BigInt) -> Self {
+    pub fn new(mantissa: BigUint, exponent: i64) -> Self {
         Self::normalize(mantissa, exponent)
     }
 
     /// Creates a UBinary from components that are already in canonical form.
-    pub(crate) fn new_normalized(mantissa: BigUint, exponent: BigInt) -> Self {
+    pub(crate) fn new_normalized(mantissa: BigUint, exponent: i64) -> Self {
         debug_assert!(
-            mantissa.is_zero() && exponent.is_zero()
+            mantissa.is_zero() && exponent == 0
                 || !mantissa.is_zero() && mantissa.trailing_zeros() == Some(0),
             "new_normalized: mantissa must be odd (or both zero)"
         );
@@ -46,7 +46,7 @@ impl UBinary {
     pub fn zero() -> Self {
         Self {
             mantissa: BigUint::zero(),
-            exponent: BigInt::zero(),
+            exponent: 0_i64,
         }
     }
 
@@ -55,9 +55,9 @@ impl UBinary {
         &self.mantissa
     }
 
-    /// Returns a reference to the exponent.
-    pub fn exponent(&self) -> &BigInt {
-        &self.exponent
+    /// Returns the exponent.
+    pub fn exponent(&self) -> i64 {
+        self.exponent
     }
 
     /// Creates a UBinary from a Binary, returning an error if the mantissa is negative.
@@ -71,15 +71,16 @@ impl UBinary {
             return Ok(Self::zero());
         }
         let mantissa = binary.mantissa().magnitude().clone();
-        Ok(Self::new_normalized(mantissa, binary.exponent().clone()))
+        Ok(Self::new_normalized(mantissa, binary.exponent()))
     }
 
     /// Converts this unsigned binary to a signed binary.
     pub fn to_binary(&self) -> Binary {
+        use num_bigint::BigInt;
         if self.mantissa.is_zero() {
             return Binary::zero();
         }
-        Binary::new_normalized(BigInt::from(self.mantissa.clone()), self.exponent.clone())
+        Binary::new_normalized(BigInt::from(self.mantissa.clone()), self.exponent)
     }
 
     /// Adds two UBinary numbers.
@@ -89,18 +90,18 @@ impl UBinary {
     }
 
     /// Multiplies two UBinary numbers.
-    ///
-    /// Since both mantissas are odd (canonical form), their product is also odd.
     pub fn mul(&self, other: &Self) -> Self {
         if self.mantissa.is_zero() || other.mantissa.is_zero() {
             return Self::zero();
         }
-        let exponent = &self.exponent + &other.exponent;
+        let exponent = self.exponent.checked_add(other.exponent).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in UBinary::mul")
+        });
         let mantissa = &self.mantissa * &other.mantissa;
         Self::new_normalized(mantissa, exponent)
     }
 
-    /// Conservative floor division: returns a value ≤ self / other.
+    /// Conservative floor division: returns a value <= self / other.
     ///
     /// The result is a lower bound on the true quotient, with precision
     /// proportional to the divisor's mantissa size.
@@ -122,63 +123,85 @@ impl UBinary {
         let extra_bits = other.mantissa.bits();
         let shifted_num = &self.mantissa << extra_bits;
         let quotient = shifted_num / &other.mantissa;
-        let exponent = &self.exponent - &other.exponent - BigInt::from(extra_bits);
+        let exponent = self
+            .exponent
+            .checked_sub(other.exponent)
+            .and_then(|e| {
+                e.checked_sub(i64::try_from(extra_bits).unwrap_or_else(|_| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "extra_bits exceeds i64 in UBinary::div_floor"
+                    )
+                }))
+            })
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in UBinary::div_floor"
+                )
+            });
         Self::new(quotient, exponent)
     }
 
     /// Normalizes the representation by factoring out powers of 2 from the mantissa.
-    fn normalize(mut mantissa: BigUint, mut exponent: BigInt) -> Self {
+    fn normalize(mut mantissa: BigUint, mut exponent: i64) -> Self {
         if mantissa.is_zero() {
             return Self {
                 mantissa,
-                exponent: BigInt::zero(),
+                exponent: 0_i64,
             };
         }
 
         if let Some(tz_u64) = mantissa.trailing_zeros() {
             let tz = crate::sane::bits_as_usize(tz_u64);
             mantissa >>= tz;
-            exponent += BigInt::from(tz);
+            exponent = exponent
+                .checked_add(i64::try_from(tz).unwrap_or_else(|_| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "trailing zeros exceeds i64 in UBinary::normalize"
+                    )
+                }))
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "exponent overflow in UBinary::normalize"
+                    )
+                });
         }
 
         Self { mantissa, exponent }
     }
 
     /// Aligns the mantissas of two UBinary numbers to a common exponent.
-    pub fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigUint, BigUint, BigInt) {
-        use num_traits::ToPrimitive;
-        use std::cmp::Ordering;
-
-        match lhs.exponent.cmp(&rhs.exponent) {
-            Ordering::Equal => {
-                (lhs.mantissa.clone(), rhs.mantissa.clone(), lhs.exponent.clone())
-            }
-            Ordering::Less => {
-                let diff = &rhs.exponent - &lhs.exponent;
-                let rhs_mantissa = if let Some(shift) = diff.to_usize() {
-                    crate::assert_sane_computation_size!(shift);
-                    &rhs.mantissa << shift
-                } else {
-                    let shift_bu = BigUint::try_from(diff).unwrap_or_default();
-                    Self::shift_mantissa(&rhs.mantissa, &shift_bu)
-                };
-                (lhs.mantissa.clone(), rhs_mantissa, lhs.exponent.clone())
-            }
-            Ordering::Greater => {
-                let diff = &lhs.exponent - &rhs.exponent;
-                let lhs_mantissa = if let Some(shift) = diff.to_usize() {
-                    crate::assert_sane_computation_size!(shift);
-                    &lhs.mantissa << shift
-                } else {
-                    let shift_bu = BigUint::try_from(diff).unwrap_or_default();
-                    Self::shift_mantissa(&lhs.mantissa, &shift_bu)
-                };
-                (lhs_mantissa, rhs.mantissa.clone(), rhs.exponent.clone())
-            }
-        }
+    /// Returns (lhs_mantissa, rhs_mantissa, common_exponent) where both mantissas
+    /// are shifted to the minimum exponent of the two inputs.
+    pub fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigUint, BigUint, i64) {
+        let exponent = std::cmp::min(lhs.exponent, rhs.exponent);
+        let lhs_shift = lhs.exponent.abs_diff(exponent);
+        let rhs_shift = rhs.exponent.abs_diff(exponent);
+        let lhs_mantissa = if lhs_shift == 0 {
+            lhs.mantissa.clone()
+        } else {
+            let shift_usize = usize::try_from(lhs_shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "shift exceeds usize in UBinary::align_mantissas"
+                )
+            });
+            crate::assert_sane_computation_size!(shift_usize);
+            &lhs.mantissa << shift_usize
+        };
+        let rhs_mantissa = if rhs_shift == 0 {
+            rhs.mantissa.clone()
+        } else {
+            let shift_usize = usize::try_from(rhs_shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "shift exceeds usize in UBinary::align_mantissas"
+                )
+            });
+            crate::assert_sane_computation_size!(shift_usize);
+            &rhs.mantissa << shift_usize
+        };
+        (lhs_mantissa, rhs_mantissa, exponent)
     }
-
     /// Shifts a mantissa left by the given amount, handling large shifts.
+    #[allow(dead_code)]
     fn shift_mantissa(mantissa: &BigUint, shift: &BigUint) -> BigUint {
         if shift.is_zero() {
             return mantissa.clone();
@@ -189,37 +212,10 @@ impl UBinary {
 
 impl Ord for UBinary {
     fn cmp(&self, other: &Self) -> Ordering {
-        use num_traits::ToPrimitive;
-
-        if self.mantissa.is_zero() && other.mantissa.is_zero() {
-            return Ordering::Equal;
-        }
-        if self.mantissa.is_zero() {
-            return Ordering::Less;
-        }
-        if other.mantissa.is_zero() {
-            return Ordering::Greater;
-        }
-
-        match self.exponent.cmp(&other.exponent) {
-            Ordering::Equal => self.mantissa.cmp(&other.mantissa),
-            Ordering::Greater => {
-                let diff = &self.exponent - &other.exponent;
-                if let Some(shift) = diff.to_usize() {
-                    (&self.mantissa << shift).cmp(&other.mantissa)
-                } else {
-                    Ordering::Greater
-                }
-            }
-            Ordering::Less => {
-                let diff = &other.exponent - &self.exponent;
-                if let Some(shift) = diff.to_usize() {
-                    self.mantissa.cmp(&(&other.mantissa << shift))
-                } else {
-                    Ordering::Less
-                }
-            }
-        }
+        // Use the same comparison logic as Binary but with unsigned mantissas
+        let self_binary = self.to_binary();
+        let other_binary = other.to_binary();
+        self_binary.cmp(&other_binary)
     }
 }
 
@@ -263,7 +259,14 @@ impl Shl<u32> for UBinary {
         if self.mantissa.is_zero() {
             return self;
         }
-        Self::new_normalized(self.mantissa, self.exponent + BigInt::from(rhs))
+        Self::new_normalized(
+            self.mantissa,
+            self.exponent.checked_add(i64::from(rhs)).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in UBinary::shl"
+                )
+            }),
+        )
     }
 }
 
@@ -275,7 +278,14 @@ impl Shr<u32> for UBinary {
         if self.mantissa.is_zero() {
             return self;
         }
-        Self::new_normalized(self.mantissa, self.exponent - BigInt::from(rhs))
+        Self::new_normalized(
+            self.mantissa,
+            self.exponent.checked_sub(i64::from(rhs)).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in UBinary::shr"
+                )
+            }),
+        )
     }
 }
 
@@ -283,7 +293,7 @@ impl Unsigned for UBinary {}
 
 impl fmt::Display for UBinary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        super::display::format_ubinary_display(f, &self.mantissa, &self.exponent)
+        super::display::format_ubinary_display(f, &self.mantissa, self.exponent)
     }
 }
 
@@ -291,19 +301,20 @@ impl fmt::Display for UBinary {
 mod tests {
     use super::*;
     use crate::test_utils::{bin, ubin};
+    use num_bigint::BigInt;
 
     #[test]
     fn ubinary_normalizes_even_mantissa() {
         let value = ubin(8, 0);
         assert_eq!(value.mantissa(), &BigUint::from(1u32));
-        assert_eq!(value.exponent(), &BigInt::from(3_i32));
+        assert_eq!(value.exponent(), 3_i64);
     }
 
     #[test]
     fn ubinary_zero_uses_zero_exponent() {
-        let value = UBinary::new(BigUint::zero(), BigInt::from(42_i32));
+        let value = UBinary::new(BigUint::zero(), 42_i64);
         assert_eq!(value.mantissa(), &BigUint::zero());
-        assert_eq!(value.exponent(), &BigInt::zero());
+        assert_eq!(value.exponent(), 0_i64);
     }
 
     #[test]
@@ -331,7 +342,7 @@ mod tests {
         assert!(result.is_ok());
         let ubinary = result.expect("should succeed");
         assert_eq!(ubinary.mantissa(), &BigUint::from(5u32));
-        assert_eq!(ubinary.exponent(), &BigInt::from(2_i32));
+        assert_eq!(ubinary.exponent(), 2_i64);
 
         let negative = bin(-5, 2);
         let neg_result = UBinary::try_from_binary(&negative);
@@ -343,7 +354,7 @@ mod tests {
         let ubinary = ubin(7, 3);
         let binary = ubinary.to_binary();
         assert_eq!(binary.mantissa(), &BigInt::from(7_i32));
-        assert_eq!(binary.exponent(), &BigInt::from(3_i32));
+        assert_eq!(binary.exponent(), 3_i64);
     }
 
     #[test]

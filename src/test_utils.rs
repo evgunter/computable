@@ -16,7 +16,7 @@ use crate::binary::{Binary, UBinary, UXBinary, XBinary};
 /// let eight = bin(1, 3);    // 1 * 2^3 = 8
 /// ```
 pub fn bin(mantissa: i64, exponent: i64) -> Binary {
-    Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
+    Binary::new(BigInt::from(mantissa), exponent)
 }
 
 /// Creates a UBinary (unsigned) from mantissa and exponent.
@@ -27,7 +27,7 @@ pub fn bin(mantissa: i64, exponent: i64) -> Binary {
 /// let epsilon = ubin(1, -8); // 1 * 2^(-8) ≈ 0.004
 /// ```
 pub fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-    UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
+    UBinary::new(BigUint::from(mantissa), exponent)
 }
 
 /// Creates an XBinary (extended binary, allowing infinity) from mantissa and exponent.
@@ -77,7 +77,7 @@ pub fn epsilon_as_binary(n: usize) -> Binary {
     let n_i64 = i64::try_from(n).expect("precision fits in i64");
     Binary::new(
         BigInt::from(1_i32),
-        BigInt::from(n_i64.checked_neg().expect("negation does not overflow")),
+        n_i64.checked_neg().expect("negation does not overflow"),
     )
 }
 

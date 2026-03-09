@@ -23,7 +23,7 @@
 //! use num_bigint::{BigInt, BigUint};
 //!
 //! // Create a constant
-//! let x = Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)));
+//! let x = Computable::constant(Binary::new(BigInt::from(2), 0_i64));
 //!
 //! // Arithmetic operations
 //! let y = x.clone() + x.clone();

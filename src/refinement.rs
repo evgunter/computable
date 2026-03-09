@@ -40,8 +40,8 @@ use std::sync::Arc;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use num_bigint::{BigInt, BigUint};
-use num_traits::{ToPrimitive, Zero};
+use num_bigint::BigUint;
+use num_traits::Zero;
 
 use crate::binary::Bounds;
 use crate::binary::{UBinary, UXBinary};
@@ -719,7 +719,7 @@ fn tolerance_to_uxbinary(tolerance_exp: &XUsize) -> UXBinary {
     match tolerance_exp {
         XUsize::Inf => UXBinary::zero(),
         XUsize::Finite(exp) => {
-            UXBinary::Finite(UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)))
+            UXBinary::Finite(UBinary::new(BigUint::from(1u32), i64::try_from(*exp).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("tolerance exceeds i64")).checked_neg().unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("tolerance negation overflow"))))
         }
     }
 }
@@ -853,7 +853,7 @@ pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
         UXBinary::Inf => false,
         UXBinary::Finite(width) => match tolerance_exp {
             XUsize::Inf => width.mantissa().is_zero(),
-            XUsize::Finite(exp) => *width <= UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)),
+            XUsize::Finite(exp) => *width <= UBinary::new(BigUint::from(1u32), i64::try_from(*exp).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("tolerance exceeds i64")).checked_neg().unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("tolerance negation overflow"))),
         },
     }
 }
@@ -884,10 +884,10 @@ fn uxbinary_to_exp(ux: &UXBinary) -> XIsize {
                 // mantissa has more bits than isize can represent: width is astronomically large
                 return XIsize::PosInf;
             };
-            let Some(exp_isize) = ub.exponent().to_isize() else {
+            let Some(exp_isize) = isize::try_from(ub.exponent()).ok() else {
                 // exponent doesn't fit in isize: width is astronomically large (or small)
                 // Positive exponent → PosInf; negative exponent with huge mantissa → still large
-                return if ub.exponent().sign() == num_bigint::Sign::Minus {
+                return if ub.exponent() < 0 {
                     // Huge negative exponent: width ≈ 0, exponent is extremely negative
                     XIsize::NegInf
                 } else {

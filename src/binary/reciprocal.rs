@@ -44,7 +44,12 @@ pub fn reciprocal_of_biguint(
             (&numerator + denominator - BigUint::one()).div_floor(denominator)
         }
     };
-    let exponent = -BigInt::from(precision_bits);
+    let precision_i64 = i64::try_from(precision_bits).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("precision_bits exceeds i64 in reciprocal_of_biguint")
+    });
+    let exponent = precision_i64.checked_neg().unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!("exponent overflow in reciprocal_of_biguint")
+    });
     Binary::new(BigInt::from(quotient), exponent)
 }
 
@@ -82,7 +87,12 @@ pub fn reciprocal_rounded_abs_extended(
                     ReciprocalRounding::Ceil => numerator.div_ceil(&abs_mantissa),
                 }
             };
-            let exponent = reciprocal_exponent(precision_bits)?;
+            let exponent_bi = reciprocal_exponent(precision_bits)?;
+            let exponent = exponent_bi.to_i64().unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in reciprocal_rounded_abs_extended"
+                )
+            });
             Ok(XBinary::Finite(Binary::new(quotient, exponent)))
         }
         XBinary::NegInf | XBinary::PosInf => Ok(XBinary::Finite(Binary::zero())),
@@ -125,7 +135,7 @@ mod tests {
         // Result is 51 * 2^-8
         // After normalization (51 is odd), mantissa = 51, exponent = -8
         assert_eq!(result.mantissa(), &BigInt::from(51_i32));
-        assert_eq!(result.exponent(), &BigInt::from(-8_i32));
+        assert_eq!(result.exponent(), -8_i64);
     }
 
     #[test]
@@ -140,9 +150,9 @@ mod tests {
         // Floor = 85, Ceil = 86
         // After normalization: 85 (odd), 43 * 2^1 = 86
         assert_eq!(floor.mantissa(), &BigInt::from(85_i32));
-        assert_eq!(floor.exponent(), &BigInt::from(-8_i32));
+        assert_eq!(floor.exponent(), -8_i64);
         assert_eq!(ceil.mantissa(), &BigInt::from(43_i32));
-        assert_eq!(ceil.exponent(), &BigInt::from(-7_i32)); // 43 * 2^-7 = 86 * 2^-8
+        assert_eq!(ceil.exponent(), -7_i64); // 43 * 2^-7 = 86 * 2^-8
 
         // Ceil should be > Floor since 1/3 is not exactly representable
         assert!(ceil > floor);
@@ -179,7 +189,7 @@ mod tests {
         // So we get 8 * 2^-4 = 0.5
         if let XBinary::Finite(binary) = result {
             assert_eq!(binary.mantissa(), &BigInt::from(1_i32)); // 8 normalized to 1 * 2^3
-            assert_eq!(binary.exponent(), &BigInt::from(-1_i32)); // -4 + 3 = -1
+            assert_eq!(binary.exponent(), -1_i64); // -4 + 3 = -1
         } else {
             panic!("expected finite result");
         }
@@ -241,7 +251,7 @@ mod tests {
         // Should be 1 * 2^-10 (the smallest positive representable value)
         if let XBinary::Finite(binary) = result {
             assert_eq!(binary.mantissa(), &BigInt::from(1_i32));
-            assert_eq!(binary.exponent(), &BigInt::from(-10_i32));
+            assert_eq!(binary.exponent(), -10_i64);
         } else {
             panic!("expected finite result");
         }

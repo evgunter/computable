@@ -309,7 +309,7 @@ fn newton_step(approx: &mut ReciprocalApprox, denom: &Binary) {
 
     // x_new = x * (2 - a * x)
     // 2 = 1 * 2^1; mantissa 1 is odd, so skip normalization.
-    let two = Binary::new_normalized(BigInt::from(1_i32), BigInt::from(1_i32));
+    let two = Binary::new_normalized(BigInt::from(1_i32), 1_i64);
     let ax = denom.mul(x);
     let two_minus_ax = two.sub(&ax);
     let x_new = x.mul(&two_minus_ax);
@@ -365,7 +365,14 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
         BigInt::from(shifted)
     };
 
-    Binary::new(signed, x.exponent() + BigInt::from(shift))
+    let new_exp = x.exponent()
+        .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in inv")
+        }))
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in inv")
+        });
+    Binary::new(signed, new_exp)
 }
 
 /// Truncate a positive `Binary` to at most `precision_bits` mantissa bits,
@@ -391,7 +398,14 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
         BigInt::from(shifted)
     };
 
-    Binary::new(signed, x.exponent() + BigInt::from(shift))
+    let new_exp = x.exponent()
+        .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in inv")
+        }))
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in inv")
+        });
+    Binary::new(signed, new_exp)
 }
 
 #[cfg(test)]
