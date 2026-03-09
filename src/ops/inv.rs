@@ -218,8 +218,7 @@ fn seed_reciprocal(
 
     let lower_xb =
         reciprocal_rounded_abs_extended(&xb_denom, precision, ReciprocalRounding::Floor)?;
-    let upper_xb =
-        reciprocal_rounded_abs_extended(&xb_denom, precision, ReciprocalRounding::Ceil)?;
+    let upper_xb = reciprocal_rounded_abs_extended(&xb_denom, precision, ReciprocalRounding::Ceil)?;
 
     let lower = match lower_xb {
         XBinary::Finite(b) => b,
@@ -370,7 +369,8 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
         BigInt::from(shifted)
     };
 
-    let new_exp = x.exponent()
+    let new_exp = x
+        .exponent()
         .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
             crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in inv")
         }))
@@ -403,7 +403,8 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
         BigInt::from(shifted)
     };
 
-    let new_exp = x.exponent()
+    let new_exp = x
+        .exponent()
         .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
             crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in inv")
         }))

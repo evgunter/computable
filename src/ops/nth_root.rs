@@ -299,7 +299,9 @@ fn initialize_nth_root_newton_state(
     // Perform 2 initial Newton steps for a good seed.
     // Use a generous cap during initialization to allow the seed to converge
     // well; the refine_step cap will control subsequent growth.
-    let init_cap = seed_precision.saturating_mul(8).min(crate::MAX_COMPUTATION_BITS);
+    let init_cap = seed_precision
+        .saturating_mul(8)
+        .min(crate::MAX_COMPUTATION_BITS);
     for _ in 0_u32..2_u32 {
         newton_step_nth_root(&mut state, degree, init_cap);
     }
@@ -319,11 +321,7 @@ fn initialize_nth_root_newton_state(
 /// the refiner_loop from escalating mantissa sizes exponentially.
 ///
 /// Returns `true` if bounds improved, `false` otherwise.
-fn newton_step_nth_root(
-    state: &mut NthRootNewtonState,
-    degree: u32,
-    precision_cap: usize,
-) -> bool {
+fn newton_step_nth_root(state: &mut NthRootNewtonState, degree: u32, precision_cap: usize) -> bool {
     if state.exact_value.is_some() {
         return false;
     }
@@ -449,11 +447,14 @@ fn binary_div_floor(a: &Binary, b: &Binary, precision: usize) -> Binary {
     let shift_i64 = i64::try_from(shift).unwrap_or_else(|_| {
         crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in binary_div_floor")
     });
-    let exp = a.exponent()
+    let exp = a
+        .exponent()
         .checked_sub(b.exponent())
         .and_then(|e| e.checked_sub(shift_i64))
         .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in binary_div_floor")
+            crate::detected_computable_would_exhaust_memory!(
+                "exponent overflow in binary_div_floor"
+            )
         });
 
     let result = Binary::new(mantissa, exp);
@@ -499,7 +500,8 @@ fn binary_div_ceil(a: &Binary, b: &Binary, precision: usize) -> Binary {
     let shift_i64 = i64::try_from(shift).unwrap_or_else(|_| {
         crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in binary_div_ceil")
     });
-    let exp = a.exponent()
+    let exp = a
+        .exponent()
         .checked_sub(b.exponent())
         .and_then(|e| e.checked_sub(shift_i64))
         .unwrap_or_else(|| {
@@ -521,8 +523,7 @@ fn binary_div_ceil_by_u32(a: &Binary, divisor: u32, precision: usize) -> Binary 
 
     // Shift mantissa left by `precision` bits to preserve fractional precision
     let shifted_mantissa = a.mantissa() << precision;
-    let (quotient, remainder) =
-        num_integer::Integer::div_rem(&shifted_mantissa, &divisor_big);
+    let (quotient, remainder) = num_integer::Integer::div_rem(&shifted_mantissa, &divisor_big);
 
     // For ceil: if positive and remainder != 0, add 1
     // if negative and remainder != 0, keep as-is (truncation toward zero = ceil for negatives)
@@ -534,13 +535,15 @@ fn binary_div_ceil_by_u32(a: &Binary, divisor: u32, precision: usize) -> Binary 
     };
 
     let precision_i64 = i64::try_from(precision).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!("precision exceeds i64 in binary_div_ceil_by_u32")
+        crate::detected_computable_would_exhaust_memory!(
+            "precision exceeds i64 in binary_div_ceil_by_u32"
+        )
     });
-    let exp = a.exponent()
-        .checked_sub(precision_i64)
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in binary_div_ceil_by_u32")
-        });
+    let exp = a.exponent().checked_sub(precision_i64).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "exponent overflow in binary_div_ceil_by_u32"
+        )
+    });
 
     let result = Binary::new(final_quotient, exp);
     truncate_ceil(&result, precision)
@@ -568,13 +571,16 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
         BigInt::from(shifted)
     };
 
-    Binary::new(signed, x.exponent()
-        .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in truncate")
-        }))
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
-        }))
+    Binary::new(
+        signed,
+        x.exponent()
+            .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in truncate")
+            }))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
+            }),
+    )
 }
 
 /// Truncate a Binary to at most `precision_bits` mantissa bits,
@@ -599,13 +605,16 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
         -BigInt::from(shifted)
     };
 
-    Binary::new(signed, x.exponent()
-        .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in truncate")
-        }))
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
-        }))
+    Binary::new(
+        signed,
+        x.exponent()
+            .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in truncate")
+            }))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
+            }),
+    )
 }
 
 #[cfg(test)]

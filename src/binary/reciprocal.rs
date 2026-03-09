@@ -45,10 +45,14 @@ pub fn reciprocal_of_biguint(
         }
     };
     let precision_i64 = i64::try_from(precision_bits).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!("precision_bits exceeds i64 in reciprocal_of_biguint")
+        crate::detected_computable_would_exhaust_memory!(
+            "precision_bits exceeds i64 in reciprocal_of_biguint"
+        )
     });
     let exponent = precision_i64.checked_neg().unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!("exponent overflow in reciprocal_of_biguint")
+        crate::detected_computable_would_exhaust_memory!(
+            "exponent overflow in reciprocal_of_biguint"
+        )
     });
     Binary::new(BigInt::from(quotient), exponent)
 }
@@ -73,7 +77,8 @@ pub fn reciprocal_rounded_abs_extended(
     match value {
         XBinary::Finite(finite_value) => {
             let abs_mantissa = finite_value.mantissa().abs();
-            let shift_bits = precision_bits.checked_sub(finite_value.exponent())
+            let shift_bits = precision_bits
+                .checked_sub(finite_value.exponent())
                 .unwrap_or_else(|| {
                     crate::detected_computable_would_exhaust_memory!(
                         "exponent overflow in reciprocal_rounded_abs_extended"
@@ -162,12 +167,9 @@ mod tests {
     fn reciprocal_of_infinity_is_zero() {
         let precision = 10_i64;
 
-        let result = reciprocal_rounded_abs_extended(
-            &XBinary::PosInf,
-            precision,
-            ReciprocalRounding::Floor,
-        )
-        .expect("should succeed");
+        let result =
+            reciprocal_rounded_abs_extended(&XBinary::PosInf, precision, ReciprocalRounding::Floor)
+                .expect("should succeed");
         assert!(result.is_zero());
 
         let result_neg_inf =

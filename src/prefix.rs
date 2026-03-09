@@ -76,8 +76,14 @@ impl Prefix {
                         XExponent::NegInf => XBinary::Finite(inner.clone()),
                         XExponent::PosInf => XBinary::NegInf,
                         XExponent::Finite(e) => {
-                            let width =
-                                Binary::new_normalized(BigInt::from(1_i32), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")));
+                            let width = Binary::new_normalized(
+                                BigInt::from(1_i32),
+                                i64::try_from(*e).unwrap_or_else(|_err| {
+                                    crate::detected_computable_would_exhaust_memory!(
+                                        "exponent exceeds i64"
+                                    )
+                                }),
+                            );
                             XBinary::Finite(inner.sub(&width))
                         }
                     }
@@ -94,7 +100,12 @@ impl Prefix {
                 XExponent::NegInf => XBinary::Finite(Binary::zero()),
                 XExponent::Finite(e) => {
                     // lower = -2^e
-                    XBinary::Finite(Binary::new_normalized(BigInt::from(-1_i32), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64"))))
+                    XBinary::Finite(Binary::new_normalized(
+                        BigInt::from(-1_i32),
+                        i64::try_from(*e).unwrap_or_else(|_err| {
+                            crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")
+                        }),
+                    ))
                 }
             },
         }
@@ -117,8 +128,14 @@ impl Prefix {
                         XExponent::NegInf => XBinary::Finite(inner.clone()),
                         XExponent::PosInf => XBinary::PosInf,
                         XExponent::Finite(e) => {
-                            let width =
-                                Binary::new_normalized(BigInt::from(1_i32), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")));
+                            let width = Binary::new_normalized(
+                                BigInt::from(1_i32),
+                                i64::try_from(*e).unwrap_or_else(|_err| {
+                                    crate::detected_computable_would_exhaust_memory!(
+                                        "exponent exceeds i64"
+                                    )
+                                }),
+                            );
                             XBinary::Finite(inner.add(&width))
                         }
                     }
@@ -132,7 +149,12 @@ impl Prefix {
                 XExponent::NegInf => XBinary::Finite(Binary::zero()),
                 XExponent::Finite(e) => {
                     // upper = 2^e
-                    XBinary::Finite(Binary::new_normalized(BigInt::from(1_i32), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64"))))
+                    XBinary::Finite(Binary::new_normalized(
+                        BigInt::from(1_i32),
+                        i64::try_from(*e).unwrap_or_else(|_err| {
+                            crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")
+                        }),
+                    ))
                 }
             },
         }
@@ -147,9 +169,12 @@ impl Prefix {
             } => match width_exponent {
                 XExponent::NegInf => UXBinary::Finite(UBinary::zero()),
                 XExponent::PosInf => UXBinary::Inf,
-                XExponent::Finite(e) => {
-                    UXBinary::Finite(UBinary::new(1u32.into(), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64"))))
-                }
+                XExponent::Finite(e) => UXBinary::Finite(UBinary::new(
+                    1u32.into(),
+                    i64::try_from(*e).unwrap_or_else(|_err| {
+                        crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")
+                    }),
+                )),
             },
             Self::ZeroCrossing {
                 neg_exponent,
@@ -277,7 +302,12 @@ fn xexponent_to_uxbinary(exp: &XIsize) -> UXBinary {
     match exp {
         XIsize::NegInf => UXBinary::Finite(UBinary::zero()),
         XIsize::PosInf => UXBinary::Inf,
-        XIsize::Finite(e) => UXBinary::Finite(UBinary::new(1u32.into(), i64::try_from(*e).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")))),
+        XIsize::Finite(e) => UXBinary::Finite(UBinary::new(
+            1u32.into(),
+            i64::try_from(*e).unwrap_or_else(|_err| {
+                crate::detected_computable_would_exhaust_memory!("exponent exceeds i64")
+            }),
+        )),
     }
 }
 

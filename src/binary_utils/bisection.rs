@@ -94,7 +94,14 @@ impl PrefixBounds {
     /// Returns the midpoint: (2 * mantissa + 1) * 2^(exponent - 1).
     pub fn midpoint(&self) -> Binary {
         // 2*k + 1 is always odd, so skip normalization.
-        Binary::new_normalized(&self.mantissa * 2 + 1, self.exponent.checked_sub(1).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in PrefixBounds::midpoint")))
+        Binary::new_normalized(
+            &self.mantissa * 2 + 1,
+            self.exponent.checked_sub(1).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in PrefixBounds::midpoint"
+                )
+            }),
+        )
     }
 }
 
@@ -136,7 +143,11 @@ where
             // mid = (2m + 1) * 2^(e-1), so new mantissa = 2m + 1
             PrefixBisectionResult::Narrowed(PrefixBounds {
                 mantissa: &bounds.mantissa * 2 + 1,
-                exponent: bounds.exponent.checked_sub(1).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in bisection_step")),
+                exponent: bounds.exponent.checked_sub(1).unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "exponent overflow in bisection_step"
+                    )
+                }),
             })
         }
         Ordering::Greater => {
@@ -144,7 +155,11 @@ where
             // lower at new exponent: m * 2^e = 2m * 2^(e-1), so new mantissa = 2m
             PrefixBisectionResult::Narrowed(PrefixBounds {
                 mantissa: &bounds.mantissa * 2,
-                exponent: bounds.exponent.checked_sub(1).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in bisection_step")),
+                exponent: bounds.exponent.checked_sub(1).unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "exponent overflow in bisection_step"
+                    )
+                }),
             })
         }
         Ordering::Equal => PrefixBisectionResult::Exact(mid),
@@ -243,24 +258,30 @@ pub fn normalize_bounds(
         width_ubinary.exponent()
     } else {
         let wb = i64::try_from(width_bits).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("width_bits exceeds i64 in normalize_bounds")
+            crate::detected_computable_would_exhaust_memory!(
+                "width_bits exceeds i64 in normalize_bounds"
+            )
         });
-        width_ubinary.exponent()
+        width_ubinary
+            .exponent()
             .checked_add(wb)
             .and_then(|e| e.checked_add(1))
             .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow in normalize_bounds")
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in normalize_bounds"
+                )
             })
     };
 
     // Floor the lower bound to this exponent
-    let shift = lower.exponent().checked_sub(target_exp)
-        .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in normalize_bounds"));
+    let shift = lower.exponent().checked_sub(target_exp).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!("exponent overflow in normalize_bounds")
+    });
     let lower_mantissa = if shift == 0 {
         lower.mantissa().clone()
     } else if shift > 0 {
-        let shift_amount = usize::try_from(shift)
-            .map_err(|_err| crate::error::ComputableError::InfiniteBounds)?;
+        let shift_amount =
+            usize::try_from(shift).map_err(|_err| crate::error::ComputableError::InfiniteBounds)?;
         lower.mantissa() << shift_amount
     } else {
         let shift_amount = usize::try_from(shift.unsigned_abs())
@@ -303,15 +324,17 @@ fn normalize_zero_crossing_bounds(
     let wb = i64::try_from(width_bits).unwrap_or_else(|_| {
         crate::detected_computable_would_exhaust_memory!("width_bits exceeds i64")
     });
-    let target_exp: i64 = width_ubinary.exponent()
+    let target_exp: i64 = width_ubinary
+        .exponent()
         .checked_add(wb)
         .and_then(|e| e.checked_add(1))
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow")
-        });
+        .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow"));
 
     // Floor the lower bound toward −∞
-    let lo_shift = lower.exponent().checked_sub(target_exp).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow"));
+    let lo_shift = lower
+        .exponent()
+        .checked_sub(target_exp)
+        .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow"));
     let lo_mantissa = if lo_shift == 0 {
         lower.mantissa().clone()
     } else if lo_shift > 0 {
@@ -327,7 +350,10 @@ fn normalize_zero_crossing_bounds(
 
     // Ceil the upper bound toward +∞
     // ceil(m / 2^k) = −floor(−m / 2^k) = −((−m) >> k)
-    let hi_shift = upper.exponent().checked_sub(target_exp).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow"));
+    let hi_shift = upper
+        .exponent()
+        .checked_sub(target_exp)
+        .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow"));
     let hi_mantissa = if hi_shift == 0 {
         upper.mantissa().clone()
     } else if hi_shift > 0 {
@@ -546,8 +572,7 @@ mod tests {
 
         // Create bounds with lower = 1.5 (3 * 2^-1) and width = 2^-10
         // Express 1.5 with exponent -10: 1.5 = 3 * 2^-1 = (3 << 9) * 2^-10
-        let bounds =
-            super::bounds_from_normalized(BigInt::from(3_i32 << 9_i32), -10_i64);
+        let bounds = super::bounds_from_normalized(BigInt::from(3_i32 << 9_i32), -10_i64);
 
         // Check that lower bound is 1.5
         assert_eq!(bounds.small(), &bin(3, -1));
@@ -566,8 +591,7 @@ mod tests {
 
         // Create bounds with lower = 5 and width = 2^-8
         // Express 5 with exponent -8: 5 = (5 << 8) * 2^-8
-        let bounds =
-            super::bounds_from_normalized(BigInt::from(5_i32 << 8_i32), -8_i64);
+        let bounds = super::bounds_from_normalized(BigInt::from(5_i32 << 8_i32), -8_i64);
 
         // Check that lower bound is 5
         assert_eq!(bounds.small(), &bin(5, 0));

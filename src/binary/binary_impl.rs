@@ -33,8 +33,7 @@ impl Binary {
     pub(crate) fn new_normalized(mantissa: BigInt, exponent: i64) -> Self {
         debug_assert!(
             mantissa.is_zero() && exponent == 0
-                || !mantissa.is_zero()
-                    && mantissa.magnitude().trailing_zeros() == Some(0),
+                || !mantissa.is_zero() && mantissa.magnitude().trailing_zeros() == Some(0),
             "new_normalized: mantissa must be odd (or both zero), got mantissa={mantissa}, exponent={exponent}"
         );
         Self { mantissa, exponent }
@@ -146,9 +145,12 @@ impl Binary {
         if self.mantissa.is_zero() || other.mantissa.is_zero() {
             return Self::zero();
         }
-        let exponent = self.exponent.checked_add(other.exponent).unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in Binary::mul")
-        });
+        let exponent = self
+            .exponent
+            .checked_add(other.exponent)
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in Binary::mul")
+            });
         let mantissa = &self.mantissa * &other.mantissa;
         Self::new_normalized(mantissa, exponent)
     }
@@ -174,16 +176,17 @@ impl Binary {
         if let Some(tz_u64) = mantissa.magnitude().trailing_zeros() {
             let tz = crate::sane::bits_as_usize(tz_u64);
             mantissa >>= tz;
-            exponent = exponent.checked_add(i64::try_from(tz).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "trailing zeros exceeds i64 in Binary::normalize"
-                )
-            }))
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in Binary::normalize"
-                )
-            });
+            exponent = exponent
+                .checked_add(i64::try_from(tz).unwrap_or_else(|_| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "trailing zeros exceeds i64 in Binary::normalize"
+                    )
+                }))
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "exponent overflow in Binary::normalize"
+                    )
+                });
         }
 
         Self { mantissa, exponent }
@@ -250,9 +253,9 @@ impl Binary {
         // 2. Bit-length fast path on magnitudes
         // For non-zero: |value| = |mantissa| * 2^exponent, |mantissa| is odd
         // Bit length of |value| = magnitude.bits() + exponent
-        let self_bits = i128::from(mantissa.magnitude().bits()).saturating_add(i128::from(exponent));
-        let other_bits =
-            i128::from(other.magnitude().bits()).saturating_add(i128::from(other_exp));
+        let self_bits =
+            i128::from(mantissa.magnitude().bits()).saturating_add(i128::from(exponent));
+        let other_bits = i128::from(other.magnitude().bits()).saturating_add(i128::from(other_exp));
 
         if self_bits != other_bits {
             // Different magnitude bit lengths — determined by bit length.
@@ -294,9 +297,7 @@ impl Binary {
 
         match exponent.cmp(&other_exp) {
             Ordering::Equal => mantissa.cmp(other),
-            Ordering::Greater => {
-                cmp_with_shift(mantissa, other, exponent.abs_diff(other_exp))
-            }
+            Ordering::Greater => cmp_with_shift(mantissa, other, exponent.abs_diff(other_exp)),
             Ordering::Less => {
                 cmp_with_shift(other, mantissa, other_exp.abs_diff(exponent)).reverse()
             }
@@ -346,11 +347,13 @@ impl Shl<u32> for Binary {
         }
         Self::new_normalized(
             self.mantissa,
-            self.exponent.checked_add(i64::from(rhs)).unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in Binary::shl"
-                )
-            }),
+            self.exponent
+                .checked_add(i64::from(rhs))
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "exponent overflow in Binary::shl"
+                    )
+                }),
         )
     }
 }
@@ -365,11 +368,13 @@ impl Shr<u32> for Binary {
         }
         Self::new_normalized(
             self.mantissa,
-            self.exponent.checked_sub(i64::from(rhs)).unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in Binary::shr"
-                )
-            }),
+            self.exponent
+                .checked_sub(i64::from(rhs))
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "exponent overflow in Binary::shr"
+                    )
+                }),
         )
     }
 }

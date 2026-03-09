@@ -306,8 +306,9 @@ fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Bina
     // After the loop, k_power = k^(2*num_terms + 1) (advanced one past the last term).
     // Error = 1 / ((2n+1) * k^(2n+1))
     let error_coeff_usize = crate::sane_arithmetic!(num_terms; 2 * num_terms + 1);
-    let error_coeff_i64 = i64::try_from(error_coeff_usize)
-        .unwrap_or_else(|_| crate::detected_computable_would_exhaust_memory!("error coeff overflow"));
+    let error_coeff_i64 = i64::try_from(error_coeff_usize).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("error coeff overflow")
+    });
     let error_denom = &k_power * error_coeff_i64;
     let error = reciprocal_of_biguint(
         error_denom.magnitude(),
@@ -372,11 +373,15 @@ pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
     // pi/2: divide by 2 (decrement exponent by 1)
     let half_pi_lo = Binary::new_normalized(
         pi_lo.mantissa().clone(),
-        pi_lo.exponent().checked_sub(1_i64).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in half_pi")),
+        pi_lo.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in half_pi")
+        }),
     );
     let half_pi_hi = Binary::new_normalized(
         pi_hi.mantissa().clone(),
-        pi_hi.exponent().checked_sub(1_i64).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in half_pi")),
+        pi_hi.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in half_pi")
+        }),
     );
     FiniteBounds::new(half_pi_lo, half_pi_hi)
 }

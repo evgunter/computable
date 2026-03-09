@@ -122,7 +122,12 @@ impl FiniteInterval {
         if sum.mantissa().is_zero() {
             return Binary::zero();
         }
-        Binary::new_normalized(sum.mantissa().clone(), sum.exponent().checked_sub(1_i64).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")))
+        Binary::new_normalized(
+            sum.mantissa().clone(),
+            sum.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")
+            }),
+        )
     }
 
     /// Returns the join (smallest enclosing interval) of two intervals.

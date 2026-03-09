@@ -65,17 +65,18 @@ fn format_mantissa_with_point(mantissa: &BigUint, exponent: i64) -> (String, i64
     };
 
     // Adjust exponent: new_exp = old_exp + (num_bits - 1)
-    let bits_minus_one = i64::try_from(num_bits).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!(
-            "mantissa too large in format_mantissa_with_point"
-        )
-    })
-    .checked_sub(1_i64)
-    .unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!(
-            "exponent overflow in format_mantissa_with_point"
-        )
-    });
+    let bits_minus_one = i64::try_from(num_bits)
+        .unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!(
+                "mantissa too large in format_mantissa_with_point"
+            )
+        })
+        .checked_sub(1_i64)
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "exponent overflow in format_mantissa_with_point"
+            )
+        });
     let adjusted_exponent = exponent.checked_add(bits_minus_one).unwrap_or_else(|| {
         crate::detected_computable_would_exhaust_memory!(
             "exponent overflow in format_mantissa_with_point"

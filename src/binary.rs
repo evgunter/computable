@@ -172,7 +172,9 @@ impl FiniteBounds {
         }
         let half_width = Binary::new_normalized(
             width.mantissa().clone(),
-            width.exponent().checked_sub(1_i64).unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")),
+            width.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")
+            }),
         );
         self.lo().add(&half_width)
     }
@@ -243,10 +245,7 @@ mod integration_tests {
     #[test]
     fn bounds_from_lower_and_width_constructs_correctly() {
         let lower = xbin(5, 0);
-        let width = UXBinary::Finite(UBinary::new(
-            num_bigint::BigUint::from(3u32),
-            0_i64,
-        ));
+        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(3u32), 0_i64));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width.clone());
 
@@ -270,10 +269,7 @@ mod integration_tests {
     #[test]
     fn bounds_from_lower_and_width_zero_width() {
         let lower = xbin(42, 0);
-        let width = UXBinary::Finite(UBinary::new(
-            num_bigint::BigUint::from(0u32),
-            0_i64,
-        ));
+        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(0u32), 0_i64));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width);
 

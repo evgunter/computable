@@ -93,8 +93,8 @@ enum RefinerMessage {
 /// Snapshot of the node graph used to coordinate parallel refinement.
 pub struct RefinementGraph {
     pub root: Arc<Node>,
-    pub nodes: Vec<Option<Arc<Node>>>,  // node id -> node (indexed by node_id)
-    pub parents: Vec<Vec<usize>>,       // child id -> parent ids (indexed by node_id)
+    pub nodes: Vec<Option<Arc<Node>>>, // node id -> node (indexed by node_id)
+    pub parents: Vec<Vec<usize>>,      // child id -> parent ids (indexed by node_id)
     pub refiners: Vec<Arc<Node>>,
     /// Size for Vec-based budget maps (max node ID + 1).
     budget_vec_len: usize,
@@ -175,11 +175,7 @@ impl RefinementGraph {
         let refiner_nodes: Vec<Arc<Node>> = self
             .refiners
             .iter()
-            .filter(|node| {
-                !node
-                    .cached_bounds()
-                    .is_some_and(|b| b.width().is_zero())
-            })
+            .filter(|node| !node.cached_bounds().is_some_and(|b| b.width().is_zero()))
             .map(Arc::clone)
             .collect();
 
@@ -188,10 +184,8 @@ impl RefinementGraph {
         // other active refiners can appear in its subtree). We run the refinement
         // loop synchronously, propagating updates via apply_update.
         if refiner_nodes.len() == 1 {
-            return self.refine_single::<MAX_REFINEMENT_ITERATIONS>(
-                &refiner_nodes[0],
-                tolerance_exp,
-            );
+            return self
+                .refine_single::<MAX_REFINEMENT_ITERATIONS>(&refiner_nodes[0], tolerance_exp);
         }
 
         let mut outcome = None;
@@ -287,8 +281,7 @@ impl RefinementGraph {
                 // the BFS used for budget propagation and tracking whether
                 // any ancestor had budget_depends_on_bounds.
                 let budget_is_static: Vec<bool> = {
-                    let mut node_is_static: Vec<Option<bool>> =
-                        vec![None; self.budget_vec_len];
+                    let mut node_is_static: Vec<Option<bool>> = vec![None; self.budget_vec_len];
                     node_is_static[self.root.id] = Some(true);
                     let mut queue = VecDeque::new();
                     queue.push_back(self.root.id);
@@ -297,8 +290,7 @@ impl RefinementGraph {
                             continue;
                         };
                         let parent_static = node_is_static[node_id].unwrap_or(true);
-                        let child_static =
-                            parent_static && !node.op.budget_depends_on_bounds();
+                        let child_static = parent_static && !node.op.budget_depends_on_bounds();
                         for child in node.children() {
                             let entry = node_is_static[child.id].get_or_insert(true);
                             // If ANY path is non-static, mark non-static.
@@ -408,18 +400,27 @@ impl RefinementGraph {
                     // their dispatch behavior.
                     let refresh_candidate = !any_outstanding && dynamic_nonleaf_count > 0;
                     let needs_refresh = refresh_candidate && {
-                        let current_we = self.root.cached_prefix().unwrap_or_else(Prefix::unbounded).width_exponent();
+                        let current_we = self
+                            .root
+                            .cached_prefix()
+                            .unwrap_or_else(Prefix::unbounded)
+                            .width_exponent();
                         current_we < last_refresh_root_we
                     };
                     if needs_refresh {
-                        let map = self.compute_propagated_budgets(&target_width, Some(&cached_budget_map));
+                        let map = self
+                            .compute_propagated_budgets(&target_width, Some(&cached_budget_map));
                         for (i, node) in refiner_nodes.iter().enumerate() {
                             if !budget_is_static[i] {
                                 refiner_budgets[i] = map[node.id].clone();
                             }
                         }
                         cached_budget_map = map;
-                        last_refresh_root_we = self.root.cached_prefix().unwrap_or_else(Prefix::unbounded).width_exponent();
+                        last_refresh_root_we = self
+                            .root
+                            .cached_prefix()
+                            .unwrap_or_else(Prefix::unbounded)
+                            .width_exponent();
                     }
                     let mut dispatched = 0usize;
 
@@ -450,9 +451,12 @@ impl RefinementGraph {
                                 })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             outstanding[i] = true;
-                            outstanding_count = outstanding_count.checked_add(1).unwrap_or_else(|| {
-                                unreachable!("outstanding_count <= num_refiners, cannot overflow")
-                            });
+                            outstanding_count =
+                                outstanding_count.checked_add(1).unwrap_or_else(|| {
+                                    unreachable!(
+                                        "outstanding_count <= num_refiners, cannot overflow"
+                                    )
+                                });
                             needs_redispatch[i] = false;
                             // Reset sub-refiner tracking for non-leaf refiners.
                             // Keep exhausted sub-refiners marked as responded
@@ -474,9 +478,7 @@ impl RefinementGraph {
                                 }
                             }
                             dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
-                                unreachable!(
-                                    "dispatched <= num_refiners, cannot overflow usize"
-                                )
+                                unreachable!("dispatched <= num_refiners, cannot overflow usize")
                             });
                         }
                     }
@@ -651,12 +653,10 @@ impl RefinementGraph {
                             Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
                         let (idx, exhaustion, changed) = apply_response(first)?;
-                        let root_changed = refiner_nodes[idx].id == root_id
-                            || changed.contains(&root_id);
+                        let root_changed =
+                            refiner_nodes[idx].id == root_id || changed.contains(&root_id);
                         record_completion!(idx, exhaustion, changed);
-                        if root_changed
-                            && precision_met(&self.root, tolerance_exp)?
-                        {
+                        if root_changed && precision_met(&self.root, tolerance_exp)? {
                             return self.root.get_bounds();
                         }
                     }
@@ -664,12 +664,10 @@ impl RefinementGraph {
                     // Drain any immediately available responses.
                     while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion, changed) = apply_response(msg)?;
-                        let root_changed = refiner_nodes[idx].id == root_id
-                            || changed.contains(&root_id);
+                        let root_changed =
+                            refiner_nodes[idx].id == root_id || changed.contains(&root_id);
                         record_completion!(idx, exhaustion, changed);
-                        if root_changed
-                            && precision_met(&self.root, tolerance_exp)?
-                        {
+                        if root_changed && precision_met(&self.root, tolerance_exp)? {
                             return self.root.get_bounds();
                         }
                     }
@@ -713,8 +711,10 @@ impl RefinementGraph {
                 match node.refine_step(target_width_exp) {
                     Ok(true) => {
                         let bounds = node.op.compute_bounds()?;
-                        let prefix =
-                            Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
+                        let prefix = Prefix::from_lower_upper(
+                            bounds.small().clone(),
+                            bounds.large().clone(),
+                        );
                         let changed = old_prefix.as_ref() != Some(&prefix);
                         node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
 
@@ -734,8 +734,10 @@ impl RefinementGraph {
                     Ok(false) => {
                         // Converged: update, propagate, and return.
                         let bounds = node.op.compute_bounds()?;
-                        let prefix =
-                            Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
+                        let prefix = Prefix::from_lower_upper(
+                            bounds.small().clone(),
+                            bounds.large().clone(),
+                        );
                         node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
                         self.apply_update(NodeUpdate {
                             node_id: node.id,
@@ -851,9 +853,7 @@ impl RefinementGraph {
                 let children = node.children();
                 let mut all_cached = true;
                 for child in &children {
-                    if let Some(cached_child) =
-                        cached.get(child.id).and_then(|b| b.as_ref())
-                    {
+                    if let Some(cached_child) = cached.get(child.id).and_then(|b| b.as_ref()) {
                         let entry = budgets[child.id].get_or_insert(UXBinary::Inf);
                         if *cached_child < *entry {
                             *entry = cached_child.clone();
@@ -890,9 +890,17 @@ impl RefinementGraph {
 fn tolerance_to_uxbinary(tolerance_exp: &XUsize) -> UXBinary {
     match tolerance_exp {
         XUsize::Inf => UXBinary::zero(),
-        XUsize::Finite(exp) => {
-            UXBinary::Finite(UBinary::new(BigUint::from(1u32), i64::try_from(*exp).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("tolerance exceeds i64")).checked_neg().unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("tolerance negation overflow"))))
-        }
+        XUsize::Finite(exp) => UXBinary::Finite(UBinary::new(
+            BigUint::from(1u32),
+            i64::try_from(*exp)
+                .unwrap_or_else(|_err| {
+                    crate::detected_computable_would_exhaust_memory!("tolerance exceeds i64")
+                })
+                .checked_neg()
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!("tolerance negation overflow")
+                }),
+        )),
     }
 }
 
@@ -961,10 +969,8 @@ fn execute_refine_step(
                         return;
                     }
                 };
-                let prefix = Prefix::from_lower_upper(
-                    bounds.small().clone(),
-                    bounds.large().clone(),
-                );
+                let prefix =
+                    Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
 
                 // Check if prefix visibly changed
                 let changed = old_prefix.as_ref() != Some(&prefix);
@@ -979,9 +985,9 @@ fn execute_refine_step(
                     return;
                 }
                 // Prefix didn't change — do another refine step
-                extra_steps = extra_steps.checked_add(1).unwrap_or_else(|| {
-                    unreachable!("extra_steps bounded by loop break at 16")
-                });
+                extra_steps = extra_steps
+                    .checked_add(1)
+                    .unwrap_or_else(|| unreachable!("extra_steps bounded by loop break at 16"));
             }
             Ok(false) => {
                 let bounds = match node.op.compute_bounds() {
@@ -991,10 +997,8 @@ fn execute_refine_step(
                         return;
                     }
                 };
-                let prefix = Prefix::from_lower_upper(
-                    bounds.small().clone(),
-                    bounds.large().clone(),
-                );
+                let prefix =
+                    Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
                 node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
                 let _send = updates.send(RefinerMessage::Exhausted {
                     update: NodeUpdate {
@@ -1037,7 +1041,24 @@ pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
         UXBinary::Inf => false,
         UXBinary::Finite(width) => match tolerance_exp {
             XUsize::Inf => width.mantissa().is_zero(),
-            XUsize::Finite(exp) => *width <= UBinary::new(BigUint::from(1u32), i64::try_from(*exp).unwrap_or_else(|_err| crate::detected_computable_would_exhaust_memory!("tolerance exceeds i64")).checked_neg().unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("tolerance negation overflow"))),
+            XUsize::Finite(exp) => {
+                *width
+                    <= UBinary::new(
+                        BigUint::from(1u32),
+                        i64::try_from(*exp)
+                            .unwrap_or_else(|_err| {
+                                crate::detected_computable_would_exhaust_memory!(
+                                    "tolerance exceeds i64"
+                                )
+                            })
+                            .checked_neg()
+                            .unwrap_or_else(|| {
+                                crate::detected_computable_would_exhaust_memory!(
+                                    "tolerance negation overflow"
+                                )
+                            }),
+                    )
+            }
         },
     }
 }

@@ -278,7 +278,10 @@ main!(
 
 #[cfg(feature = "time-bench")]
 fn main() {
-    let bits = ::std::env::args().nth(1).map(|s| s.parse::<usize>().expect("bits argument must be a valid usize"));
+    let bits = ::std::env::args().nth(1).map(|s| {
+        s.parse::<usize>()
+            .expect("bits argument must be a valid usize")
+    });
     sqrt_convergence(bits);
     inv_small(bits);
     sin_small(bits);
