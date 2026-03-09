@@ -436,3 +436,29 @@ Status: COMPLETE - MERGED
 - Eliminates BigInt addition on every hi()/large() call in sin hot path
 - Touched 15 files: ordered_pair.rs + every op, coordinator, bisection, tests
 - FiniteBounds::hi() now returns &Binary (was Binary)
+
+## Wave 5-6 Benchmark Results (criterion targeted bench)
+
+Comparison against pre-wave-5 criterion baseline (commit a158cd9):
+
+| Benchmark | Improvement | Absolute Time |
+|-----------|-------------|---------------|
+| pi_targeted/64 | **-79%** | 44 us |
+| pi_targeted/256 | **-52%** | 129 us |
+| sin_small/sin_2/256 | **-43%** | 302 us |
+| sin_1pi/256 | **-96%** | 705 us |
+| inv_sum/64 | **-98%** | 226 us |
+| mixed_expr/64 | **-98%** | 284 us |
+| sequential_refine | **-92%** | 756 us |
+| sqrt_convergence/256 | +22% | 94 us |
+| inv_small/256 | +16% | 635 us |
+
+Complex expressions (inv_sum, mixed_expr) improved 43-54x due to:
+- Sin Taylor term estimate /3→/4 (25% fewer terms)
+- HashMap→Vec for all coordinator data structures
+- Interval cached upper bound (no BigInt add on hi())
+- UBinary div_floor fast paths
+- Prefix allocation reduction
+
+Small sqrt/inv regressions likely from eager upper-bound computation
+in Interval constructors (paid even when large() not called).
