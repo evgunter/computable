@@ -207,16 +207,16 @@ impl Prefix {
     /// - Zero-crossing finite bounds → ZeroCrossing with magnitude exponents
     /// - Single-sign finite bounds → Finite with inner closest to zero
     pub fn from_lower_upper(lower: XBinary, upper: XBinary) -> Self {
-        match (&lower, &upper) {
+        match (lower, upper) {
             (XBinary::NegInf, XBinary::PosInf) => Self::unbounded(),
             (XBinary::NegInf, XBinary::Finite(hi)) => {
                 let pos_exp = if hi.mantissa().is_positive() {
-                    magnitude_exponent(hi)
+                    magnitude_exponent_abs(&hi)
                 } else if hi.mantissa().is_zero() {
                     XExponent::NegInf
                 } else {
                     return Self::Finite {
-                        inner: hi.clone(),
+                        inner: hi,
                         width_exponent: XExponent::PosInf,
                     };
                 };
@@ -227,12 +227,12 @@ impl Prefix {
             }
             (XBinary::Finite(lo), XBinary::PosInf) => {
                 let neg_exp = if lo.mantissa().is_negative() {
-                    magnitude_exponent(&lo.neg())
+                    magnitude_exponent_abs(&lo)
                 } else if lo.mantissa().is_zero() {
                     XExponent::NegInf
                 } else {
                     return Self::Finite {
-                        inner: lo.clone(),
+                        inner: lo,
                         width_exponent: XExponent::PosInf,
                     };
                 };
@@ -285,8 +285,8 @@ fn xexponent_to_uxbinary(exp: &XIsize) -> UXBinary {
 // Conversions
 // =========================================================================
 
-/// Converts finite lower/upper bounds to a Prefix.
-fn finite_bounds_to_prefix(lower: &Binary, upper: &Binary) -> Prefix {
+/// Converts finite lower/upper bounds to a Prefix, consuming both values.
+fn finite_bounds_to_prefix(lower: Binary, upper: Binary) -> Prefix {
     let lower_negative = lower.mantissa().is_negative();
     let upper_positive = upper.mantissa().is_positive();
     let lower_zero = lower.mantissa().is_zero();
@@ -294,13 +294,13 @@ fn finite_bounds_to_prefix(lower: &Binary, upper: &Binary) -> Prefix {
 
     // Zero-width (exact)
     if lower == upper {
-        return Prefix::exact(lower.clone());
+        return Prefix::exact(lower);
     }
 
     // Zero-crossing: lower < 0 and upper > 0
     if lower_negative && upper_positive {
-        let neg_mag = magnitude_exponent(&lower.neg());
-        let pos_mag = magnitude_exponent(upper);
+        let neg_mag = magnitude_exponent_abs(&lower);
+        let pos_mag = magnitude_exponent_abs(&upper);
         return Prefix::ZeroCrossing {
             neg_exponent: neg_mag,
             pos_exponent: pos_mag,
@@ -309,7 +309,7 @@ fn finite_bounds_to_prefix(lower: &Binary, upper: &Binary) -> Prefix {
 
     // Lower is zero, upper positive: zero-crossing with exact lower
     if lower_zero && upper_positive {
-        let pos_mag = magnitude_exponent(upper);
+        let pos_mag = magnitude_exponent_abs(&upper);
         return Prefix::ZeroCrossing {
             neg_exponent: XExponent::NegInf,
             pos_exponent: pos_mag,
@@ -318,7 +318,7 @@ fn finite_bounds_to_prefix(lower: &Binary, upper: &Binary) -> Prefix {
 
     // Lower is negative, upper is zero: zero-crossing with exact upper
     if lower_negative && upper_zero {
-        let neg_mag = magnitude_exponent(&lower.neg());
+        let neg_mag = magnitude_exponent_abs(&lower);
         return Prefix::ZeroCrossing {
             neg_exponent: neg_mag,
             pos_exponent: XExponent::NegInf,
@@ -333,45 +333,47 @@ fn finite_bounds_to_prefix(lower: &Binary, upper: &Binary) -> Prefix {
     // Single-sign interval: compute inner (closest to zero) and width
     if !lower_negative {
         // Both non-negative, lower is closest to zero
-        let width = upper.sub(lower);
+        let width = upper.sub(&lower);
         let we = width_to_xexponent(&width);
         Prefix::Finite {
-            inner: lower.clone(),
+            inner: lower,
             width_exponent: we,
         }
     } else {
         // Both negative, upper (less negative) is closest to zero
-        let width = upper.sub(lower);
+        let width = upper.sub(&lower);
         let we = width_to_xexponent(&width);
         Prefix::Finite {
-            inner: upper.clone(),
+            inner: upper,
             width_exponent: we,
         }
     }
 }
 
-/// Computes the magnitude exponent of a positive Binary value.
+/// Computes the magnitude exponent of a Binary value using its absolute value.
 ///
 /// Returns the smallest exponent e such that `|value| <= 2^e`.
 /// This is `ceil(log2(|value|))` when value is not a power of 2,
 /// and `log2(|value|)` when it is.
-fn magnitude_exponent(value: &Binary) -> XIsize {
+///
+/// Works for both positive and negative values (uses `magnitude()` internally),
+/// avoiding the need to negate first.
+fn magnitude_exponent_abs(value: &Binary) -> XIsize {
     // value = mantissa * 2^exponent (mantissa is odd after normalization)
     // |value| = |mantissa| * 2^exponent
     // bits(|mantissa|) = floor(log2(|mantissa|)) + 1
     //
-    // If |mantissa| is a power of 2 (i.e. |mantissa| = 2^(bits-1)):
-    //   log2(|value|) = (bits-1) + exponent
-    // Otherwise:
-    //   ceil(log2(|value|)) = bits + exponent
-    //
     // But Binary normalizes mantissa to be odd, so |mantissa| is a power of 2
     // only when |mantissa| = 1 (since 1 is the only odd power of 2).
-    let mantissa_bits = match std::num::NonZeroU64::new(value.mantissa().magnitude().bits()) {
+    let mag = value.mantissa().magnitude();
+    let mantissa_bits = match std::num::NonZeroU64::new(mag.bits()) {
         None => return XIsize::NegInf,
         Some(nz) => nz,
     };
-    let is_power_of_two = *value.mantissa().magnitude() == num_bigint::BigUint::one();
+    // Since mantissa is normalized to be odd, |mantissa| == 1 is the only
+    // power-of-two case. Check this with a simple bit count instead of
+    // allocating a BigUint::one().
+    let is_unit_mantissa = mantissa_bits.get() == 1;
 
     let mantissa_bits_isize = isize::try_from(mantissa_bits.get())
         .unwrap_or_else(|_| crate::detected_computable_would_exhaust_memory!("mantissa too large"));
@@ -380,10 +382,9 @@ fn magnitude_exponent(value: &Binary) -> XIsize {
         .to_isize()
         .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent too large"));
 
-    let effective_bits = if is_power_of_two {
-        isize::try_from(crate::sane::sub_one_u64(mantissa_bits)).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("mantissa too large")
-        })
+    let effective_bits = if is_unit_mantissa {
+        // |mantissa| = 1 = 2^0, so log2(|value|) = 0 + exponent
+        0_isize
     } else {
         mantissa_bits_isize
     };
@@ -400,29 +401,22 @@ fn width_to_xexponent(width: &Binary) -> XIsize {
     // width = mantissa * 2^exponent, mantissa is odd and positive
     // If mantissa == 1, then width = 2^exponent exactly
     // Otherwise width > 2^(bits-1+exponent), so we need ceil(log2(width)) = bits + exponent
+    //
+    // Since the mantissa is normalized to be odd, mantissa is a power of two
+    // only when mantissa == 1 (i.e., bits == 1). No BigUint allocation needed.
     let mantissa_bits = match std::num::NonZeroU64::new(width.mantissa().magnitude().bits()) {
         None => return XIsize::NegInf,
         Some(nz) => nz,
     };
-    let bits_minus_1 = crate::sane::sub_one_u64(mantissa_bits);
-    let is_power_of_two =
-        *width.mantissa().magnitude() == (num_bigint::BigUint::one() << bits_minus_1);
+    let is_unit_mantissa = mantissa_bits.get() == 1;
     let exponent_isize = width
         .exponent()
         .to_isize()
         .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent too large"));
 
-    if is_power_of_two {
-        // width = 2^(bits-1) * 2^exponent = 2^(bits-1+exponent)
-        let bits_minus_1_isize = isize::try_from(bits_minus_1).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("mantissa too large")
-        });
-        let result = bits_minus_1_isize
-            .checked_add(exponent_isize)
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow")
-            });
-        XIsize::Finite(result)
+    if is_unit_mantissa {
+        // width = 1 * 2^exponent = 2^exponent exactly
+        XIsize::Finite(exponent_isize)
     } else {
         // Need ceil: bits + exponent
         let bits_isize = isize::try_from(mantissa_bits.get()).unwrap_or_else(|_| {
@@ -448,15 +442,15 @@ impl From<&PrefixBounds> for Prefix {
         // Determine if zero-crossing
         if lower.mantissa().is_negative() && upper.mantissa().is_positive() {
             // Zero-crossing
-            let neg_mag = magnitude_exponent(&lower.neg());
-            let pos_mag = magnitude_exponent(&upper);
+            let neg_mag = magnitude_exponent_abs(&lower);
+            let pos_mag = magnitude_exponent_abs(&upper);
             Prefix::ZeroCrossing {
                 neg_exponent: neg_mag,
                 pos_exponent: pos_mag,
             }
         } else if lower.mantissa().is_zero() || upper.mantissa().is_zero() {
             // One endpoint is zero
-            finite_bounds_to_prefix(&lower, &upper)
+            finite_bounds_to_prefix(lower, upper)
         } else {
             // Single-sign: convert exponent
             let we = pb.exponent.to_isize().unwrap_or_else(|| {

@@ -119,13 +119,24 @@ impl Binary {
         Self::normalize(lhs - rhs, exponent)
     }
 
-    /// Negates this Binary number.
+    /// Negates this Binary number (borrowing).
     pub fn neg(&self) -> Self {
         if self.mantissa.is_zero() {
             return self.clone();
         }
         Self {
             mantissa: -self.mantissa.clone(),
+            exponent: self.exponent,
+        }
+    }
+
+    /// Negates this Binary number, consuming it to avoid cloning the mantissa.
+    pub fn neg_owned(self) -> Self {
+        if self.mantissa.is_zero() {
+            return self;
+        }
+        Self {
+            mantissa: -self.mantissa,
             exponent: self.exponent,
         }
     }
@@ -313,7 +324,7 @@ impl Neg for Binary {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        Binary::neg(&self)
+        self.neg_owned()
     }
 }
 
