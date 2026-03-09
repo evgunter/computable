@@ -192,7 +192,20 @@ Four optimizations:
 4. Eliminate interval_neg() allocations with direct negation
 - Impact: sin benchmarks ~35% faster (agent's measurements: bits=4 37%, bits=16 36%, bits=64 32%)
 
-### Experiment 13: Wave 3 Optimization Agents
-Status: IN PROGRESS
-- Inline i64 exponents for Binary type (avoid BigInt allocation for exponents)
-- Coordinator batch updates for summation/complex benchmarks
+### Experiment 13: Coordinator and Arithmetic Large-Graph Optimization (commit 3b1b51b)
+Status: COMPLETE - MERGED
+Three optimizations targeting summation (200K terms) and complex (5K terms):
+1. **Lazy prefix derivation**: `get_bounds()` skips expensive `Prefix::from_lower_upper`
+   derivation at every intermediate node. For 400K-node tree, eliminates ~400K unnecessary
+   Prefix derivations and mutex lock/notify cycles during initial evaluation.
+2. **Exact-input fast paths**: AddOp/MulOp/NegOp detect zero-width (exact) inputs and
+   compute one operation instead of multiple endpoint combinations.
+3. **O(1) coordinator bookkeeping**: Replace O(N) scans over all refiners with counters
+   (`outstanding_count`, `dynamic_nonleaf_count`).
+
+Results:
+- Summation (200K terms): ~485ms → ~156ms (**3.1x faster**)
+- Complex (5K terms): ~115ms → ~27ms (**4.3x faster**)
+
+### Experiment 14: Inline i64 Exponents
+Status: IN PROGRESS (agent working on massive refactor)
