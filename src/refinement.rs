@@ -66,6 +66,7 @@ enum WorkerCommand {
 pub struct NodeUpdate {
     pub node_id: usize,
     pub prefix: Prefix,
+    pub bounds: Bounds,
 }
 
 /// Reason a refiner has stopped producing further updates.
@@ -300,13 +301,14 @@ impl RefinementGraph {
                         Ok(prefix_width_leq(&prefix, tol))
                     };
 
+                let mut cached_budget_map = self.compute_propagated_budgets(tolerance_exp, None);
                 let mut refiner_budgets: Vec<Option<UXBinary>> = {
-                    let map = self.compute_propagated_budgets(tolerance_exp);
                     refiner_nodes
                         .iter()
-                        .map(|node| map.get(&node.id).cloned())
+                        .map(|node| cached_budget_map.get(&node.id).cloned())
                         .collect()
                 };
+                let mut last_refresh_root_we = self.root.get_prefix()?.width_exponent();
 
                 loop {
                     // 1. Check if there's any remaining work (eligible or outstanding).
@@ -356,14 +358,20 @@ impl RefinementGraph {
                     // with dynamic budgets. Leaf refiners always
                     // self-redispatch, so budget loosening doesn't change
                     // their dispatch behavior.
-                    let needs_refresh = !any_outstanding && dynamic_nonleaf_count > 0;
+                    let refresh_candidate = !any_outstanding && dynamic_nonleaf_count > 0;
+                    let needs_refresh = refresh_candidate && {
+                        let current_we = self.root.cached_prefix().unwrap_or_else(Prefix::unbounded).width_exponent();
+                        current_we < last_refresh_root_we
+                    };
                     if needs_refresh {
-                        let map = self.compute_propagated_budgets(tolerance_exp);
+                        let map = self.compute_propagated_budgets(tolerance_exp, Some(&cached_budget_map));
                         for (i, node) in refiner_nodes.iter().enumerate() {
                             if !budget_is_static[i] {
                                 refiner_budgets[i] = map.get(&node.id).cloned();
                             }
                         }
+                        cached_budget_map = map;
+                        last_refresh_root_we = self.root.cached_prefix().unwrap_or_else(Prefix::unbounded).width_exponent();
                     }
                     let mut dispatched = 0usize;
 
@@ -640,7 +648,7 @@ impl RefinementGraph {
         let mut changed_by_propagation = Vec::new();
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
-            node.set_prefix(update.prefix);
+            node.set_prefix_and_bounds(update.prefix, update.bounds);
             queue.push_back(node.id);
         }
 
@@ -680,7 +688,11 @@ impl RefinementGraph {
     ///
     /// Refiners that are not reachable through passive combinators (e.g. children
     /// of other refiners) will not appear in the returned map.
-    fn compute_propagated_budgets(&self, tolerance_exp: &XUsize) -> HashMap<usize, UXBinary> {
+    fn compute_propagated_budgets(
+        &self,
+        tolerance_exp: &XUsize,
+        cached_budgets: Option<&HashMap<usize, UXBinary>>,
+    ) -> HashMap<usize, UXBinary> {
         let target_width = tolerance_to_uxbinary(tolerance_exp);
         let mut budgets: HashMap<usize, UXBinary> = HashMap::new();
         budgets.insert(self.root.id, target_width);
@@ -696,6 +708,33 @@ impl RefinementGraph {
             let Some(budget) = budgets.get(&node_id).cloned() else {
                 continue;
             };
+
+            // If this node has a static budget (doesn't depend on bounds)
+            // and the cached budget matches, skip recomputing children
+            // and copy their cached budgets instead.
+            if let Some(cached) = cached_budgets
+                && !node.op.budget_depends_on_bounds()
+                && let Some(cached_budget) = cached.get(&node_id)
+                && *cached_budget == budget
+            {
+                let children = node.children();
+                let mut all_cached = true;
+                for child in &children {
+                    if let Some(cached_child) = cached.get(&child.id) {
+                        let entry = budgets.entry(child.id).or_insert(UXBinary::Inf);
+                        if *cached_child < *entry {
+                            *entry = cached_child.clone();
+                            queue.push_back(child.id);
+                        }
+                    } else {
+                        all_cached = false;
+                        break;
+                    }
+                }
+                if all_cached {
+                    continue;
+                }
+            }
 
             let children = node.children();
             for (child_idx, child) in children.iter().enumerate() {
@@ -782,22 +821,27 @@ fn execute_refine_step(
     loop {
         match node.refine_step(target_width_exp) {
             Ok(true) => {
-                let prefix = match node.compute_prefix() {
-                    Ok(p) => p,
+                let bounds = match node.op.compute_bounds() {
+                    Ok(b) => b,
                     Err(e) => {
                         let _send = updates.send(RefinerMessage::Error(e));
                         return;
                     }
                 };
+                let prefix = Prefix::from_lower_upper(
+                    bounds.small().clone(),
+                    bounds.large(),
+                );
 
                 // Check if prefix visibly changed
                 let changed = old_prefix.as_ref() != Some(&prefix);
-                node.set_prefix(prefix.clone());
+                node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
 
                 if changed || extra_steps >= 16 {
                     let _send = updates.send(RefinerMessage::Update(NodeUpdate {
                         node_id: node.id,
                         prefix,
+                        bounds,
                     }));
                     return;
                 }
@@ -807,18 +851,23 @@ fn execute_refine_step(
                 });
             }
             Ok(false) => {
-                let prefix = match node.compute_prefix() {
-                    Ok(p) => p,
+                let bounds = match node.op.compute_bounds() {
+                    Ok(b) => b,
                     Err(e) => {
                         let _send = updates.send(RefinerMessage::Error(e));
                         return;
                     }
                 };
-                node.set_prefix(prefix.clone());
+                let prefix = Prefix::from_lower_upper(
+                    bounds.small().clone(),
+                    bounds.large(),
+                );
+                node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
                 let _send = updates.send(RefinerMessage::Exhausted {
                     update: NodeUpdate {
                         node_id: node.id,
                         prefix,
+                        bounds,
                     },
                     reason: ExhaustionReason::Converged,
                 });
@@ -826,10 +875,12 @@ fn execute_refine_step(
             }
             Err(ComputableError::StateUnchanged) => {
                 let prefix = node.cached_prefix().unwrap_or_else(Prefix::unbounded);
+                let bounds = node.cached_bounds().unwrap_or_else(|| prefix.to_bounds());
                 let _send = updates.send(RefinerMessage::Exhausted {
                     update: NodeUpdate {
                         node_id: node.id,
                         prefix,
+                        bounds,
                     },
                     reason: ExhaustionReason::StateUnchanged,
                 });

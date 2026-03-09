@@ -291,6 +291,7 @@ impl Node {
         Ok(prefix)
     }
 
+    #[allow(dead_code)]
     pub fn set_prefix(&self, prefix: Prefix) {
         {
             let mut cache = self.prefix_cache.write();
