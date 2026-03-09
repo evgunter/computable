@@ -420,3 +420,19 @@ Status: COMPLETE - MERGED
 - node_is_static: HashMap<usize, bool> → Vec<Option<bool>>
 - No hashing overhead, cache-friendly sequential access
 - Pre-allocated to max_node_id + 1
+
+### Experiment 32: RefinementGraph HashMap→Vec (commit 3181e45)
+Status: COMPLETE - MERGED
+- nodes: HashMap<usize, Arc<Node>> → Vec<Option<Arc<Node>>>
+- parents: HashMap<usize, Vec<usize>> → Vec<Vec<usize>>
+- refiner_index: HashMap<usize, usize> → Vec<Option<usize>>
+- refiner_id_set: HashSet<usize> → Vec<bool>
+- All sized to budget_vec_len (max_node_id + 1)
+
+### Experiment 33: Interval Cached Upper Bound (commit cc3cd27)
+Status: COMPLETE - MERGED
+- Added `upper: T` field to Interval<T, W>, computed eagerly in constructors
+- large() returns &T instead of computing lower + width each call
+- Eliminates BigInt addition on every hi()/large() call in sin hot path
+- Touched 15 files: ordered_pair.rs + every op, coordinator, bisection, tests
+- FiniteBounds::hi() now returns &Binary (was Binary)
