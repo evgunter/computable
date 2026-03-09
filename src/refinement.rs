@@ -669,8 +669,8 @@ impl RefinementGraph {
                             Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
                         let (idx, exhaustion, changed) = apply_response(first)?;
-                        let root_changed =
-                            self.local_index(refiner_nodes[idx].id) == root_local || changed.contains(&root_local);
+                        let root_changed = self.local_index(refiner_nodes[idx].id) == root_local
+                            || changed.contains(&root_local);
                         record_completion!(idx, exhaustion, changed);
                         if root_changed && precision_met(&self.root, tolerance_exp)? {
                             return self.root.get_bounds();
@@ -680,8 +680,8 @@ impl RefinementGraph {
                     // Drain any immediately available responses.
                     while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion, changed) = apply_response(msg)?;
-                        let root_changed =
-                            self.local_index(refiner_nodes[idx].id) == root_local || changed.contains(&root_local);
+                        let root_changed = self.local_index(refiner_nodes[idx].id) == root_local
+                            || changed.contains(&root_local);
                         record_completion!(idx, exhaustion, changed);
                         if root_changed && precision_met(&self.root, tolerance_exp)? {
                             return self.root.get_bounds();

@@ -985,9 +985,12 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
         crate::detected_computable_would_exhaust_memory!("n overflows i64 in Taylor sin")
     });
     let (common_exp, shift_per_step, first_shift) = if e < 0 {
-        let two_n_minus_1 = n_i64.checked_mul(2).and_then(|v| v.checked_sub(1)).unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("2n-1 overflows in Taylor sin")
-        });
+        let two_n_minus_1 = n_i64
+            .checked_mul(2)
+            .and_then(|v| v.checked_sub(1))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("2n-1 overflows in Taylor sin")
+            });
         let common_exp = e.checked_mul(two_n_minus_1).unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!("e*(2n-1) overflows in Taylor sin")
         });
@@ -1004,7 +1007,9 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
             crate::detected_computable_would_exhaust_memory!("-2e*(n-1) overflows in Taylor sin")
         });
         let shift_per_step = neg_two_e.checked_neg().unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("shift_per_step overflows in Taylor sin")
+            crate::detected_computable_would_exhaust_memory!(
+                "shift_per_step overflows in Taylor sin"
+            )
         });
         (common_exp, shift_per_step, first_shift)
     } else if e > 0 {
@@ -1041,11 +1046,13 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
 
         if k < n_minus_1 {
             power_m *= &m_sq;
-            current_shift = current_shift.checked_add(shift_per_step).unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "current_shift accumulation overflows in Taylor sin"
-                )
-            });
+            current_shift = current_shift
+                .checked_add(shift_per_step)
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "current_shift accumulation overflows in Taylor sin"
+                    )
+                });
         }
     }
 
