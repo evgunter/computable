@@ -244,7 +244,16 @@ This is worker pool overhead for very low-precision work where thread setup domi
 ### Experiment 15: Inline i64 Exponents
 Status: IN PROGRESS (agent working on massive refactor)
 
-### Experiment 16: Batch Precision Checks + Batch apply_update
-Status: IN PROGRESS (two agents working in parallel)
-- Batch precision checks: only check root.get_prefix() after draining all responses
-- Batch apply_update: deduplicate ancestor propagation when multiple siblings update
+### Experiment 16: Batch apply_update Propagation (commit 10ac0dd)
+Status: COMPLETE - MERGED
+- Level-by-level upward propagation: unique parents computed once per level
+- root_dirty optimization: precision checked only once after entire batch
+- parse_response separates response extraction from propagation
+
+Results (on top of all prior optimizations):
+- integer_roots/256: ~49% faster
+- pi_256: -24%, shared_subexpr: -34%, mixed_expr: -39%, inv_sum: -27%
+- No regressions on any benchmark
+
+### Experiment 17: Inline i64 Exponents
+Status: IN PROGRESS (massive refactor agent still working)
