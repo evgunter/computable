@@ -35,7 +35,7 @@
 //!   skip refiners whose bounds are already narrow enough for their position
 //!   in the computation, avoiding wasted work on fast-converging operands
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::thread;
 
@@ -93,17 +93,24 @@ enum RefinerMessage {
 /// Snapshot of the node graph used to coordinate parallel refinement.
 pub struct RefinementGraph {
     pub root: Arc<Node>,
-    pub nodes: Vec<Option<Arc<Node>>>, // node id -> node (indexed by node_id)
-    pub parents: Vec<Vec<usize>>,      // child id -> parent ids (indexed by node_id)
+    /// Mapping from global node ID to compact local index (0..n).
+    /// Global IDs grow monotonically across all computations in a process,
+    /// but local indices are always 0..n for the nodes in this graph.
+    id_to_local: HashMap<usize, usize>,
+    pub nodes: Vec<Option<Arc<Node>>>, // local index -> node
+    pub parents: Vec<Vec<usize>>,      // local index -> parent local indices
     pub refiners: Vec<Arc<Node>>,
-    /// Size for Vec-based budget maps (max node ID + 1).
-    budget_vec_len: usize,
+    /// Number of nodes in the graph (Vec length for all local-index-based Vecs).
+    num_nodes: usize,
 }
 
 impl RefinementGraph {
     pub fn new(root: Arc<Node>) -> Result<Self, ComputableError> {
-        // First pass: collect all node IDs to determine the Vec size.
-        let mut all_ids = Vec::new();
+        // First pass: collect all nodes and assign compact local indices 0..n.
+        // Global node IDs grow monotonically across all computations in a
+        // process, so we map them to compact local indices for Vec storage.
+        let mut id_to_local = HashMap::new();
+        let mut all_nodes_ordered = Vec::new();
         {
             let mut seen = HashSet::new();
             let mut stack = vec![Arc::clone(&root)];
@@ -111,54 +118,59 @@ impl RefinementGraph {
                 if !seen.insert(node.id) {
                     continue;
                 }
-                all_ids.push(node.id);
+                all_nodes_ordered.push(Arc::clone(&node));
                 for child in node.children() {
                     stack.push(child);
                 }
             }
         }
 
-        // Pre-compute Vec size for all indexed Vecs: max_node_id + 1.
-        // Safe: all_ids is non-empty (contains at least root), and node IDs
-        // are sequential from a global AtomicUsize counter.
-        let budget_vec_len = all_ids
-            .iter()
-            .copied()
-            .max()
-            .unwrap_or(0)
-            .checked_add(1)
-            .unwrap_or_else(|| unreachable!("node ID at usize::MAX implies memory exhaustion"));
+        // Assign local indices in discovery order.
+        let num_nodes = all_nodes_ordered.len();
+        for (local_idx, node) in all_nodes_ordered.iter().enumerate() {
+            id_to_local.insert(node.id, local_idx);
+        }
 
-        let mut nodes: Vec<Option<Arc<Node>>> = vec![None; budget_vec_len];
-        let mut parents: Vec<Vec<usize>> = vec![Vec::new(); budget_vec_len];
+        let mut nodes: Vec<Option<Arc<Node>>> = vec![None; num_nodes];
+        let mut parents: Vec<Vec<usize>> = vec![Vec::new(); num_nodes];
         let mut refiners = Vec::new();
 
         let mut stack = vec![Arc::clone(&root)];
         while let Some(node) = stack.pop() {
-            if nodes[node.id].is_some() {
+            // Safety: all node IDs were inserted into id_to_local in the first pass.
+            let local_idx = id_to_local[&node.id];
+            if nodes[local_idx].is_some() {
                 continue;
             }
-            let node_id = node.id;
-            nodes[node_id] = Some(Arc::clone(&node));
+            nodes[local_idx] = Some(Arc::clone(&node));
 
             if node.is_refiner() {
                 refiners.push(Arc::clone(&node));
             }
             for child in node.children() {
-                parents[child.id].push(node_id);
+                let child_local = id_to_local[&child.id];
+                let parent_local = local_idx;
+                parents[child_local].push(parent_local);
                 stack.push(child);
             }
         }
 
         let graph = Self {
             root,
+            id_to_local,
             nodes,
             parents,
             refiners,
-            budget_vec_len,
+            num_nodes,
         };
 
         Ok(graph)
+    }
+
+    /// Returns the compact local index for a given global node ID.
+    #[inline]
+    fn local_index(&self, node_id: usize) -> usize {
+        self.id_to_local[&node_id]
     }
 
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
@@ -230,10 +242,10 @@ impl RefinementGraph {
                 let mut outstanding_count = 0usize;
                 let mut eligible_count = num_refiners;
 
-                // Build node_id → refiner index mapping for routing responses.
-                let mut refiner_index: Vec<Option<usize>> = vec![None; self.budget_vec_len];
+                // Build local_index → refiner index mapping for routing responses.
+                let mut refiner_index: Vec<Option<usize>> = vec![None; self.num_nodes];
                 for (i, node) in refiner_nodes.iter().enumerate() {
-                    refiner_index[node.id] = Some(i);
+                    refiner_index[self.local_index(node.id)] = Some(i);
                 }
 
                 // Determine two properties per refiner:
@@ -248,9 +260,9 @@ impl RefinementGraph {
                 //   passes only through ops with static budgets (AddOp,
                 //   NegOp). Static budgets don't change as bounds tighten,
                 //   so they never need refreshing at wave boundaries.
-                let mut refiner_id_set: Vec<bool> = vec![false; self.budget_vec_len];
+                let mut refiner_id_set: Vec<bool> = vec![false; self.num_nodes];
                 for node in &refiner_nodes {
-                    refiner_id_set[node.id] = true;
+                    refiner_id_set[self.local_index(node.id)] = true;
                 }
                 // For each refiner, collect the indices of sub-refiners in
                 // its subtree. Leaf refiners have no sub-refiners.
@@ -261,8 +273,9 @@ impl RefinementGraph {
                         let mut seen = HashSet::new();
                         let mut stack: Vec<Arc<Node>> = node.children();
                         while let Some(child) = stack.pop() {
-                            if refiner_id_set[child.id]
-                                && let Some(&idx) = refiner_index[child.id].as_ref()
+                            let child_local = self.local_index(child.id);
+                            if refiner_id_set[child_local]
+                                && let Some(&idx) = refiner_index[child_local].as_ref()
                                 && seen.insert(idx)
                             {
                                 subs.push(idx);
@@ -281,26 +294,27 @@ impl RefinementGraph {
                 // the BFS used for budget propagation and tracking whether
                 // any ancestor had budget_depends_on_bounds.
                 let budget_is_static: Vec<bool> = {
-                    let mut node_is_static: Vec<Option<bool>> = vec![None; self.budget_vec_len];
-                    node_is_static[self.root.id] = Some(true);
+                    let mut node_is_static: Vec<Option<bool>> = vec![None; self.num_nodes];
+                    node_is_static[self.local_index(self.root.id)] = Some(true);
                     let mut queue = VecDeque::new();
-                    queue.push_back(self.root.id);
-                    while let Some(node_id) = queue.pop_front() {
-                        let Some(node) = self.nodes[node_id].as_ref() else {
+                    queue.push_back(self.local_index(self.root.id));
+                    while let Some(local_idx) = queue.pop_front() {
+                        let Some(node) = self.nodes[local_idx].as_ref() else {
                             continue;
                         };
-                        let parent_static = node_is_static[node_id].unwrap_or(true);
+                        let parent_static = node_is_static[local_idx].unwrap_or(true);
                         let child_static = parent_static && !node.op.budget_depends_on_bounds();
                         for child in node.children() {
-                            let entry = node_is_static[child.id].get_or_insert(true);
+                            let child_local = self.local_index(child.id);
+                            let entry = node_is_static[child_local].get_or_insert(true);
                             // If ANY path is non-static, mark non-static.
                             *entry = *entry && child_static;
-                            queue.push_back(child.id);
+                            queue.push_back(child_local);
                         }
                     }
                     refiner_nodes
                         .iter()
-                        .map(|node| node_is_static[node.id].unwrap_or(true))
+                        .map(|node| node_is_static[self.local_index(node.id)].unwrap_or(true))
                         .collect()
                 };
                 // Count of active non-leaf refiners with dynamic budgets.
@@ -345,7 +359,7 @@ impl RefinementGraph {
                 let mut refiner_budgets: Vec<Option<UXBinary>> = {
                     refiner_nodes
                         .iter()
-                        .map(|node| cached_budget_map[node.id].clone())
+                        .map(|node| cached_budget_map[self.local_index(node.id)].clone())
                         .collect()
                 };
                 let mut last_refresh_root_we = self.root.get_prefix()?.width_exponent();
@@ -412,7 +426,7 @@ impl RefinementGraph {
                             .compute_propagated_budgets(&target_width, Some(&cached_budget_map));
                         for (i, node) in refiner_nodes.iter().enumerate() {
                             if !budget_is_static[i] {
-                                refiner_budgets[i] = map[node.id].clone();
+                                refiner_budgets[i] = map[self.local_index(node.id)].clone();
                             }
                         }
                         cached_budget_map = map;
@@ -543,14 +557,16 @@ impl RefinementGraph {
                     > {
                         match message {
                             RefinerMessage::Update(update) => {
-                                let idx = refiner_index[update.node_id].unwrap_or_else(|| {
+                                let local = self.local_index(update.node_id);
+                                let idx = refiner_index[local].unwrap_or_else(|| {
                                     unreachable!("refiner_index populated for all refiner node IDs")
                                 });
                                 let changed = self.apply_update(update)?;
                                 Ok((idx, None, changed))
                             }
                             RefinerMessage::Exhausted { update, reason } => {
-                                let idx = refiner_index[update.node_id].unwrap_or_else(|| {
+                                let local = self.local_index(update.node_id);
+                                let idx = refiner_index[local].unwrap_or_else(|| {
                                     unreachable!("refiner_index populated for all refiner node IDs")
                                 });
                                 let changed = self.apply_update(update)?;
@@ -646,7 +662,7 @@ impl RefinementGraph {
                     // when the root's bounds actually changed (the root was
                     // either the directly-updated refiner or was reached by
                     // apply_update propagation), skipping the check otherwise.
-                    let root_id = self.root.id;
+                    let root_local = self.local_index(self.root.id);
                     {
                         let first = match update_rx.recv() {
                             Ok(msg) => msg,
@@ -654,7 +670,7 @@ impl RefinementGraph {
                         };
                         let (idx, exhaustion, changed) = apply_response(first)?;
                         let root_changed =
-                            refiner_nodes[idx].id == root_id || changed.contains(&root_id);
+                            self.local_index(refiner_nodes[idx].id) == root_local || changed.contains(&root_local);
                         record_completion!(idx, exhaustion, changed);
                         if root_changed && precision_met(&self.root, tolerance_exp)? {
                             return self.root.get_bounds();
@@ -665,7 +681,7 @@ impl RefinementGraph {
                     while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion, changed) = apply_response(msg)?;
                         let root_changed =
-                            refiner_nodes[idx].id == root_id || changed.contains(&root_id);
+                            self.local_index(refiner_nodes[idx].id) == root_local || changed.contains(&root_local);
                         record_completion!(idx, exhaustion, changed);
                         if root_changed && precision_met(&self.root, tolerance_exp)? {
                             return self.root.get_bounds();
@@ -780,18 +796,19 @@ impl RefinementGraph {
     fn apply_update(&self, update: NodeUpdate) -> Result<Vec<usize>, ComputableError> {
         let mut changed_by_propagation = Vec::new();
         let mut queue = VecDeque::new();
-        if let Some(node) = self.nodes[update.node_id].as_ref() {
+        let update_local = self.local_index(update.node_id);
+        if let Some(node) = self.nodes[update_local].as_ref() {
             node.set_prefix_and_bounds(update.prefix, update.bounds);
-            queue.push_back(node.id);
+            queue.push_back(update_local);
         }
 
-        while let Some(changed_id) = queue.pop_front() {
-            let parents = &self.parents[changed_id];
-            if parents.is_empty() {
+        while let Some(changed_local) = queue.pop_front() {
+            let parent_locals = &self.parents[changed_local];
+            if parent_locals.is_empty() {
                 continue;
             }
-            for parent_id in parents {
-                let parent = self.nodes[*parent_id]
+            for &parent_local in parent_locals {
+                let parent = self.nodes[parent_local]
                     .as_ref()
                     .ok_or(ComputableError::RefinementChannelClosed)?;
                 let next_bounds = parent.op.compute_bounds()?;
@@ -803,8 +820,8 @@ impl RefinementGraph {
                     // Cache both prefix AND exact bounds so ancestors'
                     // compute_bounds() hits the bounds cache.
                     parent.set_prefix_and_bounds(next_prefix, next_bounds);
-                    changed_by_propagation.push(*parent_id);
-                    queue.push_back(*parent_id);
+                    changed_by_propagation.push(parent_local);
+                    queue.push_back(parent_local);
                 }
             }
         }
@@ -827,18 +844,19 @@ impl RefinementGraph {
         target_width: &UXBinary,
         cached_budgets: Option<&[Option<UXBinary>]>,
     ) -> Vec<Option<UXBinary>> {
-        let mut budgets: Vec<Option<UXBinary>> = vec![None; self.budget_vec_len];
-        budgets[self.root.id] = Some(target_width.clone());
+        let root_local = self.local_index(self.root.id);
+        let mut budgets: Vec<Option<UXBinary>> = vec![None; self.num_nodes];
+        budgets[root_local] = Some(target_width.clone());
 
         let mut queue = VecDeque::new();
-        queue.push_back(self.root.id);
+        queue.push_back(root_local);
 
-        while let Some(node_id) = queue.pop_front() {
-            let Some(node) = self.nodes[node_id].as_ref() else {
+        while let Some(local_idx) = queue.pop_front() {
+            let Some(node) = self.nodes[local_idx].as_ref() else {
                 continue;
             };
 
-            let Some(budget) = budgets[node_id].clone() else {
+            let Some(budget) = budgets[local_idx].clone() else {
                 continue;
             };
 
@@ -847,17 +865,18 @@ impl RefinementGraph {
             // and copy their cached budgets instead.
             if let Some(cached) = cached_budgets
                 && !node.op.budget_depends_on_bounds()
-                && let Some(cached_budget) = cached.get(node_id).and_then(|b| b.as_ref())
+                && let Some(cached_budget) = cached.get(local_idx).and_then(|b| b.as_ref())
                 && *cached_budget == budget
             {
                 let children = node.children();
                 let mut all_cached = true;
                 for child in &children {
-                    if let Some(cached_child) = cached.get(child.id).and_then(|b| b.as_ref()) {
-                        let entry = budgets[child.id].get_or_insert(UXBinary::Inf);
+                    let child_local = self.local_index(child.id);
+                    if let Some(cached_child) = cached.get(child_local).and_then(|b| b.as_ref()) {
+                        let entry = budgets[child_local].get_or_insert(UXBinary::Inf);
                         if *cached_child < *entry {
                             *entry = cached_child.clone();
-                            queue.push_back(child.id);
+                            queue.push_back(child_local);
                         }
                     } else {
                         all_cached = false;
@@ -872,10 +891,11 @@ impl RefinementGraph {
             let children = node.children();
             for (child_idx, child) in children.iter().enumerate() {
                 let child_budget = node.op.child_demand_budget(&budget, child_idx);
-                let entry = budgets[child.id].get_or_insert(UXBinary::Inf);
+                let child_local = self.local_index(child.id);
+                let entry = budgets[child_local].get_or_insert(UXBinary::Inf);
                 if child_budget < *entry {
                     *entry = child_budget;
-                    queue.push_back(child.id);
+                    queue.push_back(child_local);
                 }
             }
         }
