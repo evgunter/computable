@@ -425,7 +425,7 @@ mod tests {
                 assert_eq!(new_bounds.exponent, 1_i64);
                 let finite = new_bounds.to_finite_bounds();
                 assert_eq!(finite.small(), &bin(2, 0));
-                assert_eq!(finite.large(), bin(4, 0));
+                assert_eq!(finite.large(), &bin(4, 0));
             }
             PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
@@ -447,7 +447,7 @@ mod tests {
                 assert_eq!(new_bounds.exponent, 1_i64);
                 let finite = new_bounds.to_finite_bounds();
                 assert_eq!(finite.small(), &bin(0, 0));
-                assert_eq!(finite.large(), bin(2, 0));
+                assert_eq!(finite.large(), &bin(2, 0));
             }
             PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
@@ -511,11 +511,11 @@ mod tests {
         // Interval should have narrowed
         let finite = bounds.to_finite_bounds();
         assert!(finite.small() > &initial_lower);
-        assert!(finite.large() < initial_upper);
+        assert!(*finite.large() < initial_upper);
 
         // Bounds should still contain sqrt(2) ≈ 1.414
         let sqrt_2_approx = bin(1414, -10); // Rough approximation
-        assert!(finite.small() <= &sqrt_2_approx || finite.large() >= sqrt_2_approx);
+        assert!(finite.small() <= &sqrt_2_approx || *finite.large() >= sqrt_2_approx);
     }
 
     #[test]
@@ -536,7 +536,7 @@ mod tests {
         // Width = 2^5 = 32
         assert_eq!(bounds.exponent, 5_i64);
         let finite = bounds.to_finite_bounds();
-        let width = finite.large() - finite.small().clone();
+        let width = finite.large().clone() - finite.small().clone();
         assert_eq!(width, bin(32, 0));
     }
 
@@ -557,7 +557,7 @@ mod tests {
         assert_eq!(bounds.width().exponent(), -10_i64);
 
         // Check that upper bound is 1.5 + 2^(-10) = ((3 << 9) + 1) * 2^-10
-        assert_eq!(bounds.large(), bin((3 << 9) + 1, -10));
+        assert_eq!(bounds.large(), &bin((3 << 9) + 1, -10));
     }
 
     #[test]
@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(bounds.width().exponent(), -8_i64);
 
         // Check that upper bound is 5 + 1/256 = ((5 << 8) + 1) * 2^-8
-        assert_eq!(bounds.large(), bin((5 << 8) + 1, -8));
+        assert_eq!(bounds.large(), &bin((5 << 8) + 1, -8));
     }
 
     #[test]
@@ -740,7 +740,7 @@ mod tests {
 
         // Result should exactly match the original bounds
         assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
-        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+        assert_eq!(result.large(), &XBinary::Finite(original.hi().clone()));
     }
 
     #[test]
@@ -752,7 +752,7 @@ mod tests {
         let result = normalize_finite_to_bounds(&original).expect("should succeed");
 
         assert_eq!(result.small(), &XBinary::Finite(original.small().clone()));
-        assert_eq!(result.large(), XBinary::Finite(original.hi()));
+        assert_eq!(result.large(), &XBinary::Finite(original.hi().clone()));
     }
 
     #[test]
@@ -782,7 +782,7 @@ mod tests {
             original.small()
         );
         assert!(
-            result_hi >= original.hi(),
+            result_hi >= *original.hi(),
             "normalized upper {} should be >= original upper {}",
             result_hi,
             original.hi()
@@ -828,7 +828,7 @@ mod tests {
             original.small()
         );
         assert!(
-            result_hi >= original.hi(),
+            result_hi >= *original.hi(),
             "normalized upper {} should be >= original upper {}",
             result_hi,
             original.hi()
@@ -860,7 +860,7 @@ mod tests {
             original.small()
         );
         assert!(
-            result_hi >= original.hi(),
+            result_hi >= *original.hi(),
             "normalized upper {} should be >= original upper {}",
             result_hi,
             original.hi()

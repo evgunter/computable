@@ -95,7 +95,7 @@ where
         let previous_state = snapshot.state.clone();
         let next_state = (self.refine)(previous_state.clone())?;
         if next_state == previous_state {
-            if previous_bounds.small() == &previous_bounds.large() {
+            if previous_bounds.small() == previous_bounds.large() {
                 return Ok(());
             }
             return Err(ComputableError::StateUnchanged);
@@ -134,7 +134,7 @@ pub trait NodeOp: Send + Sync {
         let bounds = self.compute_bounds()?;
         Ok(Prefix::from_lower_upper(
             bounds.small().clone(),
-            bounds.large(),
+            bounds.large().clone(),
         ))
     }
 
@@ -280,7 +280,7 @@ impl Node {
         // cheaper than compute_prefix() which would re-call
         // compute_bounds() on children.
         let prefix = if let Some(bounds) = self.cached_bounds() {
-            Prefix::from_lower_upper(bounds.small().clone(), bounds.large())
+            Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone())
         } else {
             self.compute_prefix()?
         };
@@ -308,7 +308,7 @@ impl Node {
     /// Sets the exact bounds cache and derives prefix from it.
     #[allow(dead_code)]
     pub fn set_bounds(&self, bounds: Bounds) {
-        let prefix = Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
+        let prefix = Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
         self.set_prefix_and_bounds(prefix, bounds);
     }
 

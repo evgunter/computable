@@ -94,8 +94,8 @@ impl FiniteBounds {
 
     /// Returns the upper bound of the interval.
     ///
-    /// This is a convenience method that computes `lower + width`.
-    pub fn hi(&self) -> Binary {
+    /// This is a convenience alias for `large()`.
+    pub fn hi(&self) -> &Binary {
         self.large()
     }
 
@@ -121,8 +121,7 @@ impl FiniteBounds {
     pub fn interval_sub(&self, other: &Self) -> Self {
         // [a, b] - [c, d] = [a - d, b - c]
         // lower = a - d = self.lo - other.hi = self.lo - (other.lo + other.width)
-        let other_hi = other.hi();
-        let new_lower = self.lo().sub(&other_hi);
+        let new_lower = self.lo().sub(other.hi());
         // width = (b - c) - (a - d) = b - c - a + d = (b - a) + (d - c) = width(self) + width(other)
         let new_width = self.width().add(other.width());
         Self::from_lower_and_width(new_lower, new_width)
@@ -253,7 +252,7 @@ mod integration_tests {
 
         assert_eq!(bounds.small(), &xbin(5, 0));
         assert_eq!(bounds.width(), &width);
-        assert_eq!(bounds.large(), xbin(8, 0));
+        assert_eq!(bounds.large(), &xbin(8, 0));
     }
 
     #[test]
@@ -279,7 +278,7 @@ mod integration_tests {
         let bounds = Bounds::from_lower_and_width(lower.clone(), width);
 
         assert_eq!(bounds.small(), &xbin(42, 0));
-        assert_eq!(bounds.large(), xbin(42, 0));
+        assert_eq!(bounds.large(), &xbin(42, 0));
     }
 
     #[test]
@@ -291,7 +290,7 @@ mod integration_tests {
         let result = a.interval_sub(&b);
         // [1, 2] - [3, 5] = [1-5, 2-3] = [-4, -1]
         assert_eq!(result.lo(), &bin(-4, 0));
-        assert_eq!(result.hi(), bin(-1, 0));
+        assert_eq!(result.hi(), &bin(-1, 0));
     }
 
     #[test]
@@ -299,7 +298,7 @@ mod integration_tests {
         let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
         let neg_a = a.interval_neg(); // [-3, -1]
         assert_eq!(neg_a.lo(), &bin(-3, 0));
-        assert_eq!(neg_a.hi(), bin(-1, 0));
+        assert_eq!(neg_a.hi(), &bin(-1, 0));
     }
 
     #[test]
@@ -311,7 +310,7 @@ mod integration_tests {
         let result = a.join(&b);
         // [1, 4].join([3, 6]) = [1, 6]
         assert_eq!(result.lo(), &bin(1, 0));
-        assert_eq!(result.hi(), bin(6, 0));
+        assert_eq!(result.hi(), &bin(6, 0));
     }
 
     #[test]
@@ -323,7 +322,7 @@ mod integration_tests {
         let result = a.join(&b);
         // [1, 2].join([5, 7]) = [1, 7] (convex hull)
         assert_eq!(result.lo(), &bin(1, 0));
-        assert_eq!(result.hi(), bin(7, 0));
+        assert_eq!(result.hi(), &bin(7, 0));
     }
 
     #[test]
@@ -335,7 +334,7 @@ mod integration_tests {
         let result = outer.join(&inner);
         // [1, 10].join([3, 5]) = [1, 10]
         assert_eq!(result.lo(), &bin(1, 0));
-        assert_eq!(result.hi(), bin(10, 0));
+        assert_eq!(result.hi(), &bin(10, 0));
     }
 
     #[test]
@@ -347,7 +346,7 @@ mod integration_tests {
         let result = a.intersection(&b).expect("should overlap");
         // [1, 4] ∩ [3, 6] = [3, 4]
         assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(4, 0));
+        assert_eq!(result.hi(), &bin(4, 0));
     }
 
     #[test]
@@ -372,7 +371,7 @@ mod integration_tests {
         let result = outer.intersection(&inner).expect("should overlap");
         // [1, 10] ∩ [3, 5] = [3, 5]
         assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(5, 0));
+        assert_eq!(result.hi(), &bin(5, 0));
     }
 
     #[test]
@@ -384,6 +383,6 @@ mod integration_tests {
         let result = a.intersection(&b).expect("should touch at a point");
         // [1, 3] ∩ [3, 5] = [3, 3]
         assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(3, 0));
+        assert_eq!(result.hi(), &bin(3, 0));
     }
 }

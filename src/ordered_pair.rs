@@ -7,6 +7,11 @@ pub trait AddWidth<T, W> {
 pub trait Unsigned {}
 
 /// Stores two values ordered so that `large >= small` using a lower bound and width.
+///
+/// The upper bound (`upper = lower + width`) is cached eagerly to avoid
+/// recomputing it on every call to `large()`. This is a significant
+/// optimisation on hot paths (e.g. sin computation) where the same
+/// `FiniteBounds` object's upper bound is accessed many times.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interval<T, W>
 where
@@ -15,6 +20,7 @@ where
 {
     lower: T,
     width: W,
+    upper: T,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,19 +48,24 @@ where
     W: Clone + PartialOrd + Unsigned,
 {
     pub fn new(a: T, b: T) -> Self {
-        let (lower, larger) = if a <= b { (a, b) } else { (b, a) };
-        let width = lower.clone().abs_distance(larger);
-        Self { lower, width }
+        let (lower, upper) = if a <= b { (a, b) } else { (b, a) };
+        let width = lower.clone().abs_distance(upper.clone());
+        Self {
+            lower,
+            width,
+            upper,
+        }
     }
 
     pub fn new_checked(small: T, large: T) -> Result<Self, IntervalError> {
         if small > large {
             return Err(IntervalError::InvalidOrder);
         }
-        let width = small.clone().abs_distance(large);
+        let width = small.clone().abs_distance(large.clone());
         Ok(Self {
             lower: small,
             width,
+            upper: large,
         })
     }
 
@@ -69,7 +80,12 @@ where
     /// * `lower` - The lower bound of the interval
     /// * `width` - The width of the interval (must be non-negative by the type system)
     pub fn from_lower_and_width(lower: T, width: W) -> Self {
-        Self { lower, width }
+        let upper = lower.clone().add_width(width.clone());
+        Self {
+            lower,
+            width,
+            upper,
+        }
     }
 
     pub fn small(&self) -> &T {
@@ -80,8 +96,8 @@ where
         &self.width
     }
 
-    pub fn large(&self) -> T {
-        self.lower.clone().add_width(self.width.clone())
+    pub fn large(&self) -> &T {
+        &self.upper
     }
 
     /// Creates a point interval [x, x] with zero width.
@@ -94,17 +110,17 @@ where
 
     /// Checks if this interval contains a point.
     pub fn contains(&self, point: &T) -> bool {
-        self.small() <= point && *point <= self.large()
+        self.small() <= point && point <= self.large()
     }
 
     /// Checks if this interval is entirely less than another.
     pub fn entirely_less_than(&self, other: &Self) -> bool {
-        self.large() < *other.small()
+        self.large() < other.small()
     }
 
     /// Checks if this interval is entirely greater than another.
     pub fn entirely_greater_than(&self, other: &Self) -> bool {
-        *self.small() > other.large()
+        self.small() > other.large()
     }
 
     /// Checks if this interval overlaps with another.
@@ -121,7 +137,7 @@ where
     /// points in neither original interval (i.e., this is the convex hull).
     pub fn join(&self, other: &Self) -> Self {
         let min_lo = std::cmp::min(self.small(), other.small()).clone();
-        let max_hi = std::cmp::max(self.large(), other.large());
+        let max_hi = std::cmp::max(self.large(), other.large()).clone();
         Self::new(min_lo, max_hi)
     }
 
@@ -135,7 +151,7 @@ where
             return None;
         }
         let max_lo = std::cmp::max(self.small(), other.small()).clone();
-        let min_hi = std::cmp::min(self.large(), other.large());
+        let min_hi = std::cmp::min(self.large(), other.large()).clone();
         Some(Self::new(max_lo, min_hi))
     }
 }

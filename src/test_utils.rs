@@ -93,7 +93,7 @@ pub fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
 
 /// Refines bounds by collapsing them to their midpoint.
 pub fn interval_refine(state: Bounds) -> Result<Bounds, crate::error::ComputableError> {
-    let midpoint = midpoint_between(state.small(), &state.large());
+    let midpoint = midpoint_between(state.small(), state.large());
     Ok(Bounds::new(
         XBinary::Finite(midpoint.clone()),
         XBinary::Finite(midpoint),

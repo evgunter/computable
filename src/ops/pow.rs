@@ -173,7 +173,7 @@ mod tests {
 
     fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XUsize) {
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         assert!(
             lower <= *expected && *expected <= upper,
@@ -193,7 +193,7 @@ mod tests {
 
         let expected = bin(9, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -205,7 +205,7 @@ mod tests {
 
         let expected = bin(8, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -217,7 +217,7 @@ mod tests {
 
         let expected = bin(9, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -229,7 +229,7 @@ mod tests {
 
         let expected = bin(-8, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -240,7 +240,7 @@ mod tests {
         let bounds = squared.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(4, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(16, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(16, 0));
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         let bounds = squared.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(4, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(16, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(16, 0));
     }
 
     #[test]
@@ -262,7 +262,7 @@ mod tests {
         let bounds = squared.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(0, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(9, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(9, 0));
     }
 
     #[test]
@@ -273,7 +273,7 @@ mod tests {
         let bounds = cubed.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(8, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(64, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(64, 0));
     }
 
     #[test]
@@ -284,7 +284,7 @@ mod tests {
         let bounds = cubed.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(-64, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(-8, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(-8, 0));
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
 
         let expected = bin(3, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
 
         let expected = bin(1, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -320,7 +320,7 @@ mod tests {
 
         let expected = bin(1, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]

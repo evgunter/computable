@@ -714,7 +714,7 @@ impl RefinementGraph {
                     Ok(true) => {
                         let bounds = node.op.compute_bounds()?;
                         let prefix =
-                            Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
+                            Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
                         let changed = old_prefix.as_ref() != Some(&prefix);
                         node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
 
@@ -735,7 +735,7 @@ impl RefinementGraph {
                         // Converged: update, propagate, and return.
                         let bounds = node.op.compute_bounds()?;
                         let prefix =
-                            Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
+                            Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
                         node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
                         self.apply_update(NodeUpdate {
                             node_id: node.id,
@@ -795,7 +795,7 @@ impl RefinementGraph {
                 let next_bounds = parent.op.compute_bounds()?;
                 let next_prefix = Prefix::from_lower_upper(
                     next_bounds.small().clone(),
-                    next_bounds.large(),
+                    next_bounds.large().clone(),
                 );
                 if parent.cached_prefix().as_ref() != Some(&next_prefix) {
                     // Cache both prefix AND exact bounds so ancestors'
@@ -963,7 +963,7 @@ fn execute_refine_step(
                 };
                 let prefix = Prefix::from_lower_upper(
                     bounds.small().clone(),
-                    bounds.large(),
+                    bounds.large().clone(),
                 );
 
                 // Check if prefix visibly changed
@@ -993,7 +993,7 @@ fn execute_refine_step(
                 };
                 let prefix = Prefix::from_lower_upper(
                     bounds.small().clone(),
-                    bounds.large(),
+                    bounds.large().clone(),
                 );
                 node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
                 let _send = updates.send(RefinerMessage::Exhausted {
@@ -1121,7 +1121,7 @@ mod tests {
     }
 
     fn interval_refine_strict(state: IntervalState) -> Result<IntervalState, ComputableError> {
-        let midpoint = midpoint_between(state.small(), &state.large());
+        let midpoint = midpoint_between(state.small(), state.large());
         Ok(Bounds::new(
             state.small().clone(),
             XBinary::Finite(midpoint),
@@ -1150,7 +1150,7 @@ mod tests {
 
         // After refinement, bounds should be exactly [1, 1]
         assert_eq!(bounds.small(), &xbin(1, 0));
-        assert_eq!(bounds.large(), xbin(1, 0));
+        assert_eq!(bounds.large(), &xbin(1, 0));
 
         // Width should be exactly zero
         assert!(matches!(bounds.width(), UXBinary::Finite(w) if w.mantissa().is_zero()));
@@ -1167,7 +1167,7 @@ mod tests {
 
         // Bounds should be exactly [42, 42]
         assert_eq!(bounds.small(), &xbin(42, 0));
-        assert_eq!(bounds.large(), xbin(42, 0));
+        assert_eq!(bounds.large(), &xbin(42, 0));
     }
 
     #[test]
@@ -1202,11 +1202,11 @@ mod tests {
         let expected = xbin(1, 0);
         let upper = bounds.large();
 
-        assert!(bounds.small() <= &expected && expected <= upper);
+        assert!(bounds.small() <= &expected && expected <= *upper);
         assert!(bounds_width_leq(&bounds, &tolerance_exp));
         let refined_bounds = computable.bounds().expect("bounds should succeed");
         let refined_upper = refined_bounds.large();
-        assert!(refined_bounds.small() <= &expected && expected <= refined_upper);
+        assert!(refined_bounds.small() <= &expected && expected <= *refined_upper);
     }
 
     #[test]
@@ -1245,8 +1245,7 @@ mod tests {
         let bounds = computable
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
-        let upper = bounds.large();
-        assert!(bounds.small() < &upper);
+        assert!(bounds.small() < bounds.large());
         assert!(bounds_width_leq(&bounds, &tolerance_exp));
         assert_eq!(computable.bounds().expect("bounds should succeed"), bounds);
     }
@@ -1258,8 +1257,7 @@ mod tests {
             interval_state,
             |inner_state| Ok(interval_bounds(inner_state)),
             |inner_state: IntervalState| {
-                let upper = inner_state.large();
-                let worse_upper = unwrap_finite(&upper).add(&bin(1, 0));
+                let worse_upper = unwrap_finite(inner_state.large()).add(&bin(1, 0));
                 Ok(Bounds::new(
                     inner_state.small().clone(),
                     XBinary::Finite(worse_upper),
@@ -1431,11 +1429,10 @@ mod tests {
                 .join()
                 .expect("thread should join")
                 .expect("refine_to should succeed");
-            let bounds_upper = bounds.large();
             assert_width_nonnegative(&bounds);
             assert!(bounds_width_leq(&bounds, &tolerance_exp));
-            assert!(bounds.small() <= &main_upper);
-            assert!(main_bounds.small() <= &bounds_upper);
+            assert!(bounds.small() <= main_upper);
+            assert!(main_bounds.small() <= bounds.large());
         }
     }
 

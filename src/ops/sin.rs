@@ -212,7 +212,7 @@ fn sin_bounds(
         let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
         let sin_result = compute_sin_on_monotonic_interval(&input_interval, n);
         let clamped_lo = std::cmp::max(sin_result.lo().clone(), neg_one);
-        let clamped_hi = std::cmp::min(sin_result.hi(), pos_one);
+        let clamped_hi = std::cmp::min(sin_result.hi().clone(), pos_one);
         let finite = FiniteBounds::new(clamped_lo, clamped_hi);
         return normalize_finite_to_bounds(&finite);
     }
@@ -292,7 +292,7 @@ fn sin_bounds(
             if sign_flip {
                 (sin_bounds.hi().neg(), sin_bounds.lo().neg())
             } else {
-                (sin_bounds.lo().clone(), sin_bounds.hi())
+                (sin_bounds.lo().clone(), sin_bounds.hi().clone())
             }
         }
         ReductionResult::ContainsMax { sin_min } => {
@@ -383,7 +383,7 @@ fn reduce_to_pi_range_interval(
 
     // Quick check: if input is already in range, avoid all computation.
     let input_hi = input.hi();
-    if *input.lo() >= neg_pi_hi && input_hi <= pi_hi {
+    if *input.lo() >= neg_pi_hi && *input_hi <= *pi_hi {
         return input.clone();
     }
 
@@ -414,7 +414,7 @@ fn reduce_to_pi_range_interval(
         // to be exactly in [-π, π]; it just needs to be close enough that the interval
         // comparisons can correctly determine which trigonometric identity to apply.
         let current_hi = current.hi();
-        if *current.lo() >= neg_pi_hi && current_hi <= pi_hi {
+        if *current.lo() >= neg_pi_hi && *current_hi <= *pi_hi {
             return current;
         }
 
@@ -472,7 +472,7 @@ fn reduce_to_half_pi_range_interval(
     //   AND reduced.lo >= neg_half_pi.hi (interval entirely above -pi/2)
 
     // Case 1: Entirely in [-pi/2, pi/2]
-    if reduced_hi <= *half_pi.lo() && *reduced.lo() >= neg_half_pi_hi {
+    if *reduced_hi <= *half_pi.lo() && *reduced.lo() >= neg_half_pi_hi {
         return ReductionResult::InRange {
             interval: reduced,
             sign_flip: false,
@@ -481,7 +481,7 @@ fn reduce_to_half_pi_range_interval(
 
     // Case 2: Entirely in [pi/2, pi]
     // reduced.lo >= half_pi.lo AND reduced.hi <= pi.hi
-    if *reduced.lo() >= *half_pi.lo() && reduced_hi <= pi_hi {
+    if *reduced.lo() >= *half_pi.lo() && *reduced_hi <= *pi_hi {
         // Transform: x -> pi - x
         // sin(x) = sin(pi - x) for x in [pi/2, pi]
         // pi - [a, b] using interval arithmetic:
@@ -496,7 +496,7 @@ fn reduce_to_half_pi_range_interval(
     // Case 3: Entirely in [-pi, -pi/2]
     // reduced.hi <= neg_half_pi.hi (which is -pi/2_lo, the least negative)
     // AND reduced.lo >= neg_pi.hi (which is -pi_lo, the least negative -pi)
-    if reduced_hi <= neg_half_pi_hi && *reduced.lo() >= neg_pi_hi {
+    if *reduced_hi <= neg_half_pi_hi && *reduced.lo() >= neg_pi_hi {
         // Transform: x -> -pi - x, then negate result
         // sin(x) = -sin(-pi - x) for x in [-pi, -pi/2]
         // Actually: sin(x) = sin(-pi - x) = -sin(pi + x)
@@ -514,8 +514,8 @@ fn reduce_to_half_pi_range_interval(
     // Determine which critical points the interval might straddle.
     // The "both" check must come before the individual cases so that an interval
     // straddling BOTH ±pi/2 returns ContainsBoth rather than just ContainsMax.
-    let spans_max = *reduced.lo() < half_pi_hi && reduced_hi > *half_pi.lo();
-    let spans_min = *reduced.lo() < neg_half_pi_hi && reduced_hi > neg_half_pi_lo;
+    let spans_max = *reduced.lo() < *half_pi_hi && *reduced_hi > *half_pi.lo();
+    let spans_min = *reduced.lo() < neg_half_pi_hi && *reduced_hi > neg_half_pi_lo;
 
     // Case 4: Straddles both pi/2 and -pi/2
     if spans_max && spans_min {
@@ -527,7 +527,7 @@ fn reduce_to_half_pi_range_interval(
         // The interval contains pi/2 where sin = 1
         // Compute the minimum sin value at the endpoints
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced_hi, n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(reduced_hi, n, pi, half_pi);
         let sin_min = if sin_bounds_at_lo.lo() < sin_bounds_at_hi.lo() {
             sin_bounds_at_lo.lo().clone()
         } else {
@@ -541,14 +541,14 @@ fn reduce_to_half_pi_range_interval(
     if spans_min {
         // The interval contains -pi/2 where sin = -1
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced_hi, n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(reduced_hi, n, pi, half_pi);
         // Cache hi() to avoid cloning twice per FiniteBounds.
         let hi_at_lo = sin_bounds_at_lo.hi();
         let hi_at_hi = sin_bounds_at_hi.hi();
         let sin_max = if hi_at_lo > hi_at_hi {
-            hi_at_lo
+            hi_at_lo.clone()
         } else {
-            hi_at_hi
+            hi_at_hi.clone()
         };
 
         return ReductionResult::ContainsMin { sin_max };
@@ -562,12 +562,12 @@ fn reduce_to_half_pi_range_interval(
     let neg_one = pos_one.neg();
 
     let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced_hi, n, pi, half_pi);
+    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(reduced_hi, n, pi, half_pi);
     let combined = sin_bounds_1.join(&sin_bounds_2);
 
     ReductionResult::SpansMultipleBranches {
         overall_lo: combined.lo().clone().max(neg_one),
-        overall_hi: combined.hi().min(pos_one),
+        overall_hi: combined.hi().clone().min(pos_one),
     }
 }
 
@@ -600,7 +600,7 @@ fn compute_sin_bounds_for_point_with_pi(
     // - x is definitively below -half_pi if x < neg_half_pi.lo() (i.e., x < -half_pi.hi())
     // - Otherwise, x might be in a boundary region where we need to consider multiple branches
 
-    let definitely_above_half_pi = x > &half_pi_hi;
+    let definitely_above_half_pi = x > half_pi_hi;
     let definitely_below_neg_half_pi = *x < neg_half_pi_lo;
     let definitely_in_center = *x >= neg_half_pi_hi && x <= half_pi.lo();
 
@@ -802,7 +802,7 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> Finit
     let truncated_lo =
         truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
     let truncated_hi =
-        truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
+        truncate_precision_directed(interval.hi(), target_precision, RoundingDirection::Up);
 
     let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n, target_precision);
     let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n, target_precision);
@@ -1226,8 +1226,7 @@ mod tests {
         tolerance_exp: &XUsize,
     ) {
         let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
+        let upper = unwrap_finite(bounds.large());
 
         assert!(lower <= *expected && *expected <= upper);
         assert!(bounds_width_leq(bounds, tolerance_exp));
@@ -1258,7 +1257,7 @@ mod tests {
             .expect("sin(0) should converge to exact zero");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         assert_eq!(lower, bin(0, 0), "sin(0) lower bound should be exactly 0");
         assert_eq!(upper, bin(0, 0), "sin(0) upper bound should be exactly 0");
     }
@@ -1275,7 +1274,7 @@ mod tests {
         let result = sin_bounds(&input_bounds, &pi_bounds, 10)
             .expect("sin_bounds should succeed");
         let lower = unwrap_finite(result.small());
-        let upper = unwrap_finite(&result.large());
+        let upper = unwrap_finite(result.large());
         assert_eq!(
             lower,
             bin(0, 0),
@@ -1306,7 +1305,7 @@ mod tests {
         let expected = unwrap_finite(&expected_binary);
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // sin(pi/2) should be very close to 1
         assert!(lower <= expected && expected <= upper);
@@ -1325,7 +1324,7 @@ mod tests {
 
         // sin(pi) ~= 0 (should be close to 0)
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // sin(pi) should be very close to 0
         let small_bound = bin(1, -4);
@@ -1351,7 +1350,7 @@ mod tests {
         let expected = unwrap_finite(&expected_binary);
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // sin(-pi/2) should be very close to -1
         assert!(lower <= expected && expected <= upper);
@@ -1365,7 +1364,7 @@ mod tests {
         let bounds = sin_large.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let neg_one = bin(-1, 0);
         let one = bin(1, 0);
@@ -1390,7 +1389,7 @@ mod tests {
         let expected_value = unwrap_finite(&expected);
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         assert!(lower <= expected_value && expected_value <= upper);
     }
@@ -1402,7 +1401,7 @@ mod tests {
         let sin_interval = computable.sin();
         let bounds = sin_interval.bounds().expect("bounds should succeed");
 
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // The upper bound should be close to 1 since the interval contains pi/2
         assert!(upper >= bin(1, -1)); // Upper bound should be at least 0.5
@@ -1420,7 +1419,7 @@ mod tests {
 
         // sin of unbounded input should be [-1, 1]
         assert_eq!(bounds.small(), &xbin(-1, 0));
-        assert_eq!(&bounds.large(), &xbin(1, 0));
+        assert_eq!(bounds.large(), &xbin(1, 0));
     }
 
     #[test]
@@ -1443,7 +1442,7 @@ mod tests {
         let expected_value = unwrap_finite(&expected);
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         assert!(lower <= expected_value && expected_value <= upper);
     }
@@ -1573,7 +1572,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // Verify bounds are within [-1, 1]
         let neg_one = bin(-1, 0);
@@ -1619,7 +1618,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let zero = bin(0, 0);
 
         // sin(pi) = 0, bounds should contain zero
@@ -1653,7 +1652,7 @@ mod tests {
 
         // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let midpoint = FiniteBounds::new(lower, upper).midpoint();
         let expected_f64 = 1.0_f64.sin();
         let expected_bin =
@@ -1685,7 +1684,7 @@ mod tests {
             .expect("refine_to should succeed for very large input");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let neg_one = bin(-1, 0);
         let one = bin(1, 0);
@@ -1716,7 +1715,7 @@ mod tests {
             .expect("refine_to should succeed for 2^30 input");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let neg_one = bin(-1, 0);
         let one = bin(1, 0);
@@ -1735,7 +1734,7 @@ mod tests {
             .expect("refine_to should succeed for large negative input");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let neg_one = bin(-1, 0);
         let one = bin(1, 0);
@@ -1778,7 +1777,7 @@ mod tests {
         // Because the width >= two_pi_lo, the conservative check should trigger
         // and return [-1, 1] (possibly slightly widened by simplification).
         let lower = unwrap_finite(result.small());
-        let upper = unwrap_finite(&result.large());
+        let upper = unwrap_finite(result.large());
 
         // The key property: the bounds must be at least as wide as [-1, 1]
         assert!(lower <= bin(-1, 0), "lower bound {} should be <= -1", lower);
@@ -1793,7 +1792,7 @@ mod tests {
         let bounds = sin_x.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // The interval contains both pi/2 (sin=1) and -pi/2 (sin=-1),
         // so the bounds must cover [-1, 1].
@@ -1818,7 +1817,7 @@ mod tests {
         let bounds = sin_x.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // Width ~6 covers both ±pi/2, so bounds must include [-1, 1]
         assert!(lower <= bin(-1, 0), "lower bound should be <= -1");

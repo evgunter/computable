@@ -34,7 +34,7 @@ use common::balanced_sum;
 fn try_finite_bounds(bounds: &Bounds) -> Option<FiniteBounds> {
     match (bounds.small(), bounds.large()) {
         (XBinary::Finite(lower), XBinary::Finite(upper)) => {
-            Some(FiniteBounds::new(lower.clone(), upper))
+            Some(FiniteBounds::new(lower.clone(), upper.clone()))
         }
         _ => None,
     }

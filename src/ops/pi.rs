@@ -470,7 +470,7 @@ mod tests {
             .expect("refine should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let pi_f64 = pi_f64_binary();
 
         // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
@@ -540,7 +540,7 @@ mod tests {
             .expect("refine to 2^-128 should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let width = upper.sub(&lower);
         let eps_binary = epsilon_as_binary(128);

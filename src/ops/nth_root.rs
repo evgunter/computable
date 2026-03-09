@@ -627,8 +627,7 @@ mod tests {
         tolerance_exp: &XUsize,
     ) {
         let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
+        let upper = unwrap_finite(bounds.large());
 
         assert!(
             lower <= *expected && *expected <= upper,
@@ -764,7 +763,7 @@ mod tests {
 
         let expected = bin(0, 0);
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         assert!(lower <= expected && expected <= upper);
     }
@@ -779,7 +778,7 @@ mod tests {
         let bounds = sqrt_interval.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // Bounds should contain sqrt(1.5) ~ 1.2247
         let expected_f64 = 1.5_f64.sqrt();
@@ -805,7 +804,7 @@ mod tests {
         let bounds = cbrt_interval.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // Newton-based bounds should contain cbrt(midpoint) ~ cbrt(9.5) ~ 2.11
         assert!(lower <= bin(2, 0), "lower {} should be <= 2", lower);

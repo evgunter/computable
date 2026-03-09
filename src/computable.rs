@@ -329,8 +329,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
+        let upper = unwrap_finite(bounds.large());
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");
@@ -355,8 +354,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
+        let upper = unwrap_finite(bounds.large());
         let expected = 2.0_f64 * 2.0_f64.sqrt();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");

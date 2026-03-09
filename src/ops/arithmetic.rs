@@ -60,7 +60,7 @@ impl NodeOp for AddOp {
             return Ok(Bounds::point(sum));
         }
         let lower = left_bounds.small().add_lower(right_bounds.small());
-        let upper = left_bounds.large().add_upper(&right_bounds.large());
+        let upper = left_bounds.large().add_upper(right_bounds.large());
         Ok(Bounds::new_checked(lower, upper)?)
     }
 
@@ -106,46 +106,46 @@ impl NodeOp for MulOp {
         let right_upper = right_bounds.large();
 
         let left_non_neg = *left_lower >= zero;
-        let left_non_pos = left_upper <= zero;
+        let left_non_pos = *left_upper <= zero;
         let right_non_neg = *right_lower >= zero;
-        let right_non_pos = right_upper <= zero;
+        let right_non_pos = *right_upper <= zero;
 
         let (min, max) = if left_non_neg {
             if right_non_neg {
                 // [a,b] >= 0, [c,d] >= 0 => [a*c, b*d]
-                (left_lower.mul(right_lower), left_upper.mul(&right_upper))
+                (left_lower.mul(right_lower), left_upper.mul(right_upper))
             } else if right_non_pos {
                 // [a,b] >= 0, [c,d] <= 0 => [b*c, a*d]
-                (left_upper.mul(right_lower), left_lower.mul(&right_upper))
+                (left_upper.mul(right_lower), left_lower.mul(right_upper))
             } else {
                 // [a,b] >= 0, right mixed => [b*c, b*d]
-                (left_upper.mul(right_lower), left_upper.mul(&right_upper))
+                (left_upper.mul(right_lower), left_upper.mul(right_upper))
             }
         } else if left_non_pos {
             if right_non_neg {
                 // [a,b] <= 0, [c,d] >= 0 => [a*d, b*c]
-                (left_lower.mul(&right_upper), left_upper.mul(right_lower))
+                (left_lower.mul(right_upper), left_upper.mul(right_lower))
             } else if right_non_pos {
                 // [a,b] <= 0, [c,d] <= 0 => [b*d, a*c]
-                (left_upper.mul(&right_upper), left_lower.mul(right_lower))
+                (left_upper.mul(right_upper), left_lower.mul(right_lower))
             } else {
                 // [a,b] <= 0, right mixed => [a*d, a*c]
-                (left_lower.mul(&right_upper), left_lower.mul(right_lower))
+                (left_lower.mul(right_upper), left_lower.mul(right_lower))
             }
         } else {
             // left mixed (a < 0, b > 0)
             if right_non_neg {
                 // left mixed, [c,d] >= 0 => [a*d, b*d]
-                (left_lower.mul(&right_upper), left_upper.mul(&right_upper))
+                (left_lower.mul(right_upper), left_upper.mul(right_upper))
             } else if right_non_pos {
                 // left mixed, [c,d] <= 0 => [b*c, a*c]
                 (left_upper.mul(right_lower), left_lower.mul(right_lower))
             } else {
                 // Both mixed: need all 4 products
-                let a_d = left_lower.mul(&right_upper);
+                let a_d = left_lower.mul(right_upper);
                 let b_c = left_upper.mul(right_lower);
                 let a_c = left_lower.mul(right_lower);
-                let b_d = left_upper.mul(&right_upper);
+                let b_d = left_upper.mul(right_upper);
                 (a_d.min(b_c), a_c.max(b_d))
             }
         };

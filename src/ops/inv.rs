@@ -78,9 +78,9 @@ impl NodeOp for InvOp {
                 let lower = existing.small();
                 let upper = existing.large();
                 let zero = XBinary::zero();
-                if lower <= &zero && upper >= zero {
+                if lower <= &zero && *upper >= zero {
                     Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf))
-                } else if upper < zero {
+                } else if *upper < zero {
                     Ok(Bounds::new(XBinary::NegInf, XBinary::zero()))
                 } else {
                     Ok(Bounds::new(XBinary::zero(), XBinary::PosInf))
@@ -177,10 +177,10 @@ fn try_initialize(
     let upper = input_bounds.large();
     let zero = XBinary::zero();
 
-    if lower <= &zero && upper >= zero {
+    if lower <= &zero && *upper >= zero {
         return Ok(None);
     }
-    let (lower_finite, upper_finite) = match (lower, &upper) {
+    let (lower_finite, upper_finite) = match (lower, upper) {
         (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
         _ => return Ok(None),
     };
@@ -440,7 +440,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let three = bin(3, 0);
         let one = bin(1, 0);
 
