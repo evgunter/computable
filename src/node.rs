@@ -279,6 +279,16 @@ impl Node {
     /// Sets the exact bounds cache and derives prefix from it.
     pub fn set_bounds(&self, bounds: Bounds) {
         let prefix = Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
+        self.set_prefix_and_bounds(prefix, bounds);
+    }
+
+    /// Sets both prefix and exact bounds caches without re-deriving the prefix.
+    ///
+    /// Use this when the prefix has already been computed from the bounds
+    /// (e.g. during propagation where the prefix is needed for comparison
+    /// before deciding whether to update). Avoids the redundant
+    /// `Prefix::from_lower_upper` that `set_bounds` would perform.
+    pub fn set_prefix_and_bounds(&self, prefix: Prefix, bounds: Bounds) {
         {
             let mut cache = self.prefix_cache.write();
             *cache = Some(prefix);

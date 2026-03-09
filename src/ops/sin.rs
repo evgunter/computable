@@ -34,11 +34,23 @@ use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::sane::{XIsize, XUsize};
 
+/// Cached inputs and result for `sin_bounds`, avoiding redundant Taylor series
+/// recomputation when `compute_bounds` is called multiple times with the same inputs.
+pub struct SinBoundsCache {
+    input_bounds: Bounds,
+    pi_bounds: Bounds,
+    num_terms: BigInt,
+    result: Bounds,
+}
+
 /// Sine operation with Taylor series refinement.
 pub struct SinOp {
     pub inner: Arc<Node>,
     pub pi_node: Arc<Node>,
     pub num_terms: RwLock<BigInt>,
+    /// Cache of the last `sin_bounds` result, keyed on inputs.
+    /// Eliminates redundant Taylor series recomputation during bound propagation.
+    pub bounds_cache: RwLock<Option<SinBoundsCache>>,
 }
 
 impl NodeOp for SinOp {
@@ -46,7 +58,34 @@ impl NodeOp for SinOp {
         let input_bounds = self.inner.get_bounds()?;
         let pi_bounds = self.pi_node.get_bounds()?;
         let num_terms = self.num_terms.read().clone();
-        sin_bounds(&input_bounds, &pi_bounds, &num_terms)
+
+        // Check cache: if inputs haven't changed, return the cached result.
+        {
+            let cache = self.bounds_cache.read();
+            if let Some(cached) = cache.as_ref() {
+                if cached.input_bounds == input_bounds
+                    && cached.pi_bounds == pi_bounds
+                    && cached.num_terms == num_terms
+                {
+                    return Ok(cached.result.clone());
+                }
+            }
+        }
+
+        let result = sin_bounds(&input_bounds, &pi_bounds, &num_terms)?;
+
+        // Store in cache for future calls with the same inputs.
+        {
+            let mut cache = self.bounds_cache.write();
+            *cache = Some(SinBoundsCache {
+                input_bounds,
+                pi_bounds,
+                num_terms,
+                result: result.clone(),
+            });
+        }
+
+        Ok(result)
     }
 
     fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {

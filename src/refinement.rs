@@ -2,7 +2,7 @@
 //!
 //! This module provides the machinery for refining computable numbers to a desired precision:
 //! - `RefinementGraph`: Snapshot of the computation graph for coordinating refinement
-//! - `RefinerHandle`: Handle for controlling a background refiner thread
+//! - Worker pool: threads are reused across refiners via a shared command channel
 //! - `NodeUpdate`: Update message from a refiner to the coordinator
 //!
 //! The refinement model is an event loop with per-refiner step tracking,
@@ -51,16 +51,14 @@ use crate::node::Node;
 use crate::prefix::Prefix;
 use crate::sane::{XIsize, XUsize};
 
-/// Command sent to a refiner thread.
+/// Command sent to the shared worker pool, tagged with a refiner index.
 #[derive(Clone, Copy)]
-pub enum RefineCommand {
-    Step { target_width_exp: XIsize },
+enum WorkerCommand {
+    Step {
+        refiner_idx: usize,
+        target_width_exp: XIsize,
+    },
     Stop,
-}
-
-/// Handle for a background refiner task.
-pub struct RefinerHandle {
-    pub sender: Sender<RefineCommand>,
 }
 
 /// Update message from a refiner thread.
@@ -148,35 +146,46 @@ impl RefinementGraph {
             let (update_tx, update_rx) = unbounded();
 
             // Only spawn threads for refiners whose bounds aren't already exact.
-            let mut refiner_nodes = Vec::new();
-            let mut refiner_handles = Vec::new();
+            let mut refiner_nodes: Vec<Arc<Node>> = Vec::new();
             for node in &self.refiners {
                 let exact = node
                     .cached_prefix()
                     .is_some_and(|p| p.width_exponent() == XIsize::NegInf);
                 if !exact {
-                    refiner_handles.push(spawn_refiner(
-                        scope,
-                        Arc::clone(node),
-                        Arc::clone(&stop_flag),
-                        update_tx.clone(),
-                    ));
                     refiner_nodes.push(Arc::clone(node));
                 }
             }
+
+            // Spawn a capped worker pool with a shared command channel.
+            // All workers pull from the same queue, so no single worker
+            // becomes a bottleneck when many refiners are assigned.
+            let num_refiners_spawned = refiner_nodes.len();
+            let num_workers = worker_count(num_refiners_spawned);
+            let (work_tx, work_rx) = unbounded::<WorkerCommand>();
+            let refiner_nodes_shared = Arc::new(refiner_nodes.clone());
+            for _ in 0..num_workers {
+                let nodes = Arc::clone(&refiner_nodes_shared);
+                let stop = Arc::clone(&stop_flag);
+                let rx = work_rx.clone();
+                let tx = update_tx.clone();
+                scope.spawn(move || {
+                    worker_loop(nodes, stop, rx, tx);
+                });
+            }
             drop(update_tx);
 
-            let shutdown_refiners = |handles: Vec<RefinerHandle>, stop_signal: &Arc<StopFlag>| {
+            let shutdown_workers = |work_sender: Sender<WorkerCommand>,
+                                    stop_signal: &Arc<StopFlag>,
+                                    n_workers: usize| {
                 stop_signal.stop();
-                for refiner in &handles {
-                    // Safe to discard: the refiner may have already exited
-                    // (e.g. due to an error), and we're shutting down regardless.
-                    let _shutdown = refiner.sender.send(RefineCommand::Stop);
+                for _ in 0..n_workers {
+                    // Safe to discard: workers may have already exited.
+                    let _shutdown = work_sender.send(WorkerCommand::Stop);
                 }
             };
 
             let result = (|| {
-                let num_refiners = refiner_handles.len();
+                let num_refiners = num_refiners_spawned;
                 let mut active = vec![true; num_refiners];
                 let mut all_state_unchanged = true;
                 let mut steps = vec![0usize; num_refiners];
@@ -374,9 +383,11 @@ impl RefinementGraph {
                                 .as_ref()
                                 .map(uxbinary_to_exp)
                                 .unwrap_or_else(|| tolerance_to_exp(tolerance_exp));
-                            refiner_handles[i]
-                                .sender
-                                .send(RefineCommand::Step { target_width_exp })
+                            work_tx
+                                .send(WorkerCommand::Step {
+                                    refiner_idx: i,
+                                    target_width_exp,
+                                })
                                 .map_err(|_send_err| ComputableError::RefinementChannelClosed)?;
                             outstanding[i] = true;
                             needs_redispatch[i] = false;
@@ -401,7 +412,7 @@ impl RefinementGraph {
                             }
                             dispatched = dispatched.checked_add(1).unwrap_or_else(|| {
                                 unreachable!(
-                                    "dispatched <= refiner_handles.len(), cannot overflow usize"
+                                    "dispatched <= num_refiners, cannot overflow usize"
                                 )
                             });
                         }
@@ -580,7 +591,7 @@ impl RefinementGraph {
                 }
             })();
 
-            shutdown_refiners(refiner_handles, &stop_flag);
+            shutdown_workers(work_tx, &stop_flag, num_workers);
             outcome = Some(result);
         });
 
@@ -593,6 +604,13 @@ impl RefinementGraph {
     /// Applies a node update and propagates prefix changes upward.
     /// Returns the set of node IDs that were changed by propagation
     /// (excluding the directly-updated node).
+    ///
+    /// **Bounds-cache preservation**: uses `set_prefix_and_bounds` instead
+    /// of `set_prefix` so that each recomputed parent's exact bounds stay
+    /// cached. When the next ancestor calls `child.get_bounds()` during
+    /// its own `compute_bounds()`, it hits the cache instead of
+    /// recomputing from scratch. (`set_prefix` invalidates bounds_cache,
+    /// forcing every level to redundantly re-derive bounds.)
     fn apply_update(&self, update: NodeUpdate) -> Result<Vec<usize>, ComputableError> {
         let mut changed_by_propagation = Vec::new();
         let mut queue = VecDeque::new();
@@ -610,9 +628,15 @@ impl RefinementGraph {
                     .nodes
                     .get(parent_id)
                     .ok_or(ComputableError::RefinementChannelClosed)?;
-                let next_prefix = parent.compute_prefix()?;
+                let next_bounds = parent.op.compute_bounds()?;
+                let next_prefix = Prefix::from_lower_upper(
+                    next_bounds.small().clone(),
+                    next_bounds.large(),
+                );
                 if parent.cached_prefix().as_ref() != Some(&next_prefix) {
-                    parent.set_prefix(next_prefix);
+                    // Cache both prefix AND exact bounds so ancestors'
+                    // compute_bounds() hits the bounds cache.
+                    parent.set_prefix_and_bounds(next_prefix, next_bounds);
                     changed_by_propagation.push(*parent_id);
                     queue.push_back(*parent_id);
                 }
@@ -675,104 +699,121 @@ fn tolerance_to_uxbinary(tolerance_exp: &XUsize) -> UXBinary {
     }
 }
 
-fn spawn_refiner<'scope, 'env>(
-    scope: &'scope thread::Scope<'scope, 'env>,
-    node: Arc<Node>,
-    stop: Arc<StopFlag>,
-    updates: Sender<RefinerMessage>,
-) -> RefinerHandle {
-    let (command_tx, command_rx) = unbounded();
-    scope.spawn(move || {
-        refiner_loop(node, stop, command_rx, updates);
-    });
-
-    RefinerHandle { sender: command_tx }
+/// Returns the number of worker threads to spawn for the given refiner count.
+///
+/// Caps at available CPU parallelism to avoid spawning excessive OS threads
+/// when the graph contains many refiners (e.g. 1000 NthRoot nodes).
+fn worker_count(num_refiners: usize) -> usize {
+    if num_refiners == 0 {
+        return 0;
+    }
+    let cpus = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4_usize);
+    num_refiners.min(cpus)
 }
 
-fn refiner_loop(
-    node: Arc<Node>,
+/// Worker loop that processes commands for multiple refiners from a shared queue.
+///
+/// Each worker receives commands tagged with a refiner index, looks up the
+/// corresponding node, and executes the refinement step. Multiple workers
+/// pull from the same channel, providing work-stealing behavior. This allows
+/// N refiners to be multiplexed onto fewer OS threads.
+fn worker_loop(
+    refiner_nodes: Arc<Vec<Arc<Node>>>,
     stop: Arc<StopFlag>,
-    commands: Receiver<RefineCommand>,
+    commands: Receiver<WorkerCommand>,
     updates: Sender<RefinerMessage>,
 ) {
     while !stop.is_stopped() {
         match commands.recv() {
-            Ok(RefineCommand::Step { target_width_exp }) => {
-                // Keep refining until the prefix visibly changes or we exhaust.
-                // This prevents infinite loops where the underlying bounds improve
-                // but the Prefix (power-of-2 rounded width) stays the same.
-                let old_prefix = node.cached_prefix();
-                let mut extra_steps = 0usize;
-
-                loop {
-                    match node.refine_step(target_width_exp) {
-                        Ok(true) => {
-                            let prefix = match node.compute_prefix() {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    let _send = updates.send(RefinerMessage::Error(e));
-                                    return;
-                                }
-                            };
-
-                            // Check if prefix visibly changed
-                            let changed = old_prefix.as_ref() != Some(&prefix);
-                            node.set_prefix(prefix.clone());
-
-                            if changed || extra_steps >= 16 {
-                                if updates
-                                    .send(RefinerMessage::Update(NodeUpdate {
-                                        node_id: node.id,
-                                        prefix,
-                                    }))
-                                    .is_err()
-                                {
-                                    return;
-                                }
-                                break;
-                            }
-                            // Prefix didn't change — do another refine step
-                            extra_steps = extra_steps.checked_add(1).unwrap_or_else(|| {
-                                unreachable!("extra_steps bounded by loop break at 16")
-                            });
-                        }
-                        Ok(false) => {
-                            let prefix = match node.compute_prefix() {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    let _send = updates.send(RefinerMessage::Error(e));
-                                    return;
-                                }
-                            };
-                            node.set_prefix(prefix.clone());
-                            let _send = updates.send(RefinerMessage::Exhausted {
-                                update: NodeUpdate {
-                                    node_id: node.id,
-                                    prefix,
-                                },
-                                reason: ExhaustionReason::Converged,
-                            });
-                            return;
-                        }
-                        Err(ComputableError::StateUnchanged) => {
-                            let prefix = node.cached_prefix().unwrap_or_else(Prefix::unbounded);
-                            let _send = updates.send(RefinerMessage::Exhausted {
-                                update: NodeUpdate {
-                                    node_id: node.id,
-                                    prefix,
-                                },
-                                reason: ExhaustionReason::StateUnchanged,
-                            });
-                            return;
-                        }
-                        Err(error) => {
-                            let _send = updates.send(RefinerMessage::Error(error));
-                            return;
-                        }
-                    }
-                }
+            Ok(WorkerCommand::Step {
+                refiner_idx,
+                target_width_exp,
+            }) => {
+                let Some(node) = refiner_nodes.get(refiner_idx) else {
+                    continue;
+                };
+                execute_refine_step(node, target_width_exp, &updates);
             }
-            Ok(RefineCommand::Stop) | Err(_) => break,
+            Ok(WorkerCommand::Stop) | Err(_) => break,
+        }
+    }
+}
+
+/// Executes a single refine step for a node and sends the result.
+///
+/// Keeps refining until the prefix visibly changes or we exhaust.
+/// This prevents infinite loops where the underlying bounds improve
+/// but the Prefix (power-of-2 rounded width) stays the same.
+fn execute_refine_step(
+    node: &Arc<Node>,
+    target_width_exp: XIsize,
+    updates: &Sender<RefinerMessage>,
+) {
+    let old_prefix = node.cached_prefix();
+    let mut extra_steps = 0usize;
+
+    loop {
+        match node.refine_step(target_width_exp) {
+            Ok(true) => {
+                let prefix = match node.compute_prefix() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let _send = updates.send(RefinerMessage::Error(e));
+                        return;
+                    }
+                };
+
+                // Check if prefix visibly changed
+                let changed = old_prefix.as_ref() != Some(&prefix);
+                node.set_prefix(prefix.clone());
+
+                if changed || extra_steps >= 16 {
+                    let _send = updates.send(RefinerMessage::Update(NodeUpdate {
+                        node_id: node.id,
+                        prefix,
+                    }));
+                    return;
+                }
+                // Prefix didn't change — do another refine step
+                extra_steps = extra_steps.checked_add(1).unwrap_or_else(|| {
+                    unreachable!("extra_steps bounded by loop break at 16")
+                });
+            }
+            Ok(false) => {
+                let prefix = match node.compute_prefix() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let _send = updates.send(RefinerMessage::Error(e));
+                        return;
+                    }
+                };
+                node.set_prefix(prefix.clone());
+                let _send = updates.send(RefinerMessage::Exhausted {
+                    update: NodeUpdate {
+                        node_id: node.id,
+                        prefix,
+                    },
+                    reason: ExhaustionReason::Converged,
+                });
+                return;
+            }
+            Err(ComputableError::StateUnchanged) => {
+                let prefix = node.cached_prefix().unwrap_or_else(Prefix::unbounded);
+                let _send = updates.send(RefinerMessage::Exhausted {
+                    update: NodeUpdate {
+                        node_id: node.id,
+                        prefix,
+                    },
+                    reason: ExhaustionReason::StateUnchanged,
+                });
+                return;
+            }
+            Err(error) => {
+                let _send = updates.send(RefinerMessage::Error(error));
+                return;
+            }
         }
     }
 }

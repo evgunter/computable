@@ -143,6 +143,7 @@ impl Computable {
             inner: Arc::clone(&self.node),
             pi_node,
             num_terms: RwLock::new(BigInt::one()),
+            bounds_cache: RwLock::new(None),
         }));
         Self { node }
     }
