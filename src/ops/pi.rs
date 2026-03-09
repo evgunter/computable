@@ -181,12 +181,12 @@ impl NodeOp for PiOp {
             }
         }
 
-        // With per-refiner budgets, the leap formula always produces needed > num_terms
-        // when the coordinator dispatches (otherwise the refiner would have been skipped).
-        unreachable!(
-            "PiOp: leap did not advance; target_width_exp={:?}, num_terms={}",
-            target_width_exp, *num_terms
-        )
+        // Fallback: the leap formula may not advance when the coordinator
+        // dispatches this refiner in edge cases (e.g. needed <= num_terms due
+        // to imprecision in the leap estimate). Double num_terms to guarantee
+        // forward progress.
+        *num_terms = (*num_terms).checked_mul(2).unwrap_or(usize::MAX);
+        Ok(true)
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
