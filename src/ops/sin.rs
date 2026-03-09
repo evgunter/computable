@@ -237,19 +237,28 @@ fn sin_bounds(
         }
     };
 
-    // Derive two_pi and half_pi from pi by scaling
-    let two = UBinary::new(num_bigint::BigUint::from(1_u32), BigInt::from(1_i32)); // 2^1 = 2
-    let two_pi_interval = pi_interval.scale_positive(&two);
+    // Derive two_pi and half_pi from pi by shifting exponents (avoiding BigInt multiply).
+    // Scaling by 2 shifts exponent +1; scaling by 1/2 shifts exponent -1.
+    // Using from_lower_and_width avoids the abs_distance re-computation in new().
+    let pi_width = pi_interval.width();
+    let two_pi_lo = Binary::new_normalized(
+        pi_interval.lo().mantissa().clone(),
+        pi_interval.lo().exponent() + BigInt::one(),
+    );
+    let two_pi_width = UBinary::new_normalized(
+        pi_width.mantissa().clone(),
+        pi_width.exponent() + BigInt::one(),
+    );
+    let two_pi_interval = FiniteBounds::from_lower_and_width(two_pi_lo, two_pi_width);
     let half_pi_lo = Binary::new_normalized(
         pi_interval.lo().mantissa().clone(),
         pi_interval.lo().exponent() - BigInt::one(),
     );
-    let half_pi_hi_val = pi_interval.hi();
-    let half_pi_hi = Binary::new_normalized(
-        half_pi_hi_val.mantissa().clone(),
-        half_pi_hi_val.exponent() - BigInt::one(),
+    let half_pi_width = UBinary::new_normalized(
+        pi_width.mantissa().clone(),
+        pi_width.exponent() - BigInt::one(),
     );
-    let half_pi_interval = FiniteBounds::new(half_pi_lo, half_pi_hi);
+    let half_pi_interval = FiniteBounds::from_lower_and_width(half_pi_lo, half_pi_width);
 
     // Process each endpoint through range reduction with full interval tracking
     let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
@@ -375,22 +384,31 @@ fn reduce_to_pi_range_interval(
     two_pi: &FiniteBounds,
     pi: &FiniteBounds,
 ) -> FiniteBounds {
-    let two_pi_mid = two_pi.midpoint();
-    let neg_pi_hi = pi.hi().neg();
+    // Pre-compute pi.hi() once — used for both the range check and its negation.
+    let pi_hi = pi.hi();
+    let neg_pi_hi = pi_hi.neg();
 
-    let mut current = input.clone();
+    // Quick check: if input is already in range, avoid all computation.
+    let input_hi = input.hi();
+    if *input.lo() >= neg_pi_hi && input_hi <= pi_hi {
+        return input.clone();
+    }
+
+    let two_pi_mid = two_pi.midpoint();
 
     // Compute k analytically: k = round(midpoint(input) / midpoint(2π)).
     // This is a single BigInt computation that works for arbitrarily large inputs.
     // Using midpoints here is fine because k is just an integer we choose — the
     // soundness comes from the interval subtraction, not from k being exact.
-    let current_mid = current.midpoint();
-    let k = compute_reduction_factor(&current_mid, &two_pi_mid);
+    let input_mid = input.midpoint();
+    let k = compute_reduction_factor(&input_mid, &two_pi_mid);
 
-    if !k.is_zero() {
+    let mut current = if k.is_zero() {
+        input.clone()
+    } else {
         let k_times_two_pi = two_pi.scale_bigint(&k);
-        current = current.interval_sub(&k_times_two_pi);
-    }
+        input.interval_sub(&k_times_two_pi)
+    };
 
     // After the analytical reduction, we should be close to [-π, π].
     // At most 2 fixup iterations handle the case where k was off by 1
@@ -402,7 +420,8 @@ fn reduce_to_pi_range_interval(
         // for the uncertainty in the pi approximation. The reduced value doesn't need
         // to be exactly in [-π, π]; it just needs to be close enough that the interval
         // comparisons can correctly determine which trigonometric identity to apply.
-        if *current.lo() >= neg_pi_hi && current.hi() <= pi.hi() {
+        let current_hi = current.hi();
+        if *current.lo() >= neg_pi_hi && current_hi <= pi_hi {
             return current;
         }
 
@@ -440,9 +459,19 @@ fn reduce_to_half_pi_range_interval(
     // First reduce to [-pi, pi]
     let reduced = reduce_to_pi_range_interval(input, two_pi, pi);
 
-    // Now determine which branch(es) the reduced interval falls into
-    let neg_half_pi = half_pi.interval_neg(); // [-pi/2_hi, -pi/2_lo]
-    let neg_pi = pi.interval_neg(); // [-pi_hi, -pi_lo]
+    // Pre-compute hi() values that are used multiple times below.
+    // Each hi() call recomputes lower + width, so caching these avoids
+    // redundant BigInt additions.
+    let reduced_hi = reduced.hi();
+    let half_pi_hi = half_pi.hi();
+    let pi_hi = pi.hi();
+    // For neg_half_pi = -[half_pi_lo, half_pi_hi] = [-half_pi_hi, -half_pi_lo]:
+    //   neg_half_pi.lo() = -half_pi_hi, neg_half_pi.hi() = -half_pi_lo
+    let neg_half_pi_hi = half_pi.lo().neg(); // = -half_pi_lo
+    let neg_half_pi_lo = half_pi_hi.neg(); // = -half_pi_hi
+    // For neg_pi = -[pi_lo, pi_hi] = [-pi_hi, -pi_lo]:
+    //   neg_pi.hi() = -pi_lo
+    let neg_pi_hi = pi.lo().neg(); // = -pi_lo
 
     // Key comparisons using conservative bounds:
     // To check if interval is entirely in [-pi/2, pi/2]:
@@ -450,7 +479,7 @@ fn reduce_to_half_pi_range_interval(
     //   AND reduced.lo >= neg_half_pi.hi (interval entirely above -pi/2)
 
     // Case 1: Entirely in [-pi/2, pi/2]
-    if reduced.hi() <= *half_pi.lo() && *reduced.lo() >= neg_half_pi.hi() {
+    if reduced_hi <= *half_pi.lo() && *reduced.lo() >= neg_half_pi_hi {
         return ReductionResult::InRange {
             interval: reduced,
             sign_flip: false,
@@ -459,7 +488,7 @@ fn reduce_to_half_pi_range_interval(
 
     // Case 2: Entirely in [pi/2, pi]
     // reduced.lo >= half_pi.lo AND reduced.hi <= pi.hi
-    if *reduced.lo() >= *half_pi.lo() && reduced.hi() <= pi.hi() {
+    if *reduced.lo() >= *half_pi.lo() && reduced_hi <= pi_hi {
         // Transform: x -> pi - x
         // sin(x) = sin(pi - x) for x in [pi/2, pi]
         // pi - [a, b] using interval arithmetic:
@@ -474,7 +503,7 @@ fn reduce_to_half_pi_range_interval(
     // Case 3: Entirely in [-pi, -pi/2]
     // reduced.hi <= neg_half_pi.hi (which is -pi/2_lo, the least negative)
     // AND reduced.lo >= neg_pi.hi (which is -pi_lo, the least negative -pi)
-    if reduced.hi() <= neg_half_pi.hi() && *reduced.lo() >= neg_pi.hi() {
+    if reduced_hi <= neg_half_pi_hi && *reduced.lo() >= neg_pi_hi {
         // Transform: x -> -pi - x, then negate result
         // sin(x) = -sin(-pi - x) for x in [-pi, -pi/2]
         // Actually: sin(x) = sin(-pi - x) = -sin(pi + x)
@@ -492,8 +521,8 @@ fn reduce_to_half_pi_range_interval(
     // Determine which critical points the interval might straddle.
     // The "both" check must come before the individual cases so that an interval
     // straddling BOTH ±pi/2 returns ContainsBoth rather than just ContainsMax.
-    let spans_max = *reduced.lo() < half_pi.hi() && reduced.hi() > *half_pi.lo();
-    let spans_min = *reduced.lo() < neg_half_pi.hi() && reduced.hi() > *neg_half_pi.lo();
+    let spans_max = *reduced.lo() < half_pi_hi && reduced_hi > *half_pi.lo();
+    let spans_min = *reduced.lo() < neg_half_pi_hi && reduced_hi > neg_half_pi_lo;
 
     // Case 4: Straddles both pi/2 and -pi/2
     if spans_max && spans_min {
@@ -505,7 +534,7 @@ fn reduce_to_half_pi_range_interval(
         // The interval contains pi/2 where sin = 1
         // Compute the minimum sin value at the endpoints
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced_hi, n, pi, half_pi);
         let sin_min = if sin_bounds_at_lo.lo() < sin_bounds_at_hi.lo() {
             sin_bounds_at_lo.lo().clone()
         } else {
@@ -519,7 +548,7 @@ fn reduce_to_half_pi_range_interval(
     if spans_min {
         // The interval contains -pi/2 where sin = -1
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced_hi, n, pi, half_pi);
         let sin_max = if sin_bounds_at_lo.hi() > sin_bounds_at_hi.hi() {
             sin_bounds_at_lo.hi()
         } else {
@@ -537,7 +566,7 @@ fn reduce_to_half_pi_range_interval(
     let neg_one = pos_one.neg();
 
     let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
+    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced_hi, n, pi, half_pi);
     let combined = sin_bounds_1.join(&sin_bounds_2);
 
     ReductionResult::SpansMultipleBranches {
@@ -560,7 +589,11 @@ fn compute_sin_bounds_for_point_with_pi(
     pi: &FiniteBounds,
     half_pi: &FiniteBounds,
 ) -> FiniteBounds {
-    let neg_half_pi = half_pi.interval_neg(); // [-pi/2_hi, -pi/2_lo]
+    // Pre-compute hi() and derived negation values to avoid redundant BigInt ops.
+    // neg_half_pi = -[half_pi_lo, half_pi_hi] = [-half_pi_hi, -half_pi_lo]
+    let half_pi_hi = half_pi.hi();
+    let neg_half_pi_hi = half_pi.lo().neg(); // = -half_pi_lo
+    let neg_half_pi_lo = half_pi_hi.neg(); // = -half_pi_hi
 
     // For the transformation, we use the full interval to get proper bounds
     let x_interval = FiniteBounds::point(x.clone());
@@ -571,9 +604,9 @@ fn compute_sin_bounds_for_point_with_pi(
     // - x is definitively below -half_pi if x < neg_half_pi.lo() (i.e., x < -half_pi.hi())
     // - Otherwise, x might be in a boundary region where we need to consider multiple branches
 
-    let definitely_above_half_pi = x > &half_pi.hi();
-    let definitely_below_neg_half_pi = *x < *neg_half_pi.lo();
-    let definitely_in_center = *x >= neg_half_pi.hi() && x <= half_pi.lo();
+    let definitely_above_half_pi = x > &half_pi_hi;
+    let definitely_below_neg_half_pi = *x < neg_half_pi_lo;
+    let definitely_in_center = *x >= neg_half_pi_hi && x <= half_pi.lo();
 
     if definitely_in_center {
         // x is definitively in [-pi/2, pi/2], use directly
