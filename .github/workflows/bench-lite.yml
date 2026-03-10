@@ -1,0 +1,32 @@
+name: Bench Lite
+on:
+  workflow_dispatch:
+
+jobs:
+  bench-lite-gungraun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: bench-lite
+      - run: sudo apt-get update && sudo apt-get install -y valgrind
+      - run: cargo install gungraun-runner --version 0.17.2
+      - name: Run lite benchmarks (gungraun)
+        run: |
+          ulimit -s 65536
+          cargo bench --features bench-lite \
+            --bench summation --bench complex --bench integer_roots \
+            --bench inv --bench sin --bench pi --bench asymmetric_convergence
+
+  bench-lite-criterion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: bench-lite-criterion
+      - name: Run lite benchmarks (criterion)
+        run: cargo bench --features criterion-bench,bench-lite

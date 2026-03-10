@@ -183,7 +183,8 @@ impl NodeOp for PiOp {
         // dispatches this refiner in edge cases (e.g. needed <= num_terms due
         // to imprecision in the leap estimate). Double num_terms to guarantee
         // forward progress.
-        *num_terms = (*num_terms).checked_mul(2).unwrap_or(U::MAX);
+        let current = *num_terms;
+        *num_terms = crate::sane_arithmetic!(current; current * 2);
         Ok(true)
     }
 
