@@ -106,7 +106,9 @@ jobs:
           wget -qO /tmp/hyperfine.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
           sudo dpkg -i /tmp/hyperfine.deb
 
-      - name: Build PR binaries
+      - name: Build current binaries
+        # On main pushes pr-bins/ contains the current commit; on PRs it
+        # contains the PR head.  Directory name kept for backward compat.
         run: |
           cargo bench --features time-bench --no-run 2>&1
           mkdir -p pr-bins
@@ -114,6 +116,26 @@ jobs:
           for bench in $BENCHES; do
             bin=$(find target/release/deps -name "${bench}-*" -executable ! -name "*.d" | head -1)
             cp "$bin" "pr-bins/${bench}"
+          done
+
+      - name: Build previous main binaries
+        if: github.ref == 'refs/heads/main' && github.event.before != '0000000000000000000000000000000000000000'
+        run: |
+          BASE_SHA="${{ github.event.before }}"
+          git fetch --depth=1 origin "$BASE_SHA"
+          git worktree add /tmp/prev-build "$BASE_SHA"
+          cd /tmp/prev-build
+          if ! cargo bench --features time-bench --no-run 2>&1; then
+            echo "::warning::Previous commit does not support time-bench feature, skipping A/B comparison"
+            exit 0
+          fi
+          mkdir -p "${{ github.workspace }}/main-bins"
+          BENCHES="integer_roots inv sin pi asymmetric_convergence summation complex"
+          for bench in $BENCHES; do
+            bin=$(find target/release/deps -name "${bench}-*" -executable ! -name "*.d" | head -1)
+            if [ -n "$bin" ]; then
+              cp "$bin" "${{ github.workspace }}/main-bins/${bench}"
+            fi
           done
 
       - name: Build main binaries
@@ -177,8 +199,9 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           SHA="${{ github.sha }}"
+          BASE_SHA="${{ github.event.before }}"
           python3 .github/scripts/compare_time_benchmarks.py \
-            --mode store --results-dir results > time_results.json
+            --mode store --results-dir results --command-index -1 > time_results.json
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin benchmark-data
@@ -186,8 +209,15 @@ jobs:
           mkdir -p /tmp/bench-data/time-results
           cp time_results.json "/tmp/bench-data/time-results/${SHA}.json"
           cp time_results.json /tmp/bench-data/time-results/latest.json
+          if [ -d main-bins ] && [ -n "$(ls -A main-bins 2>/dev/null)" ]; then
+            python3 .github/scripts/compare_time_benchmarks.py \
+              --mode store-comparison --results-dir results \
+              --base-sha "$BASE_SHA" --head-sha "$SHA" > time_comparison.json
+            mkdir -p /tmp/bench-data/time-comparisons
+            cp time_comparison.json "/tmp/bench-data/time-comparisons/${BASE_SHA}_vs_${SHA}.json"
+          fi
           cd /tmp/bench-data
-          git add time-results/
+          git add time-results/ time-comparisons/
           git commit -m "Time benchmark: ${SHA:0:8}"
           git push origin HEAD:benchmark-data
 

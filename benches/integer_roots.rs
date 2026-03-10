@@ -1,3 +1,4 @@
+mod bench_macros;
 mod common;
 
 #[cfg(not(feature = "criterion-bench"))]
@@ -8,7 +9,8 @@ use std::num::NonZeroU32;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use common::{balanced_sum, bench_group, bench_main, epsilon};
+use bench_macros::{bench_group, bench_main, epsilon};
+use common::balanced_sum;
 #[cfg(not(feature = "criterion-bench"))]
 use computable::Bounds;
 use computable::{Binary, Computable};

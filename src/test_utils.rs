@@ -6,6 +6,7 @@
 use num_bigint::{BigInt, BigUint};
 
 use crate::binary::{Binary, UBinary, UXBinary, XBinary};
+use crate::sane::U;
 
 /// Creates a Binary from mantissa and exponent as i64 values.
 ///
@@ -73,8 +74,8 @@ use crate::computable::Computable;
 
 /// Creates a Binary representing 2^(-n), for test assertions that need
 /// epsilon as a Binary value for arithmetic.
-pub fn epsilon_as_binary(n: usize) -> Binary {
-    let n_i64 = i64::try_from(n).expect("precision fits in i64");
+pub fn epsilon_as_binary(n: U) -> Binary {
+    let n_i64 = i64::from(n);
     Binary::new(
         BigInt::from(1_i32),
         n_i64.checked_neg().expect("negation does not overflow"),

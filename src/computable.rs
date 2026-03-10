@@ -13,19 +13,19 @@ use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
 use crate::refinement::{RefinementGraph, prefix_width_leq};
-use crate::sane::XUsize;
+use crate::sane::{U, XU};
 
 use parking_lot::RwLock;
 
 #[cfg(debug_assertions)]
-pub const DEFAULT_INV_MAX_REFINES: usize = 64;
+pub const DEFAULT_INV_MAX_REFINES: U = 64;
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_INV_MAX_REFINES: usize = 4096;
+pub const DEFAULT_INV_MAX_REFINES: U = 4096;
 
 #[cfg(debug_assertions)]
-pub const DEFAULT_MAX_REFINEMENT_ITERATIONS: usize = 64;
+pub const DEFAULT_MAX_REFINEMENT_ITERATIONS: U = 64;
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_MAX_REFINEMENT_ITERATIONS: usize = 4096;
+pub const DEFAULT_MAX_REFINEMENT_ITERATIONS: U = 4096;
 
 /// A computable number backed by a shared node graph.
 #[derive(Clone)]
@@ -72,14 +72,14 @@ impl Computable {
     /// * `MAX_REFINEMENT_ITERATIONS` - Maximum number of refinement iterations
     ///
     /// # Warning
-    /// Using `XUsize::Inf` (epsilon = 0) will only succeed for values that can be
+    /// Using `XU::Inf` (epsilon = 0) will only succeed for values that can be
     /// represented exactly in binary (e.g., integers, dyadic rationals like 1/2 or 3/4).
     /// For values that cannot be exactly represented (e.g., 1/3, sqrt(2), pi),
     /// refinement will never achieve zero width and will return
     /// [`ComputableError::MaxRefinementIterations`] after exhausting the iteration limit.
-    pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
+    pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: U>(
         &self,
-        tolerance_exp: XUsize,
+        tolerance_exp: XU,
     ) -> Result<Bounds, ComputableError> {
         loop {
             let prefix = self.node.get_prefix()?;
@@ -112,7 +112,7 @@ impl Computable {
     }
 
     /// Refines this computable using the default maximum iterations.
-    pub fn refine_to_default(&self, tolerance_exp: XUsize) -> Result<Bounds, ComputableError> {
+    pub fn refine_to_default(&self, tolerance_exp: XU) -> Result<Bounds, ComputableError> {
         self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(tolerance_exp)
     }
 
@@ -120,7 +120,7 @@ impl Computable {
     pub fn inv(self) -> Self {
         let node = Node::new(Arc::new(InvOp {
             inner: Arc::clone(&self.node),
-            newton_state: RwLock::new(None),
+            division_state: RwLock::new(None),
         }));
         Self { node }
     }
@@ -297,7 +297,7 @@ impl std::ops::Div for Computable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sane::XUsize;
+    use crate::sane::XU;
     use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
@@ -323,7 +323,7 @@ mod tests {
         let sqrt2 = sqrt_computable(2);
         let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
 
-        let tolerance_exp = XUsize::Finite(12);
+        let tolerance_exp = XU::Finite(12);
         let bounds = expr
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
@@ -348,7 +348,7 @@ mod tests {
         let shared = sqrt_computable(2);
         let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
 
-        let tolerance_exp = XUsize::Finite(12);
+        let tolerance_exp = XU::Finite(12);
         let bounds = expr
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");

@@ -197,14 +197,10 @@ impl UBinary {
         }
 
         if let Some(tz_u64) = mantissa.trailing_zeros() {
-            let tz = crate::sane::bits_as_usize(tz_u64);
+            let tz = crate::sane::bits_as_u(tz_u64);
             mantissa >>= tz;
             exponent = exponent
-                .checked_add(i64::try_from(tz).unwrap_or_else(|_| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "trailing zeros exceeds i64 in UBinary::normalize"
-                    )
-                }))
+                .checked_add(i64::from(tz))
                 .unwrap_or_else(|| {
                     crate::detected_computable_would_exhaust_memory!(
                         "exponent overflow in UBinary::normalize"
@@ -230,7 +226,6 @@ impl UBinary {
                     "shift exceeds usize in UBinary::align_mantissas"
                 )
             });
-            crate::assert_sane_computation_size!(shift_usize);
             &lhs.mantissa << shift_usize
         };
         let rhs_mantissa = if rhs_shift == 0 {
@@ -241,7 +236,6 @@ impl UBinary {
                     "shift exceeds usize in UBinary::align_mantissas"
                 )
             });
-            crate::assert_sane_computation_size!(shift_usize);
             &rhs.mantissa << shift_usize
         };
         (lhs_mantissa, rhs_mantissa, exponent)
@@ -279,8 +273,7 @@ impl Ord for UBinary {
                                 "shift overflow in UBinary::cmp"
                             )
                         });
-                        crate::assert_sane_computation_size!(shift_usize);
-                        (&self.mantissa << shift_usize).cmp(&other.mantissa)
+                                    (&self.mantissa << shift_usize).cmp(&other.mantissa)
                     }
                     Ordering::Less => {
                         let shift = other.exponent.abs_diff(self.exponent);
@@ -289,8 +282,7 @@ impl Ord for UBinary {
                                 "shift overflow in UBinary::cmp"
                             )
                         });
-                        crate::assert_sane_computation_size!(shift_usize);
-                        self.mantissa.cmp(&(&other.mantissa << shift_usize))
+                                    self.mantissa.cmp(&(&other.mantissa << shift_usize))
                     }
                 }
             }

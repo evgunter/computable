@@ -32,14 +32,14 @@ use crate::binary::{
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{XIsize, XUsize};
+use crate::sane::{U, XI, XU};
 
 /// Cached inputs and result for `sin_bounds`, avoiding redundant Taylor series
 /// recomputation when `compute_bounds` is called multiple times with the same inputs.
 pub struct SinBoundsCache {
     input_bounds: Bounds,
     pi_bounds: Bounds,
-    num_terms: usize,
+    num_terms: U,
     result: Bounds,
 }
 
@@ -47,7 +47,7 @@ pub struct SinBoundsCache {
 pub struct SinOp {
     pub inner: Arc<Node>,
     pub pi_node: Arc<Node>,
-    pub num_terms: RwLock<usize>,
+    pub num_terms: RwLock<U>,
     /// Cache of the last `sin_bounds` result, keyed on inputs.
     /// Eliminates redundant Taylor series recomputation during bound propagation.
     pub bounds_cache: RwLock<Option<SinBoundsCache>>,
@@ -62,13 +62,12 @@ impl NodeOp for SinOp {
         // Check cache: if inputs haven't changed, return the cached result.
         {
             let cache = self.bounds_cache.read();
-            if let Some(cached) = cache.as_ref() {
-                if cached.input_bounds == input_bounds
-                    && cached.pi_bounds == pi_bounds
-                    && cached.num_terms == num_terms
-                {
-                    return Ok(cached.result.clone());
-                }
+            if let Some(cached) = cache.as_ref()
+                && cached.input_bounds == input_bounds
+                && cached.pi_bounds == pi_bounds
+                && cached.num_terms == num_terms
+            {
+                return Ok(cached.result.clone());
             }
         }
 
@@ -88,13 +87,11 @@ impl NodeOp for SinOp {
         Ok(result)
     }
 
-    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
         // Leap based on coordinator's precision target.
-        if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits()
-            && precision_bits <= crate::MAX_COMPUTATION_BITS
-        {
+        if let XU::Finite(precision_bits) = target_width_exp.to_precision_bits() {
             // Each Taylor term contributes ~3.5-7 bits; precision_bits / 4 is
             // conservative yet ~25% tighter than the previous / 3 estimate.
             let needed_n = (precision_bits / 4).max(1);
@@ -132,7 +129,7 @@ impl NodeOp for SinOp {
     /// k ≈ max_abs(input)/(2π). Pi's error is amplified by 2k, so
     /// pi budget = target / (2k) ≈ target · π / max_abs(input).
     /// We use pi's own cached lower bound as a conservative estimate of π.
-    fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, child_index: U) -> UXBinary {
         if child_index == 0 {
             // Input child: sin has derivative bounded by 1.
             return target_width.clone();
@@ -177,7 +174,7 @@ impl NodeOp for SinOp {
 fn sin_bounds(
     input_bounds: &Bounds,
     pi_bounds: &Bounds,
-    num_terms: usize,
+    num_terms: U,
 ) -> Result<Bounds, ComputableError> {
     let pos_one = Binary::one();
     let neg_one = pos_one.neg();
@@ -463,7 +460,7 @@ fn reduce_to_half_pi_range_interval(
     two_pi: &FiniteBounds,
     pi: &FiniteBounds,
     half_pi: &FiniteBounds,
-    n: usize,
+    n: U,
 ) -> ReductionResult {
     // First reduce to [-pi, pi]
     let reduced = reduce_to_pi_range_interval(input, two_pi, pi);
@@ -597,7 +594,7 @@ fn reduce_to_half_pi_range_interval(
 /// both possible branches are evaluated and the union of their bounds is returned.
 fn compute_sin_bounds_for_point_with_pi(
     x: &Binary,
-    n: usize,
+    n: U,
     pi: &FiniteBounds,
     half_pi: &FiniteBounds,
 ) -> FiniteBounds {
@@ -676,8 +673,8 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     // To avoid losing precision, we shift mx up by enough bits so that
     // mx << shift_bits > mp, ensuring a non-zero quotient.
     // The shift should be at least mp.bits() - mx.bits() + some_precision.
-    let mx_bits = crate::sane::bits_as_usize(mx.magnitude().bits());
-    let mp_bits = crate::sane::bits_as_usize(mp.magnitude().bits());
+    let mx_bits = crate::sane::bits_as_u(mx.magnitude().bits());
+    let mp_bits = crate::sane::bits_as_u(mp.magnitude().bits());
 
     // Shift by enough bits to get a meaningful quotient, plus extra precision for rounding.
     // When mp_bits > mx_bits, we need at least the difference plus 64 extra bits.
@@ -688,13 +685,9 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
         64
     };
 
-    let shifted_mx = mx << precision_bits;
+    let shifted_mx = mx << crate::sane::u_as_usize(precision_bits);
     let quotient = &shifted_mx / mp;
-    let precision_bits_i64 = i64::try_from(precision_bits).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!(
-            "precision_bits exceeds i64 in compute_reduction_factor"
-        )
-    });
+    let precision_bits_i64 = i64::from(precision_bits);
     let result_exp = ex
         .checked_sub(ep)
         .and_then(|v| v.checked_sub(precision_bits_i64))
@@ -710,7 +703,6 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
                 "shift exceeds usize in compute_reduction_factor"
             )
         });
-        crate::assert_sane_computation_size!(shift);
         &quotient << shift
     } else {
         let magnitude = result_exp.unsigned_abs();
@@ -722,18 +714,19 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
                 return BigInt::zero();
             }
         }
-        let shift_val = usize::try_from(magnitude)
-            .unwrap_or_else(|_| unreachable!("magnitude <= quotient.bits() which fits in u64"));
-        match std::num::NonZeroUsize::new(shift_val) {
+        let shift_val = magnitude
+            .to_u32()
+            .unwrap_or_else(|| unreachable!("magnitude <= quotient.bits() which fits in u64"));
+        match std::num::NonZeroU32::new(shift_val) {
             None => quotient.clone(),
             Some(shift) => {
-                let half = BigInt::one() << crate::sane::sub_one(shift);
+                let half = BigInt::one() << crate::sane::u_as_usize(crate::sane::sub_one(shift));
                 let rounded = if quotient.is_negative() {
                     &quotient - &half
                 } else {
                     &quotient + &half
                 };
-                rounded >> shift.get()
+                rounded >> crate::sane::u_as_usize(shift.get())
             }
         }
     }
@@ -748,22 +741,18 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
 ///
 /// The implementation works on the mantissa magnitude to avoid any ambiguity
 /// in how BigInt right-shift handles negative values.
-fn truncate_precision_directed(
-    x: &Binary,
-    precision_bits: usize,
-    dir: RoundingDirection,
-) -> Binary {
+fn truncate_precision_directed(x: &Binary, precision_bits: U, dir: RoundingDirection) -> Binary {
     let mantissa = x.mantissa();
     let exponent = x.exponent();
-    let bit_length = crate::sane::bits_as_usize(mantissa.magnitude().bits());
+    let bit_length = crate::sane::bits_as_u(mantissa.magnitude().bits());
 
     let Some(shift_nz) = bit_length
         .checked_sub(precision_bits)
-        .and_then(std::num::NonZeroUsize::new)
+        .and_then(std::num::NonZeroU32::new)
     else {
         return x.clone();
     };
-    let shift = shift_nz.get();
+    let shift = crate::sane::u_as_usize(shift_nz.get());
 
     // Shift the magnitude (always truncates toward zero) and detect remainder
     let abs_shifted = mantissa.magnitude() >> shift;
@@ -811,7 +800,7 @@ fn truncate_precision_directed(
 ///
 /// Since sin is monotonically increasing on [-pi/2, pi/2], we can simply
 /// evaluate at the endpoints.
-fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: usize) -> FiniteBounds {
+fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: U) -> FiniteBounds {
     // sin is monotonic increasing on [-pi/2, pi/2]
     // So: sin([a, b]) = [sin(a)_lo, sin(b)_hi]
     //
@@ -852,7 +841,7 @@ enum RoundingDirection {
 /// (where Q is the common factorial denominator), then performs only two BigInt
 /// divisions at the end (one for floor, one for ceil), eliminating O(n)
 /// expensive reciprocal computations.
-fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
+fn taylor_sin_bounds(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) {
     if n == 0 {
         // No terms: error bound is |x|^1 / 1! = |x|
         let abs_x = x.magnitude().to_binary();
@@ -876,7 +865,7 @@ fn taylor_sin_bounds(x: &Binary, n: usize, target_precision: usize) -> (Binary, 
 /// Per-term Taylor series computation. Each term is divided by its factorial
 /// independently using directed rounding. Efficient for small n due to low
 /// overhead, but performs O(n) expensive reciprocal computations.
-fn taylor_sin_bounds_per_term(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
+fn taylor_sin_bounds_per_term(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) {
     let x_squared = x.mul(x);
     let mut sum_lo = Binary::zero();
     let mut sum_hi = Binary::zero();
@@ -950,7 +939,7 @@ fn taylor_sin_bounds_per_term(x: &Binary, n: usize, target_precision: usize) -> 
 /// The mantissa powers x^(2k+1) have varying binary exponents e*(2k+1). To sum
 /// them as integers over a common denominator, all terms are aligned to a common
 /// exponent by shifting mantissas appropriately.
-fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> (Binary, Binary) {
+fn taylor_sin_bounds_rational(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) {
     let m = x.mantissa();
     let e = x.exponent(); // i64 — no BigInt needed for exponent arithmetic
 
@@ -959,10 +948,11 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
 
     // Compute remaining factorial ratios: R_k = (2n-1)! / (2k+1)!
     // R_{n-1} = 1, R_{k-1} = R_k * (2k) * (2k+1)
-    let mut remaining_factors: Vec<BigInt> = Vec::with_capacity(n);
-    remaining_factors.resize(n, BigInt::zero());
+    let n_usize = crate::sane::u_as_usize(n);
+    let mut remaining_factors: Vec<BigInt> = Vec::with_capacity(n_usize);
+    remaining_factors.resize(n_usize, BigInt::zero());
     let n_minus_1 = crate::sane_arithmetic!(n; n - 1);
-    remaining_factors[n_minus_1] = BigInt::one();
+    remaining_factors[crate::sane::u_as_usize(n_minus_1)] = BigInt::one();
     for k in (1..n).rev() {
         // k is bounded by n which is a small Taylor-series term count (fits in i64),
         // so the `as i64` cast and multiplications cannot overflow.
@@ -972,7 +962,9 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
             (two_k, two_k + 1)
         };
         let k_minus_1 = crate::sane_arithmetic!(k; k - 1);
-        remaining_factors[k_minus_1] = &remaining_factors[k] * two_k * two_k_plus_1;
+        let k_usize = crate::sane::u_as_usize(k);
+        let k_minus_1_usize = crate::sane::u_as_usize(k_minus_1);
+        remaining_factors[k_minus_1_usize] = &remaining_factors[k_usize] * two_k * two_k_plus_1;
     }
 
     // The common denominator Q = (2n-1)! = R_0
@@ -1030,7 +1022,7 @@ fn taylor_sin_bounds_rational(x: &Binary, n: usize, target_precision: usize) -> 
 
         numerator += contribution;
 
-        if k < n_minus_1 {
+        if k < crate::sane::u_as_usize(n_minus_1) {
             power_m *= &m_sq;
             // shift_per_step and current_shift are bounded by small Taylor-series parameters.
             #[allow(clippy::arithmetic_side_effects)]
@@ -1083,7 +1075,7 @@ fn divide_bigint_directed(
     numerator: &BigInt,
     exponent: i64,
     denominator: &BigInt,
-    target_precision: usize,
+    target_precision: U,
 ) -> (Binary, Binary) {
     use num_integer::Integer;
 
@@ -1099,8 +1091,8 @@ fn divide_bigint_directed(
     // (bits(numerator) - bits(denominator)) bits. We need target_precision bits in
     // the result, so shift by: target_precision + bits(denominator) - bits(numerator) + 1
     // (the +1 ensures we don't lose a bit from rounding).
-    let num_bits = crate::sane::bits_as_usize(numerator.magnitude().bits());
-    let den_bits = crate::sane::bits_as_usize(denominator.magnitude().bits());
+    let num_bits = crate::sane::bits_as_u(numerator.magnitude().bits());
+    let den_bits = crate::sane::bits_as_u(denominator.magnitude().bits());
     // We need target_precision significant bits in the quotient.
     // extra_shift = target_precision + max(0, den_bits - num_bits) + 1
     let deficit = den_bits.saturating_sub(num_bits);
@@ -1128,11 +1120,7 @@ fn divide_bigint_directed(
     // For ceil (toward +inf):
     //   positive: if has_remainder, add 1 to quotient (round away from zero = toward +inf)
     //   negative: use quotient as-is (truncation = ceil for negative)
-    let extra_shift_i64 = i64::try_from(extra_shift).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!(
-            "extra_shift exceeds i64 in divide_bigint_directed"
-        )
-    });
+    let extra_shift_i64 = i64::from(extra_shift);
     let result_exp = exponent.checked_sub(extra_shift_i64).unwrap_or_else(|| {
         crate::detected_computable_would_exhaust_memory!(
             "exponent overflow in divide_bigint_directed"
@@ -1179,7 +1167,7 @@ fn divide_by_factorial_directed(
     value: &Binary,
     factorial: &BigInt,
     rounding: RoundingDirection,
-    target_precision: usize,
+    target_precision: U,
 ) -> Binary {
     if factorial.is_zero() {
         return value.clone();
@@ -1187,7 +1175,7 @@ fn divide_by_factorial_directed(
 
     // Use the caller-provided target precision, ensuring it is at least as large
     // as the input value's mantissa to avoid losing information.
-    let value_bits = crate::sane::bits_as_usize(value.mantissa().magnitude().bits());
+    let value_bits = crate::sane::bits_as_u(value.mantissa().magnitude().bits());
     let precision_bits = target_precision.max(value_bits);
 
     // Determine rounding direction for reciprocal based on overall rounding and sign of value.
@@ -1213,7 +1201,7 @@ fn divide_by_factorial_directed(
 ///
 /// Returns `Some(bits)` where `bits ≈ -log2(width)` for finite bounds with
 /// nonzero width. Returns `None` for zero-width (exact) or infinite bounds.
-fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
+fn estimate_precision_bits(bounds: &Bounds) -> Option<U> {
     let lo = bounds.small();
     let hi_xb = bounds.large();
     let (lo_bin, hi_bin) = match (lo, &hi_xb) {
@@ -1227,21 +1215,20 @@ fn estimate_precision_bits(bounds: &Bounds) -> Option<usize> {
     }
 
     // -log2(width) ≈ -(mantissa_bits + exponent)
-    let mantissa_bits = crate::sane::bits_as_usize(width.mantissa().magnitude().bits());
-    let mantissa_bits_i64 = i64::try_from(mantissa_bits)
-        .unwrap_or_else(|_| unreachable!("mantissa_bits <= MAX_COMPUTATION_BITS fits in i64"));
+    let mantissa_bits = crate::sane::bits_as_u(width.mantissa().magnitude().bits());
+    let mantissa_bits_i64 = i64::from(mantissa_bits);
     let exp_i64 = width.exponent().to_i64()?;
     let log2_width = exp_i64.checked_add(mantissa_bits_i64)?;
     let neg_log2 = match log2_width.checked_neg() {
         Some(v) if v >= 0_i64 => v,
         _ => return None,
     };
-    usize::try_from(neg_log2).ok()
+    U::try_from(neg_log2).ok()
 }
 
 // Test helpers - exposed for integration tests
 #[cfg(test)]
-pub fn taylor_sin_bounds_test(x: &Binary, n: usize) -> (Binary, Binary) {
+pub fn taylor_sin_bounds_test(x: &Binary, n: U) -> (Binary, Binary) {
     taylor_sin_bounds(x, n, n.checked_mul(10).expect("n * 10 does not overflow"))
 }
 
@@ -1250,13 +1237,13 @@ mod tests {
     use super::*;
     use crate::computable::Computable;
     use crate::refinement::bounds_width_leq;
-    use crate::sane::XUsize;
+    use crate::sane::XU;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite, xbin};
 
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        tolerance_exp: &XUsize,
+        tolerance_exp: &XU,
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(bounds.large());
@@ -1269,7 +1256,7 @@ mod tests {
     fn sin_of_zero() {
         let zero = Computable::constant(bin(0, 0));
         let sin_zero = zero.sin();
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sin_zero
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1286,7 +1273,7 @@ mod tests {
 
         // sin(0) = 0 exactly — should converge to exact bounds
         let bounds = sin_zero
-            .refine_to_default(XUsize::Inf)
+            .refine_to_default(XU::Inf)
             .expect("sin(0) should converge to exact zero");
 
         let lower = unwrap_finite(bounds.small());
@@ -1325,7 +1312,7 @@ mod tests {
         // We approximate it as 3217/2048 ~= 1.5708...
         let pi_over_2 = Computable::constant(bin(3217, -11));
         let sin_pi_2 = pi_over_2.sin();
-        let epsilon = XUsize::Finite(6);
+        let epsilon = XU::Finite(6);
         let bounds = sin_pi_2
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1349,7 +1336,7 @@ mod tests {
         // We approximate it as 6434/2048 ~= 3.1416...
         let pi_approx = Computable::constant(bin(6434, -11));
         let sin_pi = pi_approx.sin();
-        let epsilon = XUsize::Finite(6);
+        let epsilon = XU::Finite(6);
         let bounds = sin_pi
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1370,7 +1357,7 @@ mod tests {
         // -pi/2 ~= -1.5707963...
         let neg_pi_over_2 = Computable::constant(bin(-3217, -11));
         let sin_neg_pi_2 = neg_pi_over_2.sin();
-        let epsilon = XUsize::Finite(6);
+        let epsilon = XU::Finite(6);
         let bounds = sin_neg_pi_2
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1410,7 +1397,7 @@ mod tests {
         // For small x, sin(x) ~= x
         let small = Computable::constant(bin(1, -4)); // 1/16 = 0.0625
         let sin_small = small.sin();
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sin_small
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1442,7 +1429,7 @@ mod tests {
     #[test]
     fn sin_with_infinite_input_bounds() {
         let unbounded = Computable::new(
-            0usize,
+            0u32,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| Ok(state + 1),
         );
@@ -1463,7 +1450,7 @@ mod tests {
         let two = Computable::constant(bin(2, 0));
         let expr = sin_x.clone() * two; // 2 * sin(1)
 
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = expr
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1598,7 +1585,7 @@ mod tests {
         // This exercises the pi error propagation
         let x = Computable::constant(bin(100, 0)); // 100
         let sin_x = x.sin();
-        let epsilon = XUsize::Finite(4);
+        let epsilon = XU::Finite(4);
         let bounds = sin_x
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1647,7 +1634,7 @@ mod tests {
         );
 
         let sin_pi = Computable::constant(pi_approx).sin();
-        let epsilon = XUsize::Finite(10);
+        let epsilon = XU::Finite(10);
         let bounds = sin_pi
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1673,7 +1660,7 @@ mod tests {
         // compute_sin_on_monotonic_interval and divide_by_factorial_directed directly.
         let one = Computable::constant(bin(1, 0));
         let sin_one = one.sin();
-        let epsilon = XUsize::Finite(512);
+        let epsilon = XU::Finite(512);
         // Need many Taylor terms for 512-bit accuracy; allow up to 1024 refinement steps.
         let bounds = sin_one
             .refine_to::<1024>(epsilon)
@@ -1713,7 +1700,7 @@ mod tests {
         // Correctness invariant for large inputs: 2^20 ≈ 1_048_576 (k ≈ 166_886).
         let large = Computable::constant(bin(1, 20)); // 2^20 = 1_048_576
         let sin_large = large.sin();
-        let epsilon = XUsize::Finite(4);
+        let epsilon = XU::Finite(4);
         let bounds = sin_large
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for very large input");
@@ -1744,7 +1731,7 @@ mod tests {
         // Correctness invariant: 2^30 ≈ 1 billion, k ≈ 170 million
         let large = Computable::constant(bin(1, 30));
         let sin_large = large.sin();
-        let epsilon = XUsize::Finite(4);
+        let epsilon = XU::Finite(4);
         let bounds = sin_large
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for 2^30 input");
@@ -1763,7 +1750,7 @@ mod tests {
         // Correctness invariant: large negative input -10000
         let x = Computable::constant(bin(-10000, 0));
         let sin_x = x.sin();
-        let epsilon = XUsize::Finite(4);
+        let epsilon = XU::Finite(4);
         let bounds = sin_x
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for large negative input");

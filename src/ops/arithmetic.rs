@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::binary::{Bounds, UXBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::XIsize;
+use crate::sane::{U, XI};
 
 /// Negation operation.
 pub struct NegOp {
@@ -24,7 +24,7 @@ impl NodeOp for NegOp {
         Ok(Bounds::new_checked(upper, lower)?)
     }
 
-    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XI) -> Result<bool, ComputableError> {
         Ok(false)
     }
 
@@ -37,7 +37,7 @@ impl NodeOp for NegOp {
     }
 
     /// Negation preserves width exactly.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
         target_width.clone()
     }
 }
@@ -64,7 +64,7 @@ impl NodeOp for AddOp {
         Ok(Bounds::new_checked(lower, upper)?)
     }
 
-    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XI) -> Result<bool, ComputableError> {
         Ok(false)
     }
 
@@ -77,7 +77,7 @@ impl NodeOp for AddOp {
     }
 
     /// w_out = w_left + w_right, so each child gets half the target.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
         target_width.clone() >> 1u32
     }
 }
@@ -153,7 +153,7 @@ impl NodeOp for MulOp {
         Ok(Bounds::new_checked(min, max)?)
     }
 
-    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XI) -> Result<bool, ComputableError> {
         Ok(false)
     }
 
@@ -167,7 +167,7 @@ impl NodeOp for MulOp {
 
     /// w_out ≈ |a| · w_b + |b| · w_a.
     /// Child a gets target / (2·max_abs(b)), child b gets target / (2·max_abs(a)).
-    fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, child_index: U) -> UXBinary {
         let sibling = if child_index == 0 {
             &self.right
         } else {
