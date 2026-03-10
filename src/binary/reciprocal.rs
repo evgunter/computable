@@ -8,7 +8,7 @@ use num_integer::Integer;
 use num_traits::One;
 
 use super::binary_impl::Binary;
-use crate::sane::U;
+use crate::sane::{I, U};
 
 /// Result of dividing `2^precision_bits` by a denominator, keeping both quotient and remainder.
 ///
@@ -40,9 +40,13 @@ pub fn extend_reciprocal(
     denom: &BigUint,
     new_precision: U,
 ) -> ReciprocalWithRemainder {
-    debug_assert!(new_precision >= prev.precision_bits);
-    #[allow(clippy::arithmetic_side_effects)] // guarded by debug_assert above
-    let delta = new_precision - prev.precision_bits;
+    let delta = new_precision
+        .checked_sub(prev.precision_bits)
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "new_precision < prev.precision_bits in extend_reciprocal"
+            )
+        });
     let (extra_q, new_r) = (&prev.remainder << (crate::sane::u_as_usize(delta))).div_rem(denom);
     let new_q = (&prev.quotient << (crate::sane::u_as_usize(delta))) + extra_q;
     ReciprocalWithRemainder {
@@ -85,8 +89,12 @@ pub fn reciprocal_of_biguint(
             (&numerator + denominator - BigUint::one()).div_floor(denominator)
         }
     };
-    let precision_i64 = i64::from(precision_bits);
-    let exponent = precision_i64.checked_neg().unwrap_or_else(|| {
+    let precision_i = I::try_from(precision_bits).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!(
+            "precision_bits exceeds I::MAX in reciprocal_of_biguint"
+        )
+    });
+    let exponent = precision_i.checked_neg().unwrap_or_else(|| {
         crate::detected_computable_would_exhaust_memory!(
             "exponent overflow in reciprocal_of_biguint"
         )
@@ -105,7 +113,7 @@ mod tests {
 
         // 2^8 / 5 = 256 / 5 = 51 (floor)
         assert_eq!(result.mantissa(), &BigInt::from(51_i32));
-        assert_eq!(result.exponent(), -8_i64);
+        assert_eq!(result.exponent(), -8_i32);
     }
 
     #[test]
@@ -117,9 +125,9 @@ mod tests {
 
         // 2^8 / 3 = 85.33..., floor=85, ceil=86
         assert_eq!(floor.mantissa(), &BigInt::from(85_i32));
-        assert_eq!(floor.exponent(), -8_i64);
+        assert_eq!(floor.exponent(), -8_i32);
         assert_eq!(ceil.mantissa(), &BigInt::from(43_i32));
-        assert_eq!(ceil.exponent(), -7_i64); // 43 * 2^-7 = 86 * 2^-8
+        assert_eq!(ceil.exponent(), -7_i32); // 43 * 2^-7 = 86 * 2^-8
         assert!(ceil > floor);
     }
 

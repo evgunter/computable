@@ -217,7 +217,7 @@ fn integer_roots_analysis(rng: &mut StdRng) {
     let terms: Vec<Computable> = inputs
         .iter()
         .map(|&(value, n)| {
-            Computable::constant(Binary::new(BigInt::from(value), 0_i64)).nth_root(n)
+            Computable::constant(Binary::new(BigInt::from(value), 0_i32)).nth_root(n)
         })
         .collect();
     let total = balanced_sum(terms);
@@ -429,13 +429,13 @@ fn pi_analysis() {
         (
             "2pi",
             2.0 * std::f64::consts::PI,
-            Box::new(|| Computable::constant(Binary::new(BigInt::from(2), 0_i64)) * pi())
+            Box::new(|| Computable::constant(Binary::new(BigInt::from(2), 0_i32)) * pi())
                 as Box<dyn Fn() -> Computable>,
         ),
         (
             "pi/2",
             std::f64::consts::FRAC_PI_2,
-            Box::new(|| Computable::constant(Binary::new(BigInt::from(1), -1_i64)) * pi()),
+            Box::new(|| Computable::constant(Binary::new(BigInt::from(1), -1_i32)) * pi()),
         ),
         (
             "pi^2",
@@ -469,7 +469,7 @@ fn pi_analysis() {
         let n_pi = if multiplier == 1 {
             pi()
         } else {
-            Computable::constant(Binary::new(BigInt::from(multiplier), 0_i64)) * pi()
+            Computable::constant(Binary::new(BigInt::from(multiplier), 0_i32)) * pi()
         };
         let bounds = n_pi
             .sin()

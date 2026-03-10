@@ -28,9 +28,9 @@ use crate::binary::{Binary, XBinary};
 /// use computable::Binary;
 /// use num_bigint::BigInt;
 ///
-/// let x = Binary::new(BigInt::from(3), 0_i64); // 3
+/// let x = Binary::new(BigInt::from(3), 0_i32); // 3
 /// let result = binary_pow(&x, 2);
-/// assert_eq!(result, Binary::new(BigInt::from(9), 0_i64)); // 9
+/// assert_eq!(result, Binary::new(BigInt::from(9), 0_i32)); // 9
 /// ```
 pub fn binary_pow(x: &Binary, n: u32) -> Binary {
     if n == 0 {

@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::{One, Signed, ToPrimitive, Zero};
+use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
 use crate::binary::UXBinary;
@@ -32,7 +32,7 @@ use crate::binary::{
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{U, XI, XU};
+use crate::sane::{I, U, XI, XU};
 
 /// Cached inputs and result for `sin_bounds`, avoiding redundant Taylor series
 /// recomputation when `compute_bounds` is called multiple times with the same inputs.
@@ -129,8 +129,8 @@ impl NodeOp for SinOp {
     /// k ≈ max_abs(input)/(2π). Pi's error is amplified by 2k, so
     /// pi budget = target / (2k) ≈ target · π / max_abs(input).
     /// We use pi's own cached lower bound as a conservative estimate of π.
-    fn child_demand_budget(&self, target_width: &UXBinary, child_index: U) -> UXBinary {
-        if child_index == 0 {
+    fn child_demand_budget(&self, target_width: &UXBinary, child_idx: bool) -> UXBinary {
+        if !child_idx {
             // Input child: sin has derivative bounded by 1.
             return target_width.clone();
         }
@@ -236,14 +236,14 @@ fn sin_bounds(
         pi_interval
             .lo()
             .exponent()
-            .checked_add(1_i64)
+            .checked_add(1)
             .unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
             }),
     );
     let two_pi_width = UBinary::new_normalized(
         pi_width.mantissa().clone(),
-        pi_width.exponent().checked_add(1_i64).unwrap_or_else(|| {
+        pi_width.exponent().checked_add(1).unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
         }),
     );
@@ -253,14 +253,14 @@ fn sin_bounds(
         pi_interval
             .lo()
             .exponent()
-            .checked_sub(1_i64)
+            .checked_sub(1)
             .unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
             }),
     );
     let half_pi_width = UBinary::new_normalized(
         pi_width.mantissa().clone(),
-        pi_width.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+        pi_width.exponent().checked_sub(1).unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
         }),
     );
@@ -687,10 +687,14 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
 
     let shifted_mx = mx << crate::sane::u_as_usize(precision_bits);
     let quotient = &shifted_mx / mp;
-    let precision_bits_i64 = i64::from(precision_bits);
+    let precision_bits_i = I::try_from(precision_bits).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!(
+            "precision_bits exceeds I in compute_reduction_factor"
+        )
+    });
     let result_exp = ex
         .checked_sub(ep)
-        .and_then(|v| v.checked_sub(precision_bits_i64))
+        .and_then(|v| v.checked_sub(precision_bits_i))
         .unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!(
                 "exponent overflow in compute_reduction_factor"
@@ -707,16 +711,14 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
     } else {
         let magnitude = result_exp.unsigned_abs();
         let quotient_bits = quotient.bits();
-        if magnitude > quotient_bits {
+        if u64::from(magnitude) > quotient_bits {
             if quotient.is_negative() {
                 return BigInt::from(-1_i32);
             } else {
                 return BigInt::zero();
             }
         }
-        let shift_val = magnitude
-            .to_u32()
-            .unwrap_or_else(|| unreachable!("magnitude <= quotient.bits() which fits in u64"));
+        let shift_val = magnitude;
         match std::num::NonZeroU32::new(shift_val) {
             None => quotient.clone(),
             Some(shift) => {
@@ -783,8 +785,8 @@ fn truncate_precision_directed(x: &Binary, precision_bits: U, dir: RoundingDirec
     Binary::new(
         signed_result,
         exponent
-            .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("shift exceeds i64")
+            .checked_add(I::try_from(shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("shift exceeds I")
             }))
             .unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent overflow")
@@ -941,69 +943,73 @@ fn taylor_sin_bounds_per_term(x: &Binary, n: U, target_precision: U) -> (Binary,
 /// exponent by shifting mantissas appropriately.
 fn taylor_sin_bounds_rational(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) {
     let m = x.mantissa();
-    let e = x.exponent(); // i64 — no BigInt needed for exponent arithmetic
+    let e = i64::from(x.exponent()); // widen I to i64 for exponent arithmetic
 
     // Precompute m^2 for the recurrence power_{k} = power_{k-1} * m^2
     let m_sq = m * m;
 
     // Compute remaining factorial ratios: R_k = (2n-1)! / (2k+1)!
-    // R_{n-1} = 1, R_{k-1} = R_k * (2k) * (2k+1)
+    // R_{n-1} = 1, R_k = R_{k+1} * (2k+2) * (2k+3)
     let n_usize = crate::sane::u_as_usize(n);
     let mut remaining_factors: Vec<BigInt> = Vec::with_capacity(n_usize);
     remaining_factors.resize(n_usize, BigInt::zero());
     let n_minus_1 = crate::sane_arithmetic!(n; n - 1);
     remaining_factors[crate::sane::u_as_usize(n_minus_1)] = BigInt::one();
-    for k in (1..n).rev() {
-        // k is bounded by n which is a small Taylor-series term count (fits in i64),
-        // so the `as i64` cast and multiplications cannot overflow.
-        #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
-        let (two_k, two_k_plus_1) = {
-            let two_k = (k as i64) * 2;
-            (two_k, two_k + 1)
-        };
-        let k_minus_1 = crate::sane_arithmetic!(k; k - 1);
+    for k in (0..n_minus_1).rev() {
+        let next = crate::sane::u_as_usize(crate::sane_arithmetic!(k; k + 1));
+        let factor_a = crate::sane_arithmetic!(k; k * 2 + 2);
+        let factor_b = crate::sane_arithmetic!(k; k * 2 + 3);
         let k_usize = crate::sane::u_as_usize(k);
-        let k_minus_1_usize = crate::sane::u_as_usize(k_minus_1);
-        remaining_factors[k_minus_1_usize] = &remaining_factors[k_usize] * two_k * two_k_plus_1;
+        remaining_factors[k_usize] = &remaining_factors[next] * factor_a * factor_b;
     }
 
     // The common denominator Q = (2n-1)! = R_0
     let common_factorial = remaining_factors[0].clone();
 
-    // Compute the common exponent for alignment using i64 arithmetic.
+    // Compute the common exponent for alignment.
     // Term k has exponent e*(2k+1). We align all to the minimum exponent.
-    // n is a small Taylor-series term count and e is a bounded exponent,
-    // so the casts and arithmetic here cannot overflow in practice.
-    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
-    let (n_i64, common_exp, shift_per_step, first_shift) = {
-        let n_i64 = n as i64;
-        let common_exp: i64;
-        let shift_per_step: i64;
-        let first_shift: i64;
+    let n_i64 = i64::from(n);
 
-        if e < 0 {
-            let two_n_minus_1 = n_i64 * 2 - 1;
-            common_exp = e * two_n_minus_1;
-            let neg_two_e = -2 * e;
-            first_shift = neg_two_e * (n_i64 - 1);
-            shift_per_step = -neg_two_e;
-        } else if e > 0 {
-            common_exp = e;
-            first_shift = 0;
-            shift_per_step = 2 * e;
-        } else {
-            common_exp = 0;
-            first_shift = 0;
-            shift_per_step = 0;
-        };
+    let common_exp: i64 = if e < 0 {
+        // Last term (k=n-1) has smallest exponent: e*(2n-1)
+        let two_n_minus_1 = n_i64
+            .checked_mul(2)
+            .and_then(|v| v.checked_sub(1))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("2n-1 overflow in taylor_sin")
+            });
+        e.checked_mul(two_n_minus_1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "common exponent overflow in taylor_sin"
+            )
+        })
+    } else {
+        e // For e >= 0, minimum exponent is e (first term)
+    };
 
-        (n_i64, common_exp, shift_per_step, first_shift)
+    // Shift amounts are always non-negative: for e < 0, shifts decrease from
+    // 2|e|*(n-1) to 0; for e > 0, shifts increase from 0 to 2e*(n-1).
+    // For e == 0: no shifting (abs_two_e = 0).
+    let abs_two_e: u64 = e.unsigned_abs().checked_mul(2).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!("2|e| overflow in taylor_sin")
+    });
+    let shift_decreasing = e < 0;
+
+    let mut current_shift: u64 = if shift_decreasing {
+        abs_two_e
+            .checked_mul(u64::from(n_minus_1))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "initial shift overflow in taylor_sin"
+                )
+            })
+    } else {
+        0
     };
 
     // Accumulate: P = sum_k { (-1)^k * m^(2k+1) * R_k * 2^(shift_k) }
     let mut numerator = BigInt::zero();
     let mut power_m = m.clone(); // m^(2k+1), starts at m^1
-    let mut current_shift = first_shift;
 
     for (k, remaining_factor) in remaining_factors.iter().enumerate() {
         let mut contribution = if k % 2 == 0 {
@@ -1013,10 +1019,11 @@ fn taylor_sin_bounds_rational(x: &Binary, n: U, target_precision: U) -> (Binary,
         };
 
         if current_shift > 0 {
-            // current_shift is non-negative (checked above) and bounded by term count * exponent,
-            // so the cast to usize is safe.
-            #[allow(clippy::as_conversions)]
-            let shift = current_shift as usize;
+            let shift = usize::try_from(current_shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "shift exceeds usize in taylor_sin"
+                )
+            });
             contribution <<= shift;
         }
 
@@ -1024,10 +1031,16 @@ fn taylor_sin_bounds_rational(x: &Binary, n: U, target_precision: U) -> (Binary,
 
         if k < crate::sane::u_as_usize(n_minus_1) {
             power_m *= &m_sq;
-            // shift_per_step and current_shift are bounded by small Taylor-series parameters.
-            #[allow(clippy::arithmetic_side_effects)]
-            {
-                current_shift += shift_per_step;
+            if shift_decreasing {
+                current_shift = current_shift.checked_sub(abs_two_e).unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "shift underflow in taylor_sin"
+                    )
+                });
+            } else {
+                current_shift = current_shift.checked_add(abs_two_e).unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!("shift overflow in taylor_sin")
+                });
             }
         }
     }
@@ -1149,9 +1162,15 @@ fn divide_bigint_directed(
         BigInt::from(ceil_quotient)
     };
 
+    let result_exp_i = I::try_from(result_exp).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!(
+            "result exponent exceeds I in divide_bigint_directed"
+        )
+    });
+
     (
-        Binary::new(floor_mantissa, result_exp),
-        Binary::new(ceil_mantissa, result_exp),
+        Binary::new(floor_mantissa, result_exp_i),
+        Binary::new(ceil_mantissa, result_exp_i),
     )
 }
 
@@ -1217,7 +1236,7 @@ fn estimate_precision_bits(bounds: &Bounds) -> Option<U> {
     // -log2(width) ≈ -(mantissa_bits + exponent)
     let mantissa_bits = crate::sane::bits_as_u(width.mantissa().magnitude().bits());
     let mantissa_bits_i64 = i64::from(mantissa_bits);
-    let exp_i64 = width.exponent().to_i64()?;
+    let exp_i64 = i64::from(width.exponent());
     let log2_width = exp_i64.checked_add(mantissa_bits_i64)?;
     let neg_log2 = match log2_width.checked_neg() {
         Some(v) if v >= 0_i64 => v,
@@ -1630,7 +1649,7 @@ mod tests {
         let pi_mid = pi_lo.add(&pi_hi);
         let pi_approx = Binary::new(
             pi_mid.mantissa().clone(),
-            pi_mid.exponent().checked_sub(1_i64).unwrap(),
+            pi_mid.exponent().checked_sub(1).unwrap(),
         );
 
         let sin_pi = Computable::constant(pi_approx).sin();

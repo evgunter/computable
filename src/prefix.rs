@@ -16,9 +16,6 @@ use crate::binary::{Binary, UBinary, UXBinary, XBinary};
 use crate::binary_utils::bisection::PrefixBounds;
 use crate::sane::{I, XI};
 
-/// Type alias preserving the old name during transition.
-pub type XExponent = XI;
-
 /// Known precision of a computable number as a binary prefix.
 ///
 /// For `Finite`: `inner` is the interval endpoint closest to zero.
@@ -31,26 +28,20 @@ pub type XExponent = XI;
 pub enum Prefix {
     /// Single-sign interval. `inner` is endpoint closest to zero.
     /// Width extends away from zero by 2^width_exponent.
-    Finite {
-        inner: Binary,
-        width_exponent: XExponent,
-    },
+    Finite { inner: Binary, width_exponent: XI },
 
     /// Interval spanning (or near) zero: `[-2^neg_exponent, 2^pos_exponent]`.
     /// Also handles fully unbounded: `{ neg: PosInf, pos: PosInf } = (-inf, +inf)`.
     /// No mantissa — near zero / unbounded we only track magnitude bounds.
-    ZeroCrossing {
-        neg_exponent: XExponent,
-        pos_exponent: XExponent,
-    },
+    ZeroCrossing { neg_exponent: XI, pos_exponent: XI },
 }
 
 impl Prefix {
     /// Returns the fully unbounded prefix `(-inf, +inf)`.
     pub fn unbounded() -> Self {
         Self::ZeroCrossing {
-            neg_exponent: XExponent::PosInf,
-            pos_exponent: XExponent::PosInf,
+            neg_exponent: XI::PosInf,
+            pos_exponent: XI::PosInf,
         }
     }
 
@@ -58,7 +49,7 @@ impl Prefix {
     pub fn exact(value: Binary) -> Self {
         Self::Finite {
             inner: value,
-            width_exponent: XExponent::NegInf,
+            width_exponent: XI::NegInf,
         }
     }
 
@@ -73,12 +64,12 @@ impl Prefix {
                     // Negative inner: interval extends toward -inf
                     // lower = inner - 2^width_exponent
                     match width_exponent {
-                        XExponent::NegInf => XBinary::Finite(inner.clone()),
-                        XExponent::PosInf => XBinary::NegInf,
-                        XExponent::Finite(e) => {
+                        XI::NegInf => XBinary::Finite(inner.clone()),
+                        XI::PosInf => XBinary::NegInf,
+                        XI::Finite { .. } => {
                             let width = Binary::new_normalized(
                                 BigInt::from(1_i32),
-                                i64::from(*e),
+                                xi_finite_i(*width_exponent),
                             );
                             XBinary::Finite(inner.sub(&width))
                         }
@@ -92,13 +83,13 @@ impl Prefix {
                 neg_exponent,
                 pos_exponent: _,
             } => match neg_exponent {
-                XExponent::PosInf => XBinary::NegInf,
-                XExponent::NegInf => XBinary::Finite(Binary::zero()),
-                XExponent::Finite(e) => {
+                XI::PosInf => XBinary::NegInf,
+                XI::NegInf => XBinary::Finite(Binary::zero()),
+                XI::Finite { .. } => {
                     // lower = -2^e
                     XBinary::Finite(Binary::new_normalized(
                         BigInt::from(-1_i32),
-                        i64::from(*e),
+                        xi_finite_i(*neg_exponent),
                     ))
                 }
             },
@@ -119,12 +110,12 @@ impl Prefix {
                     // Non-negative inner: interval extends toward +inf
                     // upper = inner + 2^width_exponent
                     match width_exponent {
-                        XExponent::NegInf => XBinary::Finite(inner.clone()),
-                        XExponent::PosInf => XBinary::PosInf,
-                        XExponent::Finite(e) => {
+                        XI::NegInf => XBinary::Finite(inner.clone()),
+                        XI::PosInf => XBinary::PosInf,
+                        XI::Finite { .. } => {
                             let width = Binary::new_normalized(
                                 BigInt::from(1_i32),
-                                i64::from(*e),
+                                xi_finite_i(*width_exponent),
                             );
                             XBinary::Finite(inner.add(&width))
                         }
@@ -135,13 +126,13 @@ impl Prefix {
                 neg_exponent: _,
                 pos_exponent,
             } => match pos_exponent {
-                XExponent::PosInf => XBinary::PosInf,
-                XExponent::NegInf => XBinary::Finite(Binary::zero()),
-                XExponent::Finite(e) => {
+                XI::PosInf => XBinary::PosInf,
+                XI::NegInf => XBinary::Finite(Binary::zero()),
+                XI::Finite { .. } => {
                     // upper = 2^e
                     XBinary::Finite(Binary::new_normalized(
                         BigInt::from(1_i32),
-                        i64::from(*e),
+                        xi_finite_i(*pos_exponent),
                     ))
                 }
             },
@@ -155,12 +146,11 @@ impl Prefix {
                 inner: _,
                 width_exponent,
             } => match width_exponent {
-                XExponent::NegInf => UXBinary::Finite(UBinary::zero()),
-                XExponent::PosInf => UXBinary::Inf,
-                XExponent::Finite(e) => UXBinary::Finite(UBinary::new(
-                    1u32.into(),
-                    i64::from(*e),
-                )),
+                XI::NegInf => UXBinary::Finite(UBinary::zero()),
+                XI::PosInf => UXBinary::Inf,
+                XI::Finite { .. } => {
+                    UXBinary::Finite(UBinary::new(1u32.into(), xi_finite_i(*width_exponent)))
+                }
             },
             Self::ZeroCrossing {
                 neg_exponent,
@@ -180,7 +170,7 @@ impl Prefix {
     /// is `2^neg + 2^pos`, so the exponent is `max(neg, pos) + 1` when both
     /// sides contribute nonzero width, or just the nonzero side's exponent
     /// when the other is `NegInf` (zero contribution).
-    pub fn width_exponent(&self) -> XExponent {
+    pub fn width_exponent(&self) -> XI {
         match self {
             Self::Finite {
                 inner: _,
@@ -191,14 +181,14 @@ impl Prefix {
                 pos_exponent,
             } => {
                 match (neg_exponent, pos_exponent) {
-                    (XExponent::NegInf, other) | (other, XExponent::NegInf) => *other,
-                    (XExponent::PosInf, _) | (_, XExponent::PosInf) => XExponent::PosInf,
-                    (XExponent::Finite(a), XExponent::Finite(b)) => {
+                    (XI::NegInf, other) | (other, XI::NegInf) => *other,
+                    (XI::PosInf, _) | (_, XI::PosInf) => XI::PosInf,
+                    (exp_a @ XI::Finite { .. }, exp_b @ XI::Finite { .. }) => {
                         // width = 2^a + 2^b > 2^max(a,b), so ceil is max + 1.
-                        let m = (*a).max(*b);
+                        let m = xi_finite_i(*exp_a).max(xi_finite_i(*exp_b));
                         match m.checked_add(1) {
-                            Some(v) => XExponent::Finite(v),
-                            None => XExponent::PosInf,
+                            Some(v) => XI::from_i32(v),
+                            None => XI::PosInf,
                         }
                     }
                 }
@@ -224,15 +214,15 @@ impl Prefix {
                 let pos_exp = if hi.mantissa().is_positive() {
                     magnitude_exponent_abs(&hi)
                 } else if hi.mantissa().is_zero() {
-                    XExponent::NegInf
+                    XI::NegInf
                 } else {
                     return Self::Finite {
                         inner: hi,
-                        width_exponent: XExponent::PosInf,
+                        width_exponent: XI::PosInf,
                     };
                 };
                 Self::ZeroCrossing {
-                    neg_exponent: XExponent::PosInf,
+                    neg_exponent: XI::PosInf,
                     pos_exponent: pos_exp,
                 }
             }
@@ -240,16 +230,16 @@ impl Prefix {
                 let neg_exp = if lo.mantissa().is_negative() {
                     magnitude_exponent_abs(&lo)
                 } else if lo.mantissa().is_zero() {
-                    XExponent::NegInf
+                    XI::NegInf
                 } else {
                     return Self::Finite {
                         inner: lo,
-                        width_exponent: XExponent::PosInf,
+                        width_exponent: XI::PosInf,
                     };
                 };
                 Self::ZeroCrossing {
                     neg_exponent: neg_exp,
-                    pos_exponent: XExponent::PosInf,
+                    pos_exponent: XI::PosInf,
                 }
             }
             (XBinary::NegInf, XBinary::NegInf) | (XBinary::PosInf, XBinary::PosInf) => {
@@ -283,15 +273,22 @@ impl Prefix {
     }
 }
 
+/// Extracts a finite `XI` as [`I`], panicking if the value does not fit.
+///
+/// All exponents produced by this crate originate from [`I`]-width values, so
+/// overflow here indicates a memory-exhaustion scenario.
+fn xi_finite_i(xi: XI) -> I {
+    I::try_from(xi.finite_i64()).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("exponent overflows I")
+    })
+}
+
 /// Converts an `XI` to `UXBinary` (2^exponent).
 fn xexponent_to_uxbinary(exp: &XI) -> UXBinary {
     match exp {
         XI::NegInf => UXBinary::Finite(UBinary::zero()),
         XI::PosInf => UXBinary::Inf,
-        XI::Finite(e) => UXBinary::Finite(UBinary::new(
-            1u32.into(),
-            i64::from(*e),
-        )),
+        XI::Finite { .. } => UXBinary::Finite(UBinary::new(1u32.into(), xi_finite_i(*exp))),
     }
 }
 
@@ -325,7 +322,7 @@ fn finite_bounds_to_prefix(lower: Binary, upper: Binary) -> Prefix {
     if lower_zero && upper_positive {
         let pos_mag = magnitude_exponent_abs(&upper);
         return Prefix::ZeroCrossing {
-            neg_exponent: XExponent::NegInf,
+            neg_exponent: XI::NegInf,
             pos_exponent: pos_mag,
         };
     }
@@ -335,7 +332,7 @@ fn finite_bounds_to_prefix(lower: Binary, upper: Binary) -> Prefix {
         let neg_mag = magnitude_exponent_abs(&lower);
         return Prefix::ZeroCrossing {
             neg_exponent: neg_mag,
-            pos_exponent: XExponent::NegInf,
+            pos_exponent: XI::NegInf,
         };
     }
 
@@ -389,26 +386,19 @@ fn magnitude_exponent_abs(value: &Binary) -> XI {
     // allocating a BigUint::one().
     let is_unit_mantissa = mantissa_bits.get() == 1;
 
-    let mantissa_bits_i = I::try_from(mantissa_bits.get())
-        .unwrap_or_else(|_| crate::detected_computable_would_exhaust_memory!("mantissa too large"));
-    let exponent_i = value
-        .exponent()
-        .to_i32()
-        .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent too large"));
-
-    let effective_bits = if is_unit_mantissa {
+    let effective_bits_i: I = if is_unit_mantissa {
         // |mantissa| = 1 = 2^0, so log2(|value|) = 0 + exponent
-        0_i32
+        0
     } else {
-        mantissa_bits_i
+        crate::sane::bits_as_i(mantissa_bits.get())
     };
-    let result = effective_bits
-        .checked_add(exponent_i)
+    let result = effective_bits_i
+        .checked_add(value.exponent())
         .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow"));
-    XI::Finite(result)
+    XI::from_i32(result)
 }
 
-/// Computes the XExponent for a width (positive Binary value).
+/// Computes the XI for a width (positive Binary value).
 ///
 /// Returns the smallest e such that 2^e >= width.
 fn width_to_xexponent(width: &Binary) -> XI {
@@ -423,23 +413,19 @@ fn width_to_xexponent(width: &Binary) -> XI {
         Some(nz) => nz,
     };
     let is_unit_mantissa = mantissa_bits.get() == 1;
-    let exponent_i = width
-        .exponent()
-        .to_i32()
-        .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent too large"));
 
     if is_unit_mantissa {
         // width = 1 * 2^exponent = 2^exponent exactly
-        XI::Finite(exponent_i)
+        XI::from_i32(width.exponent())
     } else {
         // Need ceil: bits + exponent
-        let bits_i = I::try_from(mantissa_bits.get()).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("mantissa too large")
+        let bits_i = crate::sane::bits_as_i(mantissa_bits.get());
+        let result = bits_i.checked_add(width.exponent()).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "exponent overflow in width_to_xexponent"
+            )
         });
-        let result = bits_i.checked_add(exponent_i).unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow")
-        });
-        XI::Finite(result)
+        XI::from_i32(result)
     }
 }
 
@@ -473,12 +459,12 @@ impl From<&PrefixBounds> for Prefix {
             if lower.mantissa().is_negative() {
                 Prefix::Finite {
                     inner: upper,
-                    width_exponent: XExponent::Finite(we),
+                    width_exponent: XI::from_i32(we),
                 }
             } else {
                 Prefix::Finite {
                     inner: lower,
-                    width_exponent: XExponent::Finite(we),
+                    width_exponent: XI::from_i32(we),
                 }
             }
         }
@@ -502,7 +488,7 @@ mod tests {
         assert_eq!(p.lower(), XBinary::NegInf);
         assert_eq!(p.upper(), XBinary::PosInf);
         assert_eq!(p.width(), UXBinary::Inf);
-        assert_eq!(p.width_exponent(), XExponent::PosInf);
+        assert_eq!(p.width_exponent(), XI::PosInf);
     }
 
     #[test]
@@ -511,7 +497,7 @@ mod tests {
         assert_eq!(p.lower(), xbin(3, 0));
         assert_eq!(p.upper(), xbin(3, 0));
         assert_eq!(p.width(), UXBinary::Finite(UBinary::zero()));
-        assert_eq!(p.width_exponent(), XExponent::NegInf);
+        assert_eq!(p.width_exponent(), XI::NegInf);
     }
 
     #[test]
@@ -534,7 +520,7 @@ mod tests {
         // [3, 3 + 2^(-10)] → Finite { inner: 3, width_exponent: Finite(-10) }
         let p = Prefix::Finite {
             inner: bin(3, 0),
-            width_exponent: XExponent::Finite(-10),
+            width_exponent: XI::from_i32(-10),
         };
         assert_eq!(p.lower(), xbin(3, 0));
         let expected_upper = bin(3, 0).add(&bin(1, -10));
@@ -548,7 +534,7 @@ mod tests {
         // because width = 2 = 2^1, inner = -3 (closest to zero)
         let p = Prefix::Finite {
             inner: bin(-3, 0),
-            width_exponent: XExponent::Finite(1),
+            width_exponent: XI::from_i32(1),
         };
         // lower = -3 - 2^1 = -5
         assert_eq!(p.lower(), xbin(-5, 0));
@@ -562,7 +548,7 @@ mod tests {
         // [3, +inf) → Finite { inner: 3, width_exponent: PosInf }
         let p = Prefix::Finite {
             inner: bin(3, 0),
-            width_exponent: XExponent::PosInf,
+            width_exponent: XI::PosInf,
         };
         assert_eq!(p.lower(), xbin(3, 0));
         assert_eq!(p.upper(), XBinary::PosInf);
@@ -573,7 +559,7 @@ mod tests {
         // (-inf, -3] → Finite { inner: -3, width_exponent: PosInf }
         let p = Prefix::Finite {
             inner: bin(-3, 0),
-            width_exponent: XExponent::PosInf,
+            width_exponent: XI::PosInf,
         };
         assert_eq!(p.lower(), XBinary::NegInf);
         assert_eq!(p.upper(), xbin(-3, 0));
@@ -583,8 +569,8 @@ mod tests {
     fn zero_crossing_symmetric() {
         // [-0.5, 0.5] = ZeroCrossing { neg: Finite(-1), pos: Finite(-1) }
         let p = Prefix::ZeroCrossing {
-            neg_exponent: XExponent::Finite(-1),
-            pos_exponent: XExponent::Finite(-1),
+            neg_exponent: XI::from_i32(-1),
+            pos_exponent: XI::from_i32(-1),
         };
         // lower = -2^(-1) = -0.5
         assert_eq!(p.lower(), xbin(-1, -1));
@@ -597,8 +583,8 @@ mod tests {
     fn zero_crossing_asymmetric() {
         // [-2, 1] ≈ ZeroCrossing { neg: Finite(1), pos: Finite(0) }
         let p = Prefix::ZeroCrossing {
-            neg_exponent: XExponent::Finite(1),
-            pos_exponent: XExponent::Finite(0),
+            neg_exponent: XI::from_i32(1),
+            pos_exponent: XI::from_i32(0),
         };
         // lower = -2^1 = -2
         assert_eq!(p.lower(), xbin(-1, 1));
@@ -610,8 +596,8 @@ mod tests {
     fn zero_crossing_half_unbounded() {
         // (-inf, 1] = ZeroCrossing { neg: PosInf, pos: Finite(0) }
         let p = Prefix::ZeroCrossing {
-            neg_exponent: XExponent::PosInf,
-            pos_exponent: XExponent::Finite(0),
+            neg_exponent: XI::PosInf,
+            pos_exponent: XI::from_i32(0),
         };
         assert_eq!(p.lower(), XBinary::NegInf);
         assert_eq!(p.upper(), xbin(1, 0));
@@ -645,7 +631,7 @@ mod tests {
                 // inner should be 2 (closest to zero)
                 assert_eq!(*inner, bin(2, 0));
                 // width_exponent should be Finite(1) since width = 2 = 2^1
-                assert_eq!(*width_exponent, XExponent::Finite(1));
+                assert_eq!(*width_exponent, XI::from_i32(1));
             }
             _ => panic!("expected Finite, got {:?}", p),
         }
@@ -664,7 +650,7 @@ mod tests {
                 width_exponent,
             } => {
                 assert_eq!(*inner, bin(-2, 0));
-                assert_eq!(*width_exponent, XExponent::Finite(1));
+                assert_eq!(*width_exponent, XI::from_i32(1));
             }
             _ => panic!("expected Finite, got {:?}", p),
         }
@@ -682,9 +668,9 @@ mod tests {
                 pos_exponent,
             } => {
                 // |-2| = 2 = 2^1, so neg_exponent = Finite(1)
-                assert_eq!(*neg_exponent, XExponent::Finite(1));
+                assert_eq!(*neg_exponent, XI::from_i32(1));
                 // 3 < 2^2, so pos_exponent = Finite(2)
-                assert_eq!(*pos_exponent, XExponent::Finite(2));
+                assert_eq!(*pos_exponent, XI::from_i32(2));
             }
             _ => panic!("expected ZeroCrossing, got {:?}", p),
         }
@@ -702,7 +688,7 @@ mod tests {
                 width_exponent,
             } => {
                 assert_eq!(*inner, bin(3, 0));
-                assert_eq!(*width_exponent, XExponent::PosInf);
+                assert_eq!(*width_exponent, XI::PosInf);
             }
             _ => panic!("expected Finite, got {:?}", p),
         }
@@ -713,7 +699,7 @@ mod tests {
         // (-inf, -3] — test via direct Prefix construction.
         let p = Prefix::Finite {
             inner: bin(-3, 0),
-            width_exponent: XExponent::PosInf,
+            width_exponent: XI::PosInf,
         };
         assert_eq!(p.lower(), XBinary::NegInf);
         assert_eq!(p.upper(), xbin(-3, 0));
@@ -745,7 +731,7 @@ mod tests {
     #[test]
     fn from_prefix_bounds() {
         // PrefixBounds: [3 * 2^(-2), 4 * 2^(-2)] = [0.75, 1.0]
-        let pb = PrefixBounds::new(BigInt::from(3_i32), -2_i64);
+        let pb = PrefixBounds::new(BigInt::from(3_i32), -2);
         let p = Prefix::from(&pb);
         match &p {
             Prefix::Finite {
@@ -754,7 +740,7 @@ mod tests {
             } => {
                 // inner = lower = 0.75 (positive, closest to zero)
                 assert_eq!(*inner, bin(3, -2));
-                assert_eq!(*width_exponent, XExponent::Finite(-2));
+                assert_eq!(*width_exponent, XI::from_i32(-2));
             }
             _ => panic!("expected Finite, got {:?}", p),
         }
@@ -763,7 +749,7 @@ mod tests {
     #[test]
     fn from_prefix_bounds_negative() {
         // PrefixBounds: [-5 * 2^0, -4 * 2^0] = [-5, -4]
-        let pb = PrefixBounds::new(BigInt::from(-5_i32), 0_i64);
+        let pb = PrefixBounds::new(BigInt::from(-5_i32), 0);
         let p = Prefix::from(&pb);
         match &p {
             Prefix::Finite {
@@ -772,7 +758,7 @@ mod tests {
             } => {
                 // inner = upper = -4 (closest to zero)
                 assert_eq!(*inner, bin(-4, 0));
-                assert_eq!(*width_exponent, XExponent::Finite(0));
+                assert_eq!(*width_exponent, XI::from_i32(0));
             }
             _ => panic!("expected Finite, got {:?}", p),
         }
@@ -780,56 +766,56 @@ mod tests {
 
     #[test]
     fn xexponent_ordering() {
-        assert!(XExponent::NegInf < XExponent::Finite(-1000));
-        assert!(XExponent::Finite(-1000) < XExponent::Finite(0));
-        assert!(XExponent::Finite(0) < XExponent::Finite(1000));
-        assert!(XExponent::Finite(1000) < XExponent::PosInf);
+        assert!(XI::NegInf < XI::from_i32(-1000));
+        assert!(XI::from_i32(-1000) < XI::from_i32(0));
+        assert!(XI::from_i32(0) < XI::from_i32(1000));
+        assert!(XI::from_i32(1000) < XI::PosInf);
     }
 
     #[test]
     fn width_exponent_for_finite() {
         let p = Prefix::Finite {
             inner: bin(3, 0),
-            width_exponent: XExponent::Finite(-10),
+            width_exponent: XI::from_i32(-10),
         };
-        assert_eq!(p.width_exponent(), XExponent::Finite(-10));
+        assert_eq!(p.width_exponent(), XI::from_i32(-10));
     }
 
     #[test]
     fn width_exponent_for_zero_crossing() {
         // Asymmetric: width = 2^3 + 2^5 = 40, ceil(log2(40)) = 6 = max(3,5) + 1
         let p = Prefix::ZeroCrossing {
-            neg_exponent: XExponent::Finite(3),
-            pos_exponent: XExponent::Finite(5),
+            neg_exponent: XI::from_i32(3),
+            pos_exponent: XI::from_i32(5),
         };
-        assert_eq!(p.width_exponent(), XExponent::Finite(6));
+        assert_eq!(p.width_exponent(), XI::from_i32(6));
     }
 
     #[test]
     fn width_exponent_for_zero_crossing_symmetric() {
         // Symmetric: width = 2^4 + 2^4 = 2^5, exponent = 5 = 4 + 1
         let p = Prefix::ZeroCrossing {
-            neg_exponent: XExponent::Finite(4),
-            pos_exponent: XExponent::Finite(4),
+            neg_exponent: XI::from_i32(4),
+            pos_exponent: XI::from_i32(4),
         };
-        assert_eq!(p.width_exponent(), XExponent::Finite(5));
+        assert_eq!(p.width_exponent(), XI::from_i32(5));
     }
 
     #[test]
     fn width_exponent_for_zero_crossing_one_side_zero() {
         // One side NegInf (zero contribution): width = 0 + 2^3 = 2^3
         let p = Prefix::ZeroCrossing {
-            neg_exponent: XExponent::NegInf,
-            pos_exponent: XExponent::Finite(3),
+            neg_exponent: XI::NegInf,
+            pos_exponent: XI::from_i32(3),
         };
-        assert_eq!(p.width_exponent(), XExponent::Finite(3));
+        assert_eq!(p.width_exponent(), XI::from_i32(3));
     }
 
     #[test]
     fn contains_check() {
         let p = Prefix::Finite {
             inner: bin(3, 0),
-            width_exponent: XExponent::Finite(0),
+            width_exponent: XI::from_i32(0),
         };
         // Interval is [3, 4]
         assert!(p.contains(&xbin(3, 0)));
@@ -850,7 +836,7 @@ mod tests {
                 width_exponent,
             } => {
                 assert_eq!(*inner, bin(1, 0));
-                assert_eq!(*width_exponent, XExponent::Finite(2));
+                assert_eq!(*width_exponent, XI::from_i32(2));
             }
             _ => panic!("expected Finite, got {:?}", p),
         }
@@ -869,7 +855,7 @@ mod tests {
                 width_exponent,
             } => {
                 assert_eq!(*inner, bin(1, -1));
-                assert_eq!(*width_exponent, XExponent::Finite(0));
+                assert_eq!(*width_exponent, XI::from_i32(0));
             }
             _ => panic!("expected Finite, got {:?}", p),
         }

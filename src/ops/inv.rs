@@ -7,10 +7,6 @@
 
 use std::sync::Arc;
 
-use num_bigint::{BigInt, BigUint};
-use num_integer::Integer;
-use num_traits::{One, Signed, ToPrimitive, Zero};
-use parking_lot::RwLock;
 use crate::binary::{
     Binary, Bounds, ReciprocalWithRemainder, UXBinary, XBinary, extend_reciprocal,
     reciprocal_with_remainder,
@@ -18,6 +14,10 @@ use crate::binary::{
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::sane::{self, U, XI, XU};
+use num_bigint::{BigInt, BigUint};
+use num_integer::Integer;
+use num_traits::{One, Signed, ToPrimitive, Zero};
+use parking_lot::RwLock;
 
 /// Minimum seed precision bits for division initialization.
 const MIN_SEED_PRECISION_BITS: U = 64;
@@ -140,15 +140,13 @@ fn bounds_from_division(div: &PrefixDivision) -> (Binary, Binary) {
         }
     };
 
-    let result_exp_i64 = result_exponent
-        .to_i64()
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!(
-                "result exponent exceeds i64 in bounds_from_division"
-            )
-        });
-    let upper = Binary::new(BigInt::from(upper_mantissa), result_exp_i64);
-    let lower = Binary::new(BigInt::from(lower_mantissa), result_exp_i64);
+    let result_exp_i = result_exponent.to_i32().unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "result exponent exceeds I in bounds_from_division"
+        )
+    });
+    let upper = Binary::new(BigInt::from(upper_mantissa), result_exp_i);
+    let lower = Binary::new(BigInt::from(lower_mantissa), result_exp_i);
 
     (lower, upper)
 }
@@ -327,7 +325,7 @@ impl NodeOp for InvOp {
         true
     }
 
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         let min_abs = match self.inner.cached_bounds() {
             Some(b) => {
                 let (lo, hi) = b.abs();

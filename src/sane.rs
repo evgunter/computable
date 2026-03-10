@@ -31,8 +31,8 @@
 /// just to store one number, and intermediate results would require far more.
 pub type U = u32;
 
-/// The signed integer type corresponding to [`U`], used for width/magnitude exponents
-/// inside [`XI`]. Fixed at `i32`.
+/// The signed integer type corresponding to [`U`], used for exponents in
+/// [`Binary`]/[`UBinary`] and width exponents in [`XI`]. Fixed at `i32`.
 pub type I = i32;
 
 /// Macro to flag unexpected but potentially valid extended reals cases.
@@ -159,20 +159,20 @@ pub fn bits_as_u(bits: u64) -> U {
     }
 }
 
+/// Converts a `u64` bit count to [`I`] (`i32`), panicking if the value
+/// exceeds `I::MAX`. Used in width-exponent computations where bit counts
+/// must be combined with signed exponents.
+pub fn bits_as_i(bits: u64) -> I {
+    match I::try_from(bits) {
+        Ok(v) => v,
+        Err(_) => detected_computable_would_exhaust_memory!("bit count exceeds I::MAX"),
+    }
+}
+
 /// Subtracts one from a `NonZeroU32`, returning the result as [`U`].
 ///
 /// This is trivially correct: `NonZeroU32` guarantees `>= 1`, so `- 1 >= 0`.
 pub fn sub_one(n: std::num::NonZeroU32) -> U {
-    #[allow(clippy::arithmetic_side_effects)]
-    {
-        n.get() - 1
-    }
-}
-
-/// Subtracts one from a `NonZeroU64`, returning the result as `u64`.
-///
-/// This is trivially correct: `NonZeroU64` guarantees `>= 1`, so `- 1 >= 0`.
-pub fn sub_one_u64(n: std::num::NonZeroU64) -> u64 {
     #[allow(clippy::arithmetic_side_effects)]
     {
         n.get() - 1
@@ -231,18 +231,95 @@ impl_sane_binary_op!(Sub, sub, checked_sub, "Sane subtraction underflow");
 impl_sane_binary_op!(Mul, mul, checked_mul, "Sane multiplication overflow");
 impl_sane_binary_op!(Div, div, checked_div, "Sane division by zero");
 
+/// Sign of an [`XI`] value, following `num_bigint::Sign` convention.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sign {
+    Pos,
+    Neg,
+}
+
+impl std::ops::Neg for Sign {
+    type Output = Sign;
+    fn neg(self) -> Sign {
+        match self {
+            Self::Pos => Self::Neg,
+            Self::Neg => Self::Pos,
+        }
+    }
+}
+
 /// Signed integer extended with ±infinity, used for width/magnitude exponents.
 ///
 /// - `PosInf`: 2^(+inf) = unbounded
 /// - `NegInf`: 2^(-inf) = 0 (exact)
-/// - `Finite(e)`: normal 2^e
+/// - `Finite { sign, magnitude }`: normal 2^(±magnitude)
 ///
-/// Uses [`I`] (`i32`) — the signed counterpart of [`U`].
+/// Uses sign-magnitude representation ([`Sign`] + [`U`]) so that negation
+/// is always a simple sign flip with no overflow risk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum XI {
     NegInf,
-    Finite(I),
+    Finite { sign: Sign, magnitude: U },
     PosInf,
+}
+
+impl XI {
+    /// Creates a finite `XI` from an `i32`. Canonicalizes zero to `Sign::Pos`.
+    pub fn from_i32(v: i32) -> Self {
+        let sign = if v >= 0_i32 { Sign::Pos } else { Sign::Neg };
+        Self::Finite {
+            sign,
+            magnitude: v.unsigned_abs(),
+        }
+    }
+
+    /// Returns the value as `i64`, or `None` for infinities.
+    ///
+    /// Always succeeds for `Finite` since sign + `u32` fits in `i64`.
+    pub fn to_i64(self) -> Option<i64> {
+        match self {
+            Self::Finite { sign, magnitude } => {
+                let mag = i64::from(magnitude);
+                Some(match sign {
+                    Sign::Pos => mag,
+                    #[allow(clippy::arithmetic_side_effects)]
+                    Sign::Neg => -mag,
+                })
+            }
+            Self::NegInf | Self::PosInf => None,
+        }
+    }
+
+    /// Extracts the finite value as `i64`.
+    ///
+    /// For infinity variants, panics — caller must handle those separately.
+    pub fn finite_i64(self) -> i64 {
+        self.to_i64().unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "infinite exponent where finite expected"
+            )
+        })
+    }
+
+    /// Interprets this width exponent as a precision requirement in bits.
+    ///
+    /// - `NegInf` (width = 0, exact) → `XU::Inf` (infinite precision needed)
+    /// - Negative or zero exponent → `XU::Finite(magnitude)` (bits of precision)
+    /// - Positive exponent → `XU::Finite(0)` (coarse target, no precision)
+    /// - `PosInf` (width = ∞) → `XU::Finite(0)` (unbounded, no precision)
+    pub fn to_precision_bits(self) -> XU {
+        match self {
+            Self::NegInf => XU::Inf,
+            Self::Finite {
+                sign: Sign::Neg,
+                magnitude,
+            } => XU::Finite(magnitude),
+            Self::Finite {
+                sign: Sign::Pos, ..
+            }
+            | Self::PosInf => XU::Finite(0),
+        }
+    }
 }
 
 impl PartialOrd for XI {
@@ -261,28 +338,21 @@ impl Ord for XI {
             (Self::PosInf, Self::PosInf) => Ordering::Equal,
             (Self::PosInf, _) => Ordering::Greater,
             (_, Self::PosInf) => Ordering::Less,
-            (Self::Finite(a), Self::Finite(b)) => a.cmp(b),
-        }
-    }
-}
-
-impl XI {
-    /// Interprets this width exponent as a precision requirement in bits.
-    ///
-    /// - `NegInf` (width = 0, exact) → `XU::Inf` (infinite precision needed)
-    /// - `Finite(e)` with `e <= 0` → `XU::Finite(|e|)` (|e| bits of precision)
-    /// - `Finite(e)` with `e > 0` → `XU::Finite(0)` (coarse target, no precision)
-    /// - `PosInf` (width = ∞) → `XU::Finite(0)` (unbounded, no precision)
-    pub fn to_precision_bits(self) -> XU {
-        match self {
-            Self::NegInf => XU::Inf,
-            Self::Finite(e) if e <= 0 => {
-                // e is in range I::MIN..=0, so unsigned_abs() fits in U.
-                #[allow(clippy::arithmetic_side_effects)]
-                let abs = e.unsigned_abs();
-                XU::Finite(abs)
-            }
-            Self::Finite(_) | Self::PosInf => XU::Finite(0),
+            (
+                Self::Finite {
+                    sign: s1,
+                    magnitude: m1,
+                },
+                Self::Finite {
+                    sign: s2,
+                    magnitude: m2,
+                },
+            ) => match (s1, s2) {
+                (Sign::Pos, Sign::Neg) => Ordering::Greater,
+                (Sign::Neg, Sign::Pos) => Ordering::Less,
+                (Sign::Pos, Sign::Pos) => m1.cmp(m2),
+                (Sign::Neg, Sign::Neg) => m2.cmp(m1),
+            },
         }
     }
 }
@@ -315,25 +385,33 @@ impl Ord for XU {
     }
 }
 
-impl std::ops::Neg for XU {
+impl From<XU> for XI {
+    /// Converts `XU` to `XI`: `Finite(n)` → positive `XI`, `Inf` → `PosInf`.
+    fn from(xu: XU) -> Self {
+        match xu {
+            XU::Inf => XI::PosInf,
+            XU::Finite(n) => XI::Finite {
+                sign: Sign::Pos,
+                magnitude: n,
+            },
+        }
+    }
+}
+
+impl std::ops::Neg for XI {
     type Output = XI;
 
-    /// Negates to produce an `XI`: `Finite(n)` → `XI::Finite(-(n as I))`,
-    /// `Inf` → `XI::NegInf`.
+    /// Negates by flipping the sign: `PosInf` ↔ `NegInf`, sign flip for finite.
+    /// Always safe — no arithmetic overflow possible.
     fn neg(self) -> XI {
         match self {
-            Self::Inf => XI::NegInf,
-            Self::Finite(n) => {
-                // I::try_from(n) fails when n > I::MAX. In that case the
-                // negated value would be < I::MIN, so map to NegInf.
-                match I::try_from(n) {
-                    Ok(signed) => match signed.checked_neg() {
-                        Some(negated) => XI::Finite(negated),
-                        None => XI::NegInf,
-                    },
-                    Err(_) => XI::NegInf,
-                }
-            }
+            Self::PosInf => Self::NegInf,
+            Self::NegInf => Self::PosInf,
+            Self::Finite { magnitude: 0, .. } => self,
+            Self::Finite { sign, magnitude } => Self::Finite {
+                sign: -sign,
+                magnitude,
+            },
         }
     }
 }
@@ -401,21 +479,21 @@ mod tests {
 
     #[test]
     fn xi_ordering() {
-        assert!(XI::NegInf < XI::Finite(-1000));
-        assert!(XI::Finite(-1000) < XI::Finite(0));
-        assert!(XI::Finite(0) < XI::Finite(1000));
-        assert!(XI::Finite(1000) < XI::PosInf);
+        assert!(XI::NegInf < XI::from_i32(-1000));
+        assert!(XI::from_i32(-1000) < XI::from_i32(0));
+        assert!(XI::from_i32(0) < XI::from_i32(1000));
+        assert!(XI::from_i32(1000) < XI::PosInf);
         assert_eq!(XI::NegInf, XI::NegInf);
         assert_eq!(XI::PosInf, XI::PosInf);
     }
 
     #[test]
     fn xi_to_precision_bits() {
-        assert_eq!(XI::Finite(0).to_precision_bits(), XU::Finite(0));
-        assert_eq!(XI::Finite(-10).to_precision_bits(), XU::Finite(10));
-        assert_eq!(XI::Finite(-100).to_precision_bits(), XU::Finite(100));
+        assert_eq!(XI::from_i32(0).to_precision_bits(), XU::Finite(0));
+        assert_eq!(XI::from_i32(-10).to_precision_bits(), XU::Finite(10));
+        assert_eq!(XI::from_i32(-100).to_precision_bits(), XU::Finite(100));
         // Positive exponents: coarse target, no precision needed
-        assert_eq!(XI::Finite(5).to_precision_bits(), XU::Finite(0));
+        assert_eq!(XI::from_i32(5).to_precision_bits(), XU::Finite(0));
         // NegInf = exact = infinite precision
         assert_eq!(XI::NegInf.to_precision_bits(), XU::Inf);
         // PosInf = unbounded = no precision needed
@@ -432,9 +510,32 @@ mod tests {
     }
 
     #[test]
-    fn xu_neg() {
-        assert_eq!(-XU::Inf, XI::NegInf);
-        assert_eq!(-XU::Finite(0), XI::Finite(0));
-        assert_eq!(-XU::Finite(42), XI::Finite(-42));
+    fn xu_to_xi_conversion() {
+        assert_eq!(XI::from(XU::Inf), XI::PosInf);
+        assert_eq!(XI::from(XU::Finite(0)), XI::from_i32(0));
+        assert_eq!(XI::from(XU::Finite(42)), XI::from_i32(42));
+    }
+
+    #[test]
+    fn xi_neg() {
+        assert_eq!(-XI::PosInf, XI::NegInf);
+        assert_eq!(-XI::NegInf, XI::PosInf);
+        assert_eq!(-XI::from_i32(0), XI::from_i32(0));
+        assert_eq!(-XI::from_i32(42), XI::from_i32(-42));
+        assert_eq!(-XI::from(XU::Finite(42)), XI::from_i32(-42));
+        assert_eq!(-XI::from(XU::Inf), XI::NegInf);
+    }
+
+    #[test]
+    fn bits_as_i_converts_valid() {
+        assert_eq!(bits_as_i(0), 0_i32);
+        assert_eq!(bits_as_i(42), 42_i32);
+        assert_eq!(bits_as_i(u64::try_from(i32::MAX).unwrap()), i32::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "bit count exceeds I::MAX")]
+    fn bits_as_i_panics_on_overflow() {
+        let _ = bits_as_i(u64::try_from(i32::MAX).unwrap() + 1);
     }
 }

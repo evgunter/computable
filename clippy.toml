@@ -35,6 +35,15 @@ arithmetic-side-effects-allowed = [
     "Computable",
     "computable::Computable",
     "computable::computable::Computable",
+    # Sign and XI: Neg is a pure sign flip, no arithmetic
+    "Sign",
+    "computable::Sign",
+    "computable::sane::Sign",
+    "sane::Sign",
+    "XI",
+    "computable::XI",
+    "computable::sane::XI",
+    "sane::XI",
     # Sane newtype (checked arithmetic, panics on overflow)
     "Sane",
     "computable::Sane",

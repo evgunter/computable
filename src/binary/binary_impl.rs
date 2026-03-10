@@ -10,6 +10,8 @@ use std::ops::{Add, Mul, Neg, Shl, Shr, Sub};
 use num_bigint::BigInt;
 use num_traits::{Float, Signed, Zero};
 
+use crate::sane::I;
+
 use super::error::BinaryError;
 
 /// Exact binary number represented as `mantissa * 2^exponent`.
@@ -19,20 +21,20 @@ use super::error::BinaryError;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binary {
     mantissa: BigInt,
-    exponent: i64,
+    exponent: I,
 }
 
 impl Binary {
     /// Creates a new Binary number, normalizing the representation.
-    pub fn new(mantissa: BigInt, exponent: i64) -> Self {
+    pub fn new(mantissa: BigInt, exponent: I) -> Self {
         Self::normalize(mantissa, exponent)
     }
 
     /// Creates a Binary from components that are already in canonical form
     /// (mantissa is odd or zero). Skips the normalize step.
-    pub(crate) fn new_normalized(mantissa: BigInt, exponent: i64) -> Self {
+    pub(crate) fn new_normalized(mantissa: BigInt, exponent: I) -> Self {
         debug_assert!(
-            mantissa.is_zero() && exponent == 0
+            mantissa.is_zero() && exponent == 0_i32
                 || !mantissa.is_zero() && mantissa.magnitude().trailing_zeros() == Some(0),
             "new_normalized: mantissa must be odd (or both zero), got mantissa={mantissa}, exponent={exponent}"
         );
@@ -43,7 +45,7 @@ impl Binary {
     pub fn zero() -> Self {
         Self {
             mantissa: BigInt::zero(),
-            exponent: 0_i64,
+            exponent: 0,
         }
     }
 
@@ -51,7 +53,7 @@ impl Binary {
     pub fn one() -> Self {
         Self {
             mantissa: BigInt::from(1_i32),
-            exponent: 0_i64,
+            exponent: 0,
         }
     }
 
@@ -61,7 +63,7 @@ impl Binary {
     }
 
     /// Returns the exponent.
-    pub fn exponent(&self) -> i64 {
+    pub fn exponent(&self) -> I {
         self.exponent
     }
 
@@ -77,7 +79,7 @@ impl Binary {
     /// let binary = Binary::from_f64(1.5).unwrap();
     /// // 1.5 = 3 * 2^-1
     /// assert_eq!(binary.mantissa(), &num_bigint::BigInt::from(3));
-    /// assert_eq!(binary.exponent(), -1_i64);
+    /// assert_eq!(binary.exponent(), -1);
     /// ```
     pub fn from_f64(value: f64) -> Result<Self, BinaryError> {
         if value.is_nan() {
@@ -91,7 +93,7 @@ impl Binary {
         }
         let (mantissa, exponent, sign) = value.integer_decode();
         let signed_mantissa = BigInt::from(sign) * BigInt::from(mantissa);
-        Ok(Self::new(signed_mantissa, i64::from(exponent)))
+        Ok(Self::new(signed_mantissa, I::from(exponent)))
     }
 
     /// Adds two Binary numbers.
@@ -165,24 +167,27 @@ impl Binary {
     }
 
     /// Normalizes the representation by factoring out powers of 2 from the mantissa.
-    fn normalize(mut mantissa: BigInt, mut exponent: i64) -> Self {
+    fn normalize(mut mantissa: BigInt, mut exponent: I) -> Self {
         if mantissa.is_zero() {
             return Self {
                 mantissa,
-                exponent: 0_i64,
+                exponent: 0,
             };
         }
 
         if let Some(tz_u64) = mantissa.magnitude().trailing_zeros() {
             let tz = crate::sane::bits_as_u(tz_u64);
             mantissa >>= tz;
-            exponent = exponent
-                .checked_add(i64::from(tz))
-                .unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent overflow in Binary::normalize"
-                    )
-                });
+            let tz_i = I::try_from(tz).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "trailing zeros exceed I::MAX in Binary::normalize"
+                )
+            });
+            exponent = exponent.checked_add(tz_i).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in Binary::normalize"
+                )
+            });
         }
 
         Self { mantissa, exponent }
@@ -191,29 +196,19 @@ impl Binary {
     /// Aligns the mantissas of two Binary numbers to a common exponent.
     /// Returns (lhs_mantissa, rhs_mantissa, common_exponent) where both mantissas
     /// are shifted to the minimum exponent of the two inputs.
-    pub fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigInt, BigInt, i64) {
+    pub fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigInt, BigInt, I) {
         let exponent = std::cmp::min(lhs.exponent, rhs.exponent);
         let lhs_shift = lhs.exponent.abs_diff(exponent);
         let rhs_shift = rhs.exponent.abs_diff(exponent);
         let lhs_mantissa = if lhs_shift == 0 {
             lhs.mantissa.clone()
         } else {
-            let shift_usize = usize::try_from(lhs_shift).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "shift exceeds usize in Binary::align_mantissas"
-                )
-            });
-            &lhs.mantissa << shift_usize
+            &lhs.mantissa << crate::sane::u_as_usize(lhs_shift)
         };
         let rhs_mantissa = if rhs_shift == 0 {
             rhs.mantissa.clone()
         } else {
-            let shift_usize = usize::try_from(rhs_shift).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "shift exceeds usize in Binary::align_mantissas"
-                )
-            });
-            &rhs.mantissa << shift_usize
+            &rhs.mantissa << crate::sane::u_as_usize(rhs_shift)
         };
         (lhs_mantissa, rhs_mantissa, exponent)
     }
@@ -225,9 +220,9 @@ impl Binary {
     /// mantissa alignment when bit lengths are equal.
     pub(crate) fn cmp_shifted(
         mantissa: &BigInt,
-        exponent: i64,
+        exponent: I,
         other: &BigInt,
-        other_exp: i64,
+        other_exp: I,
     ) -> Ordering {
         // 1. Sign-based fast path
         let self_sign = mantissa.sign();
@@ -264,35 +259,18 @@ impl Binary {
         }
 
         // 3. Same bit length — must align and compare mantissas
-        fn cmp_with_shift(
-            large_mantissa: &BigInt,
-            small_mantissa: &BigInt,
-            shift_amount: u64,
-        ) -> Ordering {
-            // If shift_amount exceeds u32::MAX, the shifted value
-            // would be astronomically large. Compare by sign instead.
-            let max_shift = u64::from(u32::MAX);
-            if shift_amount <= max_shift {
-                // shift_amount fits in u32, and u32 fits in usize on all supported platforms
-                let shift_usize = usize::try_from(shift_amount).unwrap_or_else(|_| {
-                    unreachable!("shift_amount <= u32::MAX <= usize::MAX")
-                });
-                let shifted: BigInt = large_mantissa << shift_usize;
-                shifted.cmp(small_mantissa)
-            } else if large_mantissa.is_zero() {
-                BigInt::zero().cmp(small_mantissa)
-            } else if large_mantissa.is_positive() {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
-        }
-
+        // abs_diff on I returns u32, which fits in usize on all supported platforms.
         match exponent.cmp(&other_exp) {
             Ordering::Equal => mantissa.cmp(other),
-            Ordering::Greater => cmp_with_shift(mantissa, other, exponent.abs_diff(other_exp)),
+            Ordering::Greater => {
+                let shifted: BigInt =
+                    mantissa << crate::sane::u_as_usize(exponent.abs_diff(other_exp));
+                shifted.cmp(other)
+            }
             Ordering::Less => {
-                cmp_with_shift(other, mantissa, other_exp.abs_diff(exponent)).reverse()
+                let shifted: BigInt =
+                    other << crate::sane::u_as_usize(other_exp.abs_diff(exponent));
+                mantissa.cmp(&shifted)
             }
         }
     }
@@ -338,15 +316,14 @@ impl Shl<u32> for Binary {
         if self.mantissa.is_zero() {
             return self;
         }
+        let rhs_i = I::try_from(rhs).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("shift exceeds I::MAX in Binary::shl")
+        });
         Self::new_normalized(
             self.mantissa,
-            self.exponent
-                .checked_add(i64::from(rhs))
-                .unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent overflow in Binary::shl"
-                    )
-                }),
+            self.exponent.checked_add(rhs_i).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in Binary::shl")
+            }),
         )
     }
 }
@@ -359,15 +336,14 @@ impl Shr<u32> for Binary {
         if self.mantissa.is_zero() {
             return self;
         }
+        let rhs_i = I::try_from(rhs).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("shift exceeds I::MAX in Binary::shr")
+        });
         Self::new_normalized(
             self.mantissa,
-            self.exponent
-                .checked_sub(i64::from(rhs))
-                .unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent overflow in Binary::shr"
-                    )
-                }),
+            self.exponent.checked_sub(rhs_i).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in Binary::shr")
+            }),
         )
     }
 }
@@ -427,14 +403,14 @@ mod tests {
     fn binary_normalizes_even_mantissa() {
         let value = bin(8, 0);
         assert_eq!(value.mantissa(), &BigInt::from(1_i32));
-        assert_eq!(value.exponent(), 3_i64);
+        assert_eq!(value.exponent(), 3_i32);
     }
 
     #[test]
     fn binary_zero_uses_zero_exponent() {
-        let value = Binary::new(BigInt::zero(), 42_i64);
+        let value = Binary::new(BigInt::zero(), 42);
         assert_eq!(value.mantissa(), &BigInt::zero());
-        assert_eq!(value.exponent(), 0_i64);
+        assert_eq!(value.exponent(), 0_i32);
     }
 
     #[test]
@@ -446,22 +422,22 @@ mod tests {
 
     #[test]
     fn binary_ordering_handles_large_exponent_gaps() {
-        let huge_pos = Binary::new(BigInt::from(1_i32), i64::MAX);
-        let tiny_pos = Binary::new(BigInt::from(1_i32), i64::MIN);
+        let huge_pos = Binary::new(BigInt::from(1_i32), I::MAX);
+        let tiny_pos = Binary::new(BigInt::from(1_i32), I::MIN);
         assert!(huge_pos > tiny_pos);
 
-        let huge_neg = Binary::new(BigInt::from(-1_i32), i64::MAX);
+        let huge_neg = Binary::new(BigInt::from(-1_i32), I::MAX);
         assert!(huge_neg < tiny_pos);
     }
 
     #[test]
     fn binary_ordering_overflow_path_uses_sign() {
-        let huge_pos = Binary::new(BigInt::from(1_i32), i64::MAX);
-        let tiny_neg = Binary::new(BigInt::from(-1_i32), i64::MIN);
+        let huge_pos = Binary::new(BigInt::from(1_i32), I::MAX);
+        let tiny_neg = Binary::new(BigInt::from(-1_i32), I::MIN);
         assert!(huge_pos > tiny_neg);
 
-        let huge_neg = Binary::new(BigInt::from(-1_i32), i64::MAX);
-        let tiny_pos = Binary::new(BigInt::from(1_i32), i64::MIN);
+        let huge_neg = Binary::new(BigInt::from(-1_i32), I::MAX);
+        let tiny_pos = Binary::new(BigInt::from(1_i32), I::MIN);
         assert!(huge_neg < tiny_pos);
     }
 
@@ -497,7 +473,7 @@ mod tests {
         let pos = bin(3, 2);
         let neg = -pos;
         assert_eq!(neg.mantissa(), &BigInt::from(-3_i32));
-        assert_eq!(neg.exponent(), 2_i64);
+        assert_eq!(neg.exponent(), 2_i32);
     }
 
     #[test]
@@ -512,12 +488,12 @@ mod tests {
         // 1.5 = 3 * 2^-1
         let result = Binary::from_f64(1.5).expect("should succeed");
         assert_eq!(result.mantissa(), &BigInt::from(3_i32));
-        assert_eq!(result.exponent(), -1_i64);
+        assert_eq!(result.exponent(), -1_i32);
 
         // -2.0 = -1 * 2^1
         let neg_result = Binary::from_f64(-2.0).expect("should succeed");
         assert_eq!(neg_result.mantissa(), &BigInt::from(-1_i32));
-        assert_eq!(neg_result.exponent(), 1_i64);
+        assert_eq!(neg_result.exponent(), 1_i32);
     }
 
     #[test]

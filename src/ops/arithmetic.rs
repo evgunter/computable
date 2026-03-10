@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::binary::{Bounds, UXBinary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{U, XI};
+use crate::sane::XI;
 
 /// Negation operation.
 pub struct NegOp {
@@ -37,7 +37,7 @@ impl NodeOp for NegOp {
     }
 
     /// Negation preserves width exactly.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         target_width.clone()
     }
 }
@@ -77,7 +77,7 @@ impl NodeOp for AddOp {
     }
 
     /// w_out = w_left + w_right, so each child gets half the target.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         target_width.clone() >> 1u32
     }
 }
@@ -167,12 +167,8 @@ impl NodeOp for MulOp {
 
     /// w_out ≈ |a| · w_b + |b| · w_a.
     /// Child a gets target / (2·max_abs(b)), child b gets target / (2·max_abs(a)).
-    fn child_demand_budget(&self, target_width: &UXBinary, child_index: U) -> UXBinary {
-        let sibling = if child_index == 0 {
-            &self.right
-        } else {
-            &self.left
-        };
+    fn child_demand_budget(&self, target_width: &UXBinary, child_idx: bool) -> UXBinary {
+        let sibling = if child_idx { &self.left } else { &self.right };
         let sibling_max_abs = match sibling.cached_bounds() {
             Some(b) => {
                 let (lo, hi) = b.abs();

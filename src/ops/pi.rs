@@ -195,7 +195,7 @@ impl NodeOp for PiOp {
         true
     }
 
-    fn child_demand_budget(&self, _target_width: &UXBinary, _child_index: U) -> UXBinary {
+    fn child_demand_budget(&self, _target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         unreachable!("PiOp has no children")
     }
 }
@@ -228,8 +228,8 @@ fn compute_pi_bounds(num_terms: U, precision_bits: U) -> (Binary, Binary) {
     // So: pi_lo = 16*atan_5_lo - 4*atan_239_hi
     //     pi_hi = 16*atan_5_hi - 4*atan_239_lo
 
-    let sixteen = Binary::new_normalized(BigInt::from(1_i32), 4_i64); // 2^4 = 16
-    let four = Binary::new_normalized(BigInt::from(1_i32), 2_i64); // 2^2 = 4
+    let sixteen = Binary::new_normalized(BigInt::from(1_i32), 4); // 2^4 = 16
+    let four = Binary::new_normalized(BigInt::from(1_i32), 2); // 2^2 = 4
 
     // 16 * arctan(1/5) bounds
     let term1_lo = atan_5_lo.mul(&sixteen);
@@ -358,7 +358,7 @@ pub fn two_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
 
     let pi_interval = pi_interval_at_precision(precision_bits);
     // 2*pi: multiply by 2
-    let two = UBinary::new(BigUint::from(1u32), 1_i64); // 2^1 = 2
+    let two = UBinary::new(BigUint::from(1u32), 1); // 2^1 = 2
     pi_interval.scale_positive(&two)
 }
 
@@ -368,13 +368,13 @@ pub fn half_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
     // pi/2: divide by 2 (decrement exponent by 1)
     let half_pi_lo = Binary::new_normalized(
         pi_lo.mantissa().clone(),
-        pi_lo.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+        pi_lo.exponent().checked_sub(1).unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!("exponent overflow in half_pi")
         }),
     );
     let half_pi_hi = Binary::new_normalized(
         pi_hi.mantissa().clone(),
-        pi_hi.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+        pi_hi.exponent().checked_sub(1).unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!("exponent overflow in half_pi")
         }),
     );
@@ -385,17 +385,17 @@ pub fn half_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
 mod tests {
     use super::*;
     use crate::binary::XBinary;
-    use crate::sane::XU;
+    use crate::sane::{I, XU};
 
-    fn bin(mantissa: i64, exponent: i64) -> Binary {
+    fn bin(mantissa: i64, exponent: I) -> Binary {
         Binary::new(BigInt::from(mantissa), exponent)
     }
 
     fn epsilon_as_binary(n: U) -> Binary {
-        let n_i64 = i64::from(n);
+        let n_i = I::try_from(n).expect("n fits in I");
         Binary::new(
             BigInt::from(1_i32),
-            n_i64.checked_neg().expect("negation does not overflow"),
+            n_i.checked_neg().expect("negation does not overflow"),
         )
     }
 
@@ -499,9 +499,9 @@ mod tests {
         let (lo, hi) = pi_bounds_at_precision(PRECISION_BITS);
         let width = hi.sub(&lo);
 
-        let precision_i64 = i64::from(PRECISION_BITS);
-        let exp = precision_i64
-            .checked_sub(1_i64)
+        let precision_i = I::try_from(PRECISION_BITS).expect("PRECISION_BITS fits in I");
+        let exp = precision_i
+            .checked_sub(1)
             .expect("subtraction does not overflow")
             .checked_neg()
             .expect("negation does not overflow");
