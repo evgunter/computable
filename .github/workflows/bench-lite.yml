@@ -1,10 +1,6 @@
 name: Bench Lite
 on:
   workflow_dispatch:
-  # Temporary: run on this PR to validate the workflow, then remove.
-  pull_request:
-    paths:
-      - '.github/workflows/bench-lite.yml'
 
 jobs:
   bench-lite-gungraun:
