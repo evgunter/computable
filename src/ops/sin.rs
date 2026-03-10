@@ -32,7 +32,7 @@ use crate::binary::{
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{I, U, XI, XU};
+use crate::sane::{I, U, XI};
 
 /// Cached inputs and result for `sin_bounds`, avoiding redundant Taylor series
 /// recomputation when `compute_bounds` is called multiple times with the same inputs.
@@ -91,12 +91,30 @@ impl NodeOp for SinOp {
         let mut num_terms = self.num_terms.write();
 
         // Leap based on coordinator's precision target.
-        if let XU::Finite(precision_bits) = target_width_exp.to_precision_bits() {
-            // Each Taylor term contributes ~3.5-7 bits; precision_bits / 4 is
-            // conservative yet ~25% tighter than the previous / 3 estimate.
-            let needed_n = (precision_bits / 4).max(1);
-            if needed_n > *num_terms {
-                *num_terms = needed_n;
+        // XI::Finite { sign: Neg, magnitude } means width ≤ 2^(-magnitude).
+        // For precision we need magnitude bits when negative, and 0 bits
+        // when non-negative (coarse target).
+        match target_width_exp {
+            XI::Finite {
+                sign: crate::sane::Sign::Neg,
+                magnitude,
+            } => {
+                // Fine target: precision_bits = magnitude.
+                let precision_bits = magnitude;
+                // Each Taylor term contributes ~3.5-7 bits; precision_bits / 4 is
+                // conservative yet ~25% tighter than the previous / 3 estimate.
+                let needed_n = (precision_bits / 4).max(1);
+                if needed_n > *num_terms {
+                    *num_terms = needed_n;
+                }
+            }
+            XI::Finite { .. } | XI::PosInf => {
+                // Coarse target (e >= 0) or unbounded: no precision needed
+                // from the target — skip the leap.
+            }
+            XI::NegInf => {
+                // Exact target: no finite leap possible, fall through to
+                // the incremental +1 below.
             }
         }
 
@@ -1256,13 +1274,13 @@ mod tests {
     use super::*;
     use crate::computable::Computable;
     use crate::refinement::bounds_width_leq;
-    use crate::sane::XU;
+    use crate::sane::XI;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite, xbin};
 
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        tolerance_exp: &XU,
+        tolerance_exp: &XI,
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(bounds.large());
@@ -1275,7 +1293,7 @@ mod tests {
     fn sin_of_zero() {
         let zero = Computable::constant(bin(0, 0));
         let sin_zero = zero.sin();
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sin_zero
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1292,7 +1310,7 @@ mod tests {
 
         // sin(0) = 0 exactly — should converge to exact bounds
         let bounds = sin_zero
-            .refine_to_default(XU::Inf)
+            .refine_to_default(XI::NegInf)
             .expect("sin(0) should converge to exact zero");
 
         let lower = unwrap_finite(bounds.small());
@@ -1331,7 +1349,7 @@ mod tests {
         // We approximate it as 3217/2048 ~= 1.5708...
         let pi_over_2 = Computable::constant(bin(3217, -11));
         let sin_pi_2 = pi_over_2.sin();
-        let epsilon = XU::Finite(6);
+        let epsilon = XI::from_i32(-6);
         let bounds = sin_pi_2
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1355,7 +1373,7 @@ mod tests {
         // We approximate it as 6434/2048 ~= 3.1416...
         let pi_approx = Computable::constant(bin(6434, -11));
         let sin_pi = pi_approx.sin();
-        let epsilon = XU::Finite(6);
+        let epsilon = XI::from_i32(-6);
         let bounds = sin_pi
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1376,7 +1394,7 @@ mod tests {
         // -pi/2 ~= -1.5707963...
         let neg_pi_over_2 = Computable::constant(bin(-3217, -11));
         let sin_neg_pi_2 = neg_pi_over_2.sin();
-        let epsilon = XU::Finite(6);
+        let epsilon = XI::from_i32(-6);
         let bounds = sin_neg_pi_2
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1416,7 +1434,7 @@ mod tests {
         // For small x, sin(x) ~= x
         let small = Computable::constant(bin(1, -4)); // 1/16 = 0.0625
         let sin_small = small.sin();
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sin_small
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1469,7 +1487,7 @@ mod tests {
         let two = Computable::constant(bin(2, 0));
         let expr = sin_x.clone() * two; // 2 * sin(1)
 
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = expr
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1604,7 +1622,7 @@ mod tests {
         // This exercises the pi error propagation
         let x = Computable::constant(bin(100, 0)); // 100
         let sin_x = x.sin();
-        let epsilon = XU::Finite(4);
+        let epsilon = XI::from_i32(-4);
         let bounds = sin_x
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1653,7 +1671,7 @@ mod tests {
         );
 
         let sin_pi = Computable::constant(pi_approx).sin();
-        let epsilon = XU::Finite(10);
+        let epsilon = XI::from_i32(-10);
         let bounds = sin_pi
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -1679,7 +1697,7 @@ mod tests {
         // compute_sin_on_monotonic_interval and divide_by_factorial_directed directly.
         let one = Computable::constant(bin(1, 0));
         let sin_one = one.sin();
-        let epsilon = XU::Finite(512);
+        let epsilon = XI::from_i32(-512);
         // Need many Taylor terms for 512-bit accuracy; allow up to 1024 refinement steps.
         let bounds = sin_one
             .refine_to::<1024>(epsilon)
@@ -1719,7 +1737,7 @@ mod tests {
         // Correctness invariant for large inputs: 2^20 ≈ 1_048_576 (k ≈ 166_886).
         let large = Computable::constant(bin(1, 20)); // 2^20 = 1_048_576
         let sin_large = large.sin();
-        let epsilon = XU::Finite(4);
+        let epsilon = XI::from_i32(-4);
         let bounds = sin_large
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for very large input");
@@ -1750,7 +1768,7 @@ mod tests {
         // Correctness invariant: 2^30 ≈ 1 billion, k ≈ 170 million
         let large = Computable::constant(bin(1, 30));
         let sin_large = large.sin();
-        let epsilon = XU::Finite(4);
+        let epsilon = XI::from_i32(-4);
         let bounds = sin_large
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for 2^30 input");
@@ -1769,7 +1787,7 @@ mod tests {
         // Correctness invariant: large negative input -10000
         let x = Computable::constant(bin(-10000, 0));
         let sin_x = x.sin();
-        let epsilon = XU::Finite(4);
+        let epsilon = XI::from_i32(-4);
         let bounds = sin_x
             .refine_to_default(epsilon)
             .expect("refine_to should succeed for large negative input");

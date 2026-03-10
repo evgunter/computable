@@ -16,7 +16,7 @@ use std::num::NonZeroU32;
 use std::time::Instant;
 
 use computable::{
-    Binary, Bounds, Computable, FiniteBounds, XBinary, XU, pi, pi_bounds_at_precision,
+    Binary, Bounds, Computable, FiniteBounds, XBinary, XI, pi, pi_bounds_at_precision,
 };
 use num_bigint::BigInt;
 use num_traits::{Signed, Zero};
@@ -211,7 +211,7 @@ fn integer_roots_analysis(rng: &mut StdRng) {
     }
     let float_duration = float_start.elapsed();
 
-    let epsilon = XU::Finite(0);
+    let epsilon = XI::from_i32(0);
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
@@ -264,7 +264,7 @@ fn inv_analysis(rng: &mut StdRng) {
     let float_sum: f64 = inputs.iter().map(|x| 1.0 / x).sum();
     let float_duration = float_start.elapsed();
 
-    let epsilon = XU::Finite(PRECISION_BITS);
+    let epsilon = XI::from_i32(-(PRECISION_BITS as i32));
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
@@ -322,7 +322,7 @@ fn sin_analysis(rng: &mut StdRng) {
     let float_sum: f64 = inputs.iter().map(|x| x.sin()).sum();
     let float_duration = float_start.elapsed();
 
-    let epsilon = XU::Finite(PRECISION_BITS);
+    let epsilon = XI::from_i32(-(PRECISION_BITS as i32));
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
@@ -377,7 +377,7 @@ fn pi_analysis() {
     let pi_f64 = Binary::from_f64(std::f64::consts::PI).unwrap();
 
     for &bits in precision_bits {
-        let epsilon = XU::Finite(bits);
+        let epsilon = XI::from_i32(-(bits as i32));
 
         let start = Instant::now();
         let bounds = pi()
@@ -419,7 +419,7 @@ fn pi_analysis() {
     }
 
     // Arithmetic with pi
-    let pi_arith_epsilon = XU::Finite(64);
+    let pi_arith_epsilon = XI::from_i32(-64);
 
     println!();
     println!("== Pi Arithmetic ==");
@@ -458,7 +458,7 @@ fn pi_analysis() {
     }
 
     // sin(n*pi) — should be ~0
-    let sin_pi_epsilon = XU::Finite(32);
+    let sin_pi_epsilon = XI::from_i32(-32);
 
     println!();
     println!("== sin(n * pi) — should contain 0 ==");
@@ -492,7 +492,7 @@ fn pi_analysis() {
     println!();
 
     for &bits in &[2048u32, 4096, 8192] {
-        let high_prec_epsilon = XU::Finite(bits);
+        let high_prec_epsilon = XI::from_i32(-(bits as i32));
         let start = Instant::now();
         let bounds = pi()
             .refine_to_default(high_prec_epsilon)

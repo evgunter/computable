@@ -13,7 +13,7 @@ use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
 use crate::refinement::{RefinementGraph, prefix_width_leq};
-use crate::sane::{U, XU};
+use crate::sane::{U, XI};
 
 use parking_lot::RwLock;
 
@@ -62,28 +62,28 @@ impl Computable {
         self.node.get_bounds()
     }
 
-    /// Refines this computable until the bounds width is at most 2^(-tolerance_exp).
+    /// Refines this computable until the bounds width exponent is at most `target_width_exp`.
     ///
     /// # Arguments
-    /// * `tolerance_exp` - Tolerance exponent. `Finite(n)` requests width ≤ 2^(-n).
-    ///   `Inf` requests exact bounds (width = 0).
+    /// * `target_width_exp` - Target width exponent. `Finite(e)` requests width ≤ 2^e.
+    ///   `NegInf` requests exact bounds (width = 0).
     ///
     /// # Type Parameters
     /// * `MAX_REFINEMENT_ITERATIONS` - Maximum number of refinement iterations
     ///
     /// # Warning
-    /// Using `XU::Inf` (epsilon = 0) will only succeed for values that can be
+    /// Using `XI::NegInf` (width = 0) will only succeed for values that can be
     /// represented exactly in binary (e.g., integers, dyadic rationals like 1/2 or 3/4).
     /// For values that cannot be exactly represented (e.g., 1/3, sqrt(2), pi),
     /// refinement will never achieve zero width and will return
     /// [`ComputableError::MaxRefinementIterations`] after exhausting the iteration limit.
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: U>(
         &self,
-        tolerance_exp: XU,
+        target_width_exp: XI,
     ) -> Result<Bounds, ComputableError> {
         loop {
             let prefix = self.node.get_prefix()?;
-            if prefix_width_leq(&prefix, &tolerance_exp) {
+            if prefix_width_leq(&prefix, &target_width_exp) {
                 return Ok(prefix.to_bounds());
             }
 
@@ -93,7 +93,7 @@ impl Computable {
                 drop(state_guard);
 
                 let graph = RefinementGraph::new(Arc::clone(&self.node))?;
-                let result = graph.refine_to::<MAX_REFINEMENT_ITERATIONS>(&tolerance_exp);
+                let result = graph.refine_to::<MAX_REFINEMENT_ITERATIONS>(&target_width_exp);
 
                 let mut completion_guard = self.node.refinement.state.lock();
                 completion_guard.active = false;
@@ -112,8 +112,8 @@ impl Computable {
     }
 
     /// Refines this computable using the default maximum iterations.
-    pub fn refine_to_default(&self, tolerance_exp: XU) -> Result<Bounds, ComputableError> {
-        self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(tolerance_exp)
+    pub fn refine_to_default(&self, target_width_exp: XI) -> Result<Bounds, ComputableError> {
+        self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(target_width_exp)
     }
 
     /// Returns the multiplicative inverse of this computable.
@@ -297,7 +297,7 @@ impl std::ops::Div for Computable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sane::XU;
+    use crate::sane::XI;
     use crate::test_utils::{bin, epsilon_as_binary, unwrap_finite};
 
     fn sqrt_computable(value_int: u64) -> Computable {
@@ -323,9 +323,9 @@ mod tests {
         let sqrt2 = sqrt_computable(2);
         let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
 
-        let tolerance_exp = XU::Finite(12);
+        let target_width_exp = XI::from_i32(-12);
         let bounds = expr
-            .refine_to_default(tolerance_exp)
+            .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
@@ -343,14 +343,126 @@ mod tests {
         assert!(upper_minus <= expected_value && expected_value <= lower_plus);
     }
 
+/// Helper: assert bounds meet the target but are not over-refined past `over_refined_exp`.
+    fn assert_coarse_not_over_refined(
+        bounds: &Bounds,
+        target_width_exp: XI,
+        over_refined_exp: XI,
+        label: &str,
+    ) {
+        use crate::refinement::bounds_width_leq;
+        assert!(
+            bounds_width_leq(bounds, &target_width_exp),
+            "{label}: bounds should meet target width"
+        );
+        assert!(
+            !bounds_width_leq(bounds, &over_refined_exp),
+            "{label}: bounds should not be over-refined (width should be > 2^{})",
+            match over_refined_exp {
+                XI::Finite { sign, magnitude } => {
+                    let mag = i64::from(magnitude);
+                    match sign {
+                        crate::sane::Sign::Pos => mag,
+                        crate::sane::Sign::Neg => -mag,
+                    }
+                }
+                _ => unreachable!(),
+            }
+        );
+    }
+
+    // --- Coarse-tolerance tests: verify each op doesn't over-refine ---
+    //
+    // For ops with large-magnitude results, we check width meets target but
+    // isn't over-refined. For ops that inherently start precise (pi's 10
+    // initial Taylor terms give ~72 bits), we scale up with a constant
+    // multiplier and widen the target to compensate.
+
+    #[test]
+    fn coarse_epsilon_does_not_over_refine_nth_root() {
+        // sqrt(10^18) ≈ 10^9
+        let large = sqrt_computable(1_000_000_000_000_000_000);
+        let target = XI::from_i32(4);
+        let bounds = large.refine_to_default(target).expect("refine should succeed");
+        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(2), "nth_root");
+    }
+
+    #[test]
+    fn coarse_epsilon_does_not_over_refine_mul() {
+        // sqrt(10^18) * sqrt(2) ≈ 1.41 * 10^9
+        let a = sqrt_computable(1_000_000_000_000_000_000);
+        let b = sqrt_computable(2);
+        let expr = a * b;
+        let target = XI::from_i32(4);
+        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(2), "mul");
+    }
+
+    #[test]
+    fn coarse_epsilon_does_not_over_refine_add() {
+        // sqrt(10^18) + constant(0) ≈ 10^9. Only the sqrt child has a refiner;
+        // add width = width(sqrt) + 0, and child demand ≈ target/2 = 8.
+        let a = sqrt_computable(1_000_000_000_000_000_000);
+        let b = Computable::constant(bin(0, 0));
+        let expr = a + b;
+        let target = XI::from_i32(4);
+        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(2), "add");
+    }
+
+    #[test]
+    fn coarse_epsilon_does_not_over_refine_pow() {
+        // sqrt(9999)^2 = 9999. Derivative at x ≈ 100 is 200.
+        // Target width 2^12 = 4096, child demand ≈ 4096/200 ≈ 20 (coarse).
+        let expr = sqrt_computable(9999).pow(2);
+        let target = XI::from_i32(12);
+        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(6), "pow");
+    }
+
+    #[test]
+    fn coarse_epsilon_does_not_over_refine_sin() {
+        // sin(1) * 2^30 ≈ 0.84 * 10^9. Sin starts with 1 Taylor term
+        // (width ≈ 0.33), so result width ≈ 2^28. Target 2^34 is coarse
+        // enough that no refinement is needed.
+        let expr = Computable::constant(bin(1, 0)).sin() * Computable::constant(bin(1, 30));
+        let target = XI::from_i32(34);
+        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(24), "sin");
+    }
+
+    #[test]
+    fn coarse_epsilon_does_not_over_refine_inv() {
+        // inv(sqrt(2)) * 2^30 ≈ 0.707 * 10^9. Target 2^34; mul demand
+        // on inv child is 2^34 / 2^30 = 2^4, coarse.
+        let expr = sqrt_computable(2).inv() * Computable::constant(bin(1, 30));
+        let target = XI::from_i32(34);
+        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(18), "inv");
+    }
+
+    #[test]
+    fn coarse_epsilon_does_not_over_refine_pi() {
+        // pi * 2^80. Pi's initial 10 Taylor terms give a prefix width of
+        // ~2^(-47), so result width ≈ 2^(80-47) = 2^33.
+        // TODO(pi-initial-terms): INITIAL_PI_TERMS=10 gives ~47 bits of
+        // prefix precision regardless of what's requested. Once pi starts
+        // with fewer terms (e.g. 1), this test can use a tighter target
+        // and smaller multiplier.
+        let expr = crate::ops::pi::pi() * Computable::constant(bin(1, 80));
+        let target = XI::from_i32(36);
+        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(30), "pi");
+    }
+
     #[test]
     fn shared_operand_in_expression() {
         let shared = sqrt_computable(2);
         let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
 
-        let tolerance_exp = XU::Finite(12);
+        let target_width_exp = XI::from_i32(-12);
         let bounds = expr
-            .refine_to_default(tolerance_exp)
+            .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());

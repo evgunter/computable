@@ -168,10 +168,10 @@ fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) ->
 mod tests {
     use crate::binary::{Binary, Bounds};
     use crate::computable::Computable;
-    use crate::sane::XU;
+    use crate::sane::XI;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
-    fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XU) {
+    fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XI) {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(bounds.large());
 
@@ -330,7 +330,7 @@ mod tests {
         let three_sq = Computable::constant(bin(3, 0)).pow(2);
         let sum = two_sq + three_sq;
 
-        let tolerance_exp = XU::Finite(8);
+        let tolerance_exp = XI::from_i32(-8);
         let bounds = sum
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
@@ -346,7 +346,7 @@ mod tests {
         let sqrt_two = two.nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"));
         let squared = sqrt_two.pow(2);
 
-        let tolerance_exp = XU::Finite(8);
+        let tolerance_exp = XI::from_i32(-8);
         let bounds = squared
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
