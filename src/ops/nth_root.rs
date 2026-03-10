@@ -37,28 +37,28 @@ use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::sane::{self, I, U, XI};
 
-/// Seed precision bits for Newton-Raphson initialization.
+/// Minimum seed precision bits for Newton-Raphson initialization.
 ///
-/// Used as the initial precision in `compute_bounds()`. This provides
-/// reasonable initial bounds (better than `[1, target]`) without needing
-/// excessive precision. The `refine_step()` method handles further precision
-/// growth based on the target width exponent.
-const INITIAL_SEED_PRECISION_BITS: usize = 16;
+/// Used as the floor for both `compute_bounds()` seeds and `refine_step()`
+/// precision caps. This ensures Newton-Raphson converges quickly even for
+/// low-precision requests. The magnitude-aware cap in `refine_step()` handles
+/// the upper bound to prevent over-refinement.
+const MIN_SEED_PRECISION_BITS: usize = 64;
 
 /// Computes the mantissa precision bits needed to achieve a target width
 /// exponent for a value with the given magnitude exponent.
 ///
 /// For a value of magnitude ~2^M, achieving width ≤ 2^e requires
-/// `M - e` bits of mantissa precision. Returns at least `INITIAL_SEED_PRECISION_BITS`.
+/// `M - e` bits of mantissa precision. Returns at least `MIN_SEED_PRECISION_BITS`.
 fn precision_for_target(magnitude_exp: i64, target_width_exp: i64) -> usize {
     let needed = magnitude_exp.saturating_sub(target_width_exp);
     if needed <= 0_i64 {
-        INITIAL_SEED_PRECISION_BITS
+        MIN_SEED_PRECISION_BITS
     } else {
         // Safe: needed > 0 and usize is at least 64 bits on supported platforms,
         // so the conversion from positive i64 never fails.
         let needed_usize = usize::try_from(needed).unwrap_or(usize::MAX);
-        needed_usize.max(INITIAL_SEED_PRECISION_BITS)
+        needed_usize.max(MIN_SEED_PRECISION_BITS)
     }
 }
 
@@ -127,7 +127,7 @@ impl NodeOp for NthRootOp {
         let s = initialize_nth_root_newton_state(
             &input_bounds,
             self.degree.get(),
-            INITIAL_SEED_PRECISION_BITS,
+            MIN_SEED_PRECISION_BITS,
         )?;
         let bounds = bounds_from_newton_state(&s);
         *write_guard = Some(s);
@@ -187,11 +187,11 @@ impl NodeOp for NthRootOp {
                 // quadratic convergence means larger headroom would overshoot.
                 precision_for_target(result_magnitude_exp, e_i64)
                     .saturating_add(1)
-                    .max(INITIAL_SEED_PRECISION_BITS)
+                    .max(MIN_SEED_PRECISION_BITS)
             }
             XI::PosInf => {
                 // Unbounded: use seed precision.
-                INITIAL_SEED_PRECISION_BITS
+                MIN_SEED_PRECISION_BITS
             }
         };
 
@@ -349,11 +349,13 @@ fn initialize_nth_root_newton_state(
     };
 
     // Perform 2 initial Newton steps for a good seed.
-    // Cap at seed_precision so the initialization doesn't escalate precision
-    // beyond what compute_bounds() should provide. The refine_step method
-    // handles further precision growth based on the target width exponent.
+    // Use a generous cap during initialization to allow the seed to converge
+    // well; the refine_step cap will control subsequent growth.
+    let init_cap = seed_precision
+        .saturating_mul(8)
+        .min(sane::u_as_usize(U::MAX));
     for _ in 0_u32..2_u32 {
-        newton_step_nth_root(&mut state, degree, seed_precision);
+        newton_step_nth_root(&mut state, degree, init_cap);
     }
 
     Ok(state)
