@@ -48,13 +48,13 @@ jobs:
                   .profiles[]?
                   | select(.tool == "Callgrind")
                   | .summaries.total.summary.Callgrind.Ir.metrics
-                  | if .Both then .Both[0] else null end
+                  | if .Both then .Both[1] else null end
                 ),
                 ir_new: (
                   .profiles[]?
                   | select(.tool == "Callgrind")
                   | .summaries.total.summary.Callgrind.Ir.metrics
-                  | if .Both then .Both[1] elif .Left then .Left else null end
+                  | if .Both then .Both[0] elif .Left then .Left else null end
                 )
               } ]' > bench_results.json
 
