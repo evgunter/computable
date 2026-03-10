@@ -386,7 +386,10 @@ mod tests {
             .refine_to_default(target)
             .expect("refine should succeed");
         use crate::refinement::bounds_width_leq;
-        assert!(bounds_width_leq(&bounds, &target), "nth_root: should meet target");
+        assert!(
+            bounds_width_leq(&bounds, &target),
+            "nth_root: should meet target"
+        );
     }
 
     #[test]
@@ -400,7 +403,10 @@ mod tests {
             .refine_to_default(target)
             .expect("refine should succeed");
         use crate::refinement::bounds_width_leq;
-        assert!(bounds_width_leq(&bounds, &target), "mul: should meet target");
+        assert!(
+            bounds_width_leq(&bounds, &target),
+            "mul: should meet target"
+        );
     }
 
     #[test]
@@ -414,7 +420,10 @@ mod tests {
             .refine_to_default(target)
             .expect("refine should succeed");
         use crate::refinement::bounds_width_leq;
-        assert!(bounds_width_leq(&bounds, &target), "add: should meet target");
+        assert!(
+            bounds_width_leq(&bounds, &target),
+            "add: should meet target"
+        );
     }
 
     #[test]
