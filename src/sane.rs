@@ -487,19 +487,6 @@ mod tests {
         assert_eq!(XI::PosInf, XI::PosInf);
     }
 
-    #[test]
-    fn xi_to_precision_bits() {
-        assert_eq!(XI::from_i32(0).to_precision_bits(), XU::Finite(0));
-        assert_eq!(XI::from_i32(-10).to_precision_bits(), XU::Finite(10));
-        assert_eq!(XI::from_i32(-100).to_precision_bits(), XU::Finite(100));
-        // Positive exponents: coarse target, no precision needed
-        assert_eq!(XI::from_i32(5).to_precision_bits(), XU::Finite(0));
-        // NegInf = exact = infinite precision
-        assert_eq!(XI::NegInf.to_precision_bits(), XU::Inf);
-        // PosInf = unbounded = no precision needed
-        assert_eq!(XI::PosInf.to_precision_bits(), XU::Finite(0));
-    }
-
     // --- XU tests ---
 
     #[test]

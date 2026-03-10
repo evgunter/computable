@@ -35,13 +35,32 @@ use crate::binary_utils::bisection::midpoint;
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{self, I, U, XI, XU};
+use crate::sane::{self, I, U, XI};
 
 /// Minimum seed precision bits for Newton-Raphson initialization.
 ///
-/// Even when the coordinator requests low precision, we use at least this many
-/// bits for the seed to ensure N-R converges quickly for typical use cases.
+/// Used as the floor for both `compute_bounds()` seeds and `refine_step()`
+/// precision caps. This ensures Newton-Raphson converges quickly even for
+/// low-precision requests. The magnitude-aware cap in `refine_step()` handles
+/// the upper bound to prevent over-refinement.
 const MIN_SEED_PRECISION_BITS: usize = 64;
+
+/// Computes the mantissa precision bits needed to achieve a target width
+/// exponent for a value with the given magnitude exponent.
+///
+/// For a value of magnitude ~2^M, achieving width ≤ 2^e requires
+/// `M - e` bits of mantissa precision. Returns at least `MIN_SEED_PRECISION_BITS`.
+fn precision_for_target(magnitude_exp: i64, target_width_exp: i64) -> usize {
+    let needed = magnitude_exp.saturating_sub(target_width_exp);
+    if needed <= 0_i64 {
+        MIN_SEED_PRECISION_BITS
+    } else {
+        // Safe: needed > 0 and usize is at least 64 bits on supported platforms,
+        // so the conversion from positive i64 never fails.
+        let needed_usize = usize::try_from(needed).unwrap_or(usize::MAX);
+        needed_usize.max(MIN_SEED_PRECISION_BITS)
+    }
+}
 
 /// N-th root operation with Newton-Raphson refinement.
 ///
@@ -132,15 +151,48 @@ impl NodeOp for NthRootOp {
         // refine_step up to 16 times per dispatch, and Newton doubles precision
         // each step. Without a cap, 16 steps would escalate from 64 to
         // 64 * 2^16 = 4M bits, making binary_pow astronomically expensive.
-        let precision_cap = match target_width_exp.to_precision_bits() {
-            XU::Finite(bits) => {
-                // Allow 2x headroom beyond target so Newton has room to converge
-                // past the target, but don't let it grow unboundedly.
-                // Also ensure at least MIN_SEED_PRECISION_BITS.
-                sane::u_as_usize(bits.saturating_mul(2))
-                    .clamp(MIN_SEED_PRECISION_BITS, sane::u_as_usize(U::MAX))
+        //
+        // The precision needed depends on both the target width exponent AND
+        // the magnitude of the result. For a value of magnitude ~2^M, achieving
+        // width ≤ 2^e requires (M - e) mantissa bits. We estimate the result
+        // magnitude from the Newton target value and root degree.
+        let precision_cap = match target_width_exp {
+            XI::NegInf => {
+                // Exact target: no cap (allow unbounded precision).
+                sane::u_as_usize(U::MAX)
             }
-            XU::Inf => sane::u_as_usize(U::MAX),
+            XI::Finite { .. } => {
+                let e_i64 = target_width_exp.finite_i64();
+                // Estimate result magnitude from the stored target value.
+                // For x^(1/n), result ≈ 2^(log2(x)/n).
+                let read_guard = self.newton_state.read();
+                let result_magnitude_exp = match &*read_guard {
+                    Some(s) => {
+                        let target_bits = sane::u_as_usize(sane::bits_as_u(
+                            s.target.mantissa().magnitude().bits(),
+                        ));
+                        let target_exp = i64::from(s.target.exponent())
+                            .saturating_add(i64::try_from(target_bits).unwrap_or(i64::MAX));
+                        // Divide by degree to get result magnitude exponent.
+                        // degree >= 1 (NonZeroU32), so division is safe.
+                        let degree_i64 = i64::from(self.degree.get());
+                        #[allow(clippy::arithmetic_side_effects)]
+                        let result_exp = target_exp / degree_i64;
+                        result_exp
+                    }
+                    None => 0_i64,
+                };
+                // Allow 2x headroom beyond what's needed so Newton has room
+                // to converge past the target (truncation in division/power
+                // loses precision). Also ensure at least MIN_SEED_PRECISION_BITS.
+                precision_for_target(result_magnitude_exp, e_i64)
+                    .saturating_mul(2)
+                    .max(MIN_SEED_PRECISION_BITS)
+            }
+            XI::PosInf => {
+                // Unbounded: use seed precision.
+                MIN_SEED_PRECISION_BITS
+            }
         };
 
         // Perform one Newton step
@@ -630,7 +682,7 @@ mod tests {
     use super::*;
     use crate::computable::Computable;
     use crate::refinement::bounds_width_leq;
-    use crate::sane::XU;
+    use crate::sane::XI;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
     /// Helper to create NonZeroU32 from a literal in tests.
@@ -641,7 +693,7 @@ mod tests {
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        tolerance_exp: &XU,
+        tolerance_exp: &XI,
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(bounds.large());
@@ -664,7 +716,7 @@ mod tests {
         // sqrt(4) = 2
         let four = Computable::constant(bin(4, 0));
         let sqrt_four = four.nth_root(nz(2));
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sqrt_four
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -678,7 +730,7 @@ mod tests {
         // sqrt(2) ~= 1.414...
         let two = Computable::constant(bin(2, 0));
         let sqrt_two = two.nth_root(nz(2));
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sqrt_two
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -696,7 +748,7 @@ mod tests {
         // cbrt(8) = 2
         let eight = Computable::constant(bin(8, 0));
         let cbrt_eight = eight.nth_root(nz(3));
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = cbrt_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -710,7 +762,7 @@ mod tests {
         // cbrt(-8) = -2
         let neg_eight = Computable::constant(bin(-8, 0));
         let cbrt_neg_eight = neg_eight.nth_root(nz(3));
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = cbrt_neg_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -724,7 +776,7 @@ mod tests {
         // 16^(1/4) = 2
         let sixteen = Computable::constant(bin(16, 0));
         let fourth_root = sixteen.nth_root(nz(4));
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = fourth_root
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -738,7 +790,7 @@ mod tests {
         // sqrt(0.5) ~= 0.707...
         let half = Computable::constant(bin(1, -1));
         let sqrt_half = half.nth_root(nz(2));
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sqrt_half
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -758,7 +810,7 @@ mod tests {
         let cbrt_8 = Computable::constant(bin(8, 0)).nth_root(nz(3));
         let sum = sqrt_2 + cbrt_8;
 
-        let epsilon = XU::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sum
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");

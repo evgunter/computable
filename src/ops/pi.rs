@@ -24,7 +24,7 @@ use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{Sane, U, XI, XU};
+use crate::sane::{Sane, U, XI};
 
 /// Initial number of Taylor series terms for pi computation.
 pub(crate) const INITIAL_PI_TERMS: U = 10;
@@ -82,11 +82,11 @@ fn precision_bits_for_num_terms(num_terms: U) -> U {
 /// # Example
 ///
 /// ```
-/// use computable::{pi, XU};
+/// use computable::{pi, XI};
 ///
 /// let pi_val = pi();
-/// let bounds = pi_val.refine_to_default(XU::Finite(50))?;
-/// // bounds now contains pi to ~50 bits of precision
+/// let bounds = pi_val.refine_to_default(XI::from_i32(-50))?;
+/// // bounds now contain pi with width ≤ 2^(-50)
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
 pub fn pi() -> Computable {
@@ -170,22 +170,36 @@ impl NodeOp for PiOp {
     fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
-        // Leap to the needed term count based on precision target.
-        if let XU::Finite(precision_bits) = target_width_exp.to_precision_bits() {
-            let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
-            if needed > *num_terms {
-                *num_terms = needed;
-                return Ok(true);
+        // Compute the needed term count from the target width exponent.
+        // XI::Finite(e) means width ≤ 2^e. For precision we need |e| bits
+        // when e < 0, and 0 bits when e >= 0 (coarse target).
+        let needed = match target_width_exp {
+            XI::NegInf => {
+                // Exact target: need infinite precision — double terms.
+                (*num_terms).checked_mul(2).unwrap_or(U::MAX)
             }
-        }
+            XI::Finite {
+                sign: crate::sane::Sign::Neg,
+                magnitude,
+            } => {
+                // Fine target: precision_bits = magnitude.
+                let precision_bits = magnitude;
+                crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1)
+            }
+            XI::Finite { .. } | XI::PosInf => {
+                // Coarse target (e >= 0) or unbounded: no precision needed.
+                // needed=1 ensures at least INITIAL_PI_TERMS terms suffice.
+                1
+            }
+        };
 
-        // Fallback: the leap formula may not advance when the coordinator
-        // dispatches this refiner in edge cases (e.g. needed <= num_terms due
-        // to imprecision in the leap estimate). Double num_terms to guarantee
-        // forward progress.
-        let current = *num_terms;
-        *num_terms = crate::sane_arithmetic!(current; current * 2);
-        Ok(true)
+        if needed > *num_terms {
+            *num_terms = needed;
+            Ok(true)
+        } else {
+            // Already have enough terms — no further refinement needed.
+            Ok(false)
+        }
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
@@ -386,7 +400,7 @@ pub fn half_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
 mod tests {
     use super::*;
     use crate::binary::XBinary;
-    use crate::sane::{I, XU};
+    use crate::sane::{I, XI};
 
     fn bin(mantissa: i64, exponent: I) -> Binary {
         Binary::new(BigInt::from(mantissa), exponent)
@@ -465,7 +479,7 @@ mod tests {
     #[test]
     fn pi_computable_refines() {
         let pi_comp = pi();
-        let tolerance_exp = XU::Finite(20); // 2^-20 precision
+        let tolerance_exp = XI::from_i32(-20); // 2^-20 precision
         let bounds = pi_comp
             .refine_to_default(tolerance_exp)
             .expect("refine should succeed");
@@ -535,7 +549,7 @@ mod tests {
     #[test]
     fn pi_computable_refines_beyond_128_bits() {
         let pi_comp = pi();
-        let tolerance_exp = XU::Finite(128); // 2^-128 precision
+        let tolerance_exp = XI::from_i32(-128); // 2^-128 precision
         let bounds = pi_comp
             .refine_to_default(tolerance_exp)
             .expect("refine to 2^-128 should succeed");

@@ -13,7 +13,7 @@ use crate::binary::{
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{self, U, XI, XU};
+use crate::sane::{self, U, XI};
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
@@ -241,17 +241,34 @@ impl NodeOp for InvOp {
 
         // Convert target to precision bits and compute min quotient bits needed.
         // For Inf targets, fall back to doubling (one_shot_feasible = false).
-        let (min_q, one_shot_feasible) =
-            if let XU::Finite(precision_bits) = target_width_exp.to_precision_bits() {
+        let (min_q, one_shot_feasible) = match target_width_exp {
+            XI::Finite {
+                sign: crate::sane::Sign::Neg,
+                magnitude,
+            } => {
+                // Fine target: precision_bits = magnitude.
+                let precision_bits = magnitude;
                 let q = required_quotient_bits(
                     precision_bits,
                     prefix_info.prefix_shift,
                     &prefix_info.prefix_exponent,
                 );
                 (q, true)
-            } else {
+            }
+            XI::Finite { .. } | XI::PosInf => {
+                // Coarse target (e >= 0) or unbounded: precision_bits = 0.
+                let q = required_quotient_bits(
+                    0,
+                    prefix_info.prefix_shift,
+                    &prefix_info.prefix_exponent,
+                );
+                (q, true)
+            }
+            XI::NegInf => {
+                // Exact target: fall back to doubling.
                 (doubled, false)
-            };
+            }
+        };
 
         let target = if prefix_info.prefix_shift > 0 {
             let max_useful = sane_mul_or_max(prefix_info.prefix_bits, 2);
@@ -366,7 +383,7 @@ fn sane_mul_or_max(a: U, b: U) -> U {
 mod tests {
     use crate::binary::{Bounds, XBinary};
     use crate::refinement::bounds_width_leq;
-    use crate::sane::XU;
+    use crate::sane::XI;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
 
     #[test]
@@ -383,7 +400,7 @@ mod tests {
         // should produce bounds that bracket 1/3.
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
-        let tolerance_exp = XU::Finite(8);
+        let tolerance_exp = XI::from_i32(-8);
         let bounds = inv
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");

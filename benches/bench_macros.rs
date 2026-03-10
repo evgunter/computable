@@ -1,7 +1,7 @@
 #[cfg(all(feature = "time-bench", feature = "criterion-bench"))]
 compile_error!("features `time-bench` and `criterion-bench` cannot be enabled simultaneously");
 
-use computable::XU;
+use computable::XI;
 
 /// Standard precision sweep: epsilon = 2^(-bits) for each value.
 #[cfg(feature = "criterion-bench")]
@@ -36,8 +36,8 @@ pub fn high_precision() -> bool {
 
 /// Create a tolerance exponent for 2^(-bits) precision.
 #[allow(clippy::as_conversions)] // bench infrastructure: values are small constants
-pub fn epsilon(bits: usize) -> XU {
-    XU::Finite(bits as u32)
+pub fn epsilon(bits: usize) -> XI {
+    XI::from_i32(-(bits as i32))
 }
 
 /// Declares a benchmark group that works with gungraun (valgrind), criterion,
