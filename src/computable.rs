@@ -343,7 +343,7 @@ mod tests {
         assert!(upper_minus <= expected_value && expected_value <= lower_plus);
     }
 
-/// Helper: assert bounds meet the target but are not over-refined past `over_refined_exp`.
+    /// Helper: assert bounds meet the target but are not over-refined past `over_refined_exp`.
     fn assert_coarse_not_over_refined(
         bounds: &Bounds,
         target_width_exp: XI,
@@ -383,7 +383,9 @@ mod tests {
         // sqrt(10^18) ≈ 10^9
         let large = sqrt_computable(1_000_000_000_000_000_000);
         let target = XI::from_i32(4);
-        let bounds = large.refine_to_default(target).expect("refine should succeed");
+        let bounds = large
+            .refine_to_default(target)
+            .expect("refine should succeed");
         assert_coarse_not_over_refined(&bounds, target, XI::from_i32(2), "nth_root");
     }
 
@@ -394,7 +396,9 @@ mod tests {
         let b = sqrt_computable(2);
         let expr = a * b;
         let target = XI::from_i32(4);
-        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        let bounds = expr
+            .refine_to_default(target)
+            .expect("refine should succeed");
         assert_coarse_not_over_refined(&bounds, target, XI::from_i32(2), "mul");
     }
 
@@ -406,7 +410,9 @@ mod tests {
         let b = Computable::constant(bin(0, 0));
         let expr = a + b;
         let target = XI::from_i32(4);
-        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        let bounds = expr
+            .refine_to_default(target)
+            .expect("refine should succeed");
         assert_coarse_not_over_refined(&bounds, target, XI::from_i32(2), "add");
     }
 
@@ -416,7 +422,9 @@ mod tests {
         // Target width 2^12 = 4096, child demand ≈ 4096/200 ≈ 20 (coarse).
         let expr = sqrt_computable(9999).pow(2);
         let target = XI::from_i32(12);
-        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        let bounds = expr
+            .refine_to_default(target)
+            .expect("refine should succeed");
         assert_coarse_not_over_refined(&bounds, target, XI::from_i32(6), "pow");
     }
 
@@ -427,7 +435,9 @@ mod tests {
         // enough that no refinement is needed.
         let expr = Computable::constant(bin(1, 0)).sin() * Computable::constant(bin(1, 30));
         let target = XI::from_i32(34);
-        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        let bounds = expr
+            .refine_to_default(target)
+            .expect("refine should succeed");
         assert_coarse_not_over_refined(&bounds, target, XI::from_i32(24), "sin");
     }
 
@@ -437,7 +447,9 @@ mod tests {
         // on inv child is 2^34 / 2^30 = 2^4, coarse.
         let expr = sqrt_computable(2).inv() * Computable::constant(bin(1, 30));
         let target = XI::from_i32(34);
-        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        let bounds = expr
+            .refine_to_default(target)
+            .expect("refine should succeed");
         assert_coarse_not_over_refined(&bounds, target, XI::from_i32(18), "inv");
     }
 
@@ -451,7 +463,9 @@ mod tests {
         // and smaller multiplier.
         let expr = crate::ops::pi::pi() * Computable::constant(bin(1, 80));
         let target = XI::from_i32(36);
-        let bounds = expr.refine_to_default(target).expect("refine should succeed");
+        let bounds = expr
+            .refine_to_default(target)
+            .expect("refine should succeed");
         assert_coarse_not_over_refined(&bounds, target, XI::from_i32(30), "pi");
     }
 

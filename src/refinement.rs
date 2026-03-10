@@ -723,7 +723,6 @@ impl RefinementGraph {
         node: &Arc<Node>,
         target_width_exp: XI,
     ) -> Result<Bounds, ComputableError> {
-
         for _step in 0..MAX_REFINEMENT_ITERATIONS {
             let old_prefix = node.cached_prefix();
             let mut extra_steps = 0usize;
@@ -1109,7 +1108,6 @@ fn uxbinary_to_exp(ux: &UXBinary) -> XI {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
