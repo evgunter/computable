@@ -37,6 +37,7 @@ mod binary_impl;
 mod display;
 mod error;
 mod reciprocal;
+#[cfg(test)]
 mod shift;
 mod ubinary;
 mod uxbinary;
@@ -49,14 +50,13 @@ pub use reciprocal::{
     ReciprocalRounding, ReciprocalWithRemainder, extend_reciprocal, reciprocal_of_biguint,
     reciprocal_with_remainder,
 };
-pub(crate) use shift::shift_mantissa_chunked;
 pub use ubinary::UBinary;
 pub use uxbinary::UXBinary;
 pub use xbinary::XBinary;
 
 // BigInt/BigUint trait implementations for ordered_pair compatibility
 use num_bigint::{BigInt, BigUint};
-use num_traits::{One, Zero};
+use num_traits::Zero;
 
 use crate::ordered_pair::{AbsDistance, AddWidth, Interval, Unsigned};
 
@@ -97,8 +97,8 @@ impl FiniteBounds {
 
     /// Returns the upper bound of the interval.
     ///
-    /// This is a convenience method that computes `lower + width`.
-    pub fn hi(&self) -> Binary {
+    /// This is a convenience alias for `large()`.
+    pub fn hi(&self) -> &Binary {
         self.large()
     }
 
@@ -124,8 +124,7 @@ impl FiniteBounds {
     pub fn interval_sub(&self, other: &Self) -> Self {
         // [a, b] - [c, d] = [a - d, b - c]
         // lower = a - d = self.lo - other.hi = self.lo - (other.lo + other.width)
-        let other_hi = other.hi();
-        let new_lower = self.lo().sub(&other_hi);
+        let new_lower = self.lo().sub(other.hi());
         // width = (b - c) - (a - d) = b - c - a + d = (b - a) + (d - c) = width(self) + width(other)
         let new_width = self.width().add(other.width());
         Self::from_lower_and_width(new_lower, new_width)
@@ -158,7 +157,7 @@ impl FiniteBounds {
     pub fn scale_bigint(&self, k: &BigInt) -> Self {
         use num_traits::Signed;
 
-        let abs_k = UBinary::new(k.magnitude().clone(), BigInt::zero());
+        let abs_k = UBinary::new(k.magnitude().clone(), 0);
 
         if k.is_negative() {
             // k * [a,b] = -|k| * [a,b] = |k| * (-[a,b]) = |k| * [-b, -a]
@@ -171,7 +170,15 @@ impl FiniteBounds {
     /// Returns the midpoint of the interval: lo + width/2
     pub fn midpoint(&self) -> Binary {
         let width = self.width().to_binary();
-        let half_width = Binary::new(width.mantissa().clone(), width.exponent() - BigInt::one());
+        if width.mantissa().is_zero() {
+            return self.lo().clone();
+        }
+        let half_width = Binary::new_normalized(
+            width.mantissa().clone(),
+            width.exponent().checked_sub(1).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")
+            }),
+        );
         self.lo().add(&half_width)
     }
 }
@@ -226,13 +233,13 @@ mod integration_tests {
     fn uxbinary_xbinary_conversion() {
         use num_bigint::BigUint;
 
-        let ub = UBinary::new(BigUint::from(5u32), BigInt::from(2_i32));
+        let ub = UBinary::new(BigUint::from(5u32), 2);
         let uxb = UXBinary::Finite(ub);
         let xb = XBinary::from(uxb);
 
         if let XBinary::Finite(binary) = xb {
             assert_eq!(binary.mantissa(), &BigInt::from(5_i32));
-            assert_eq!(binary.exponent(), &BigInt::from(2_i32));
+            assert_eq!(binary.exponent(), 2_i32);
         } else {
             panic!("expected finite value");
         }
@@ -241,16 +248,13 @@ mod integration_tests {
     #[test]
     fn bounds_from_lower_and_width_constructs_correctly() {
         let lower = xbin(5, 0);
-        let width = UXBinary::Finite(UBinary::new(
-            num_bigint::BigUint::from(3u32),
-            BigInt::from(0_i32),
-        ));
+        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(3u32), 0));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width.clone());
 
         assert_eq!(bounds.small(), &xbin(5, 0));
         assert_eq!(bounds.width(), &width);
-        assert_eq!(bounds.large(), xbin(8, 0));
+        assert_eq!(bounds.large(), &xbin(8, 0));
     }
 
     #[test]
@@ -268,15 +272,12 @@ mod integration_tests {
     #[test]
     fn bounds_from_lower_and_width_zero_width() {
         let lower = xbin(42, 0);
-        let width = UXBinary::Finite(UBinary::new(
-            num_bigint::BigUint::from(0u32),
-            BigInt::from(0_i32),
-        ));
+        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(0u32), 0));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width);
 
         assert_eq!(bounds.small(), &xbin(42, 0));
-        assert_eq!(bounds.large(), xbin(42, 0));
+        assert_eq!(bounds.large(), &xbin(42, 0));
     }
 
     #[test]
@@ -288,7 +289,7 @@ mod integration_tests {
         let result = a.interval_sub(&b);
         // [1, 2] - [3, 5] = [1-5, 2-3] = [-4, -1]
         assert_eq!(result.lo(), &bin(-4, 0));
-        assert_eq!(result.hi(), bin(-1, 0));
+        assert_eq!(result.hi(), &bin(-1, 0));
     }
 
     #[test]
@@ -296,7 +297,7 @@ mod integration_tests {
         let a = FiniteBounds::new(bin(1, 0), bin(3, 0)); // [1, 3]
         let neg_a = a.interval_neg(); // [-3, -1]
         assert_eq!(neg_a.lo(), &bin(-3, 0));
-        assert_eq!(neg_a.hi(), bin(-1, 0));
+        assert_eq!(neg_a.hi(), &bin(-1, 0));
     }
 
     #[test]
@@ -308,7 +309,7 @@ mod integration_tests {
         let result = a.join(&b);
         // [1, 4].join([3, 6]) = [1, 6]
         assert_eq!(result.lo(), &bin(1, 0));
-        assert_eq!(result.hi(), bin(6, 0));
+        assert_eq!(result.hi(), &bin(6, 0));
     }
 
     #[test]
@@ -320,7 +321,7 @@ mod integration_tests {
         let result = a.join(&b);
         // [1, 2].join([5, 7]) = [1, 7] (convex hull)
         assert_eq!(result.lo(), &bin(1, 0));
-        assert_eq!(result.hi(), bin(7, 0));
+        assert_eq!(result.hi(), &bin(7, 0));
     }
 
     #[test]
@@ -332,7 +333,7 @@ mod integration_tests {
         let result = outer.join(&inner);
         // [1, 10].join([3, 5]) = [1, 10]
         assert_eq!(result.lo(), &bin(1, 0));
-        assert_eq!(result.hi(), bin(10, 0));
+        assert_eq!(result.hi(), &bin(10, 0));
     }
 
     #[test]
@@ -344,7 +345,7 @@ mod integration_tests {
         let result = a.intersection(&b).expect("should overlap");
         // [1, 4] ∩ [3, 6] = [3, 4]
         assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(4, 0));
+        assert_eq!(result.hi(), &bin(4, 0));
     }
 
     #[test]
@@ -369,7 +370,7 @@ mod integration_tests {
         let result = outer.intersection(&inner).expect("should overlap");
         // [1, 10] ∩ [3, 5] = [3, 5]
         assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(5, 0));
+        assert_eq!(result.hi(), &bin(5, 0));
     }
 
     #[test]
@@ -381,6 +382,6 @@ mod integration_tests {
         let result = a.intersection(&b).expect("should touch at a point");
         // [1, 3] ∩ [3, 5] = [3, 3]
         assert_eq!(result.lo(), &bin(3, 0));
-        assert_eq!(result.hi(), bin(3, 0));
+        assert_eq!(result.hi(), &bin(3, 0));
     }
 }

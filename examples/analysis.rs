@@ -8,9 +8,7 @@
 //!
 //! Run with: cargo run --example analysis --release
 
-// Share bench utilities (balanced_sum, etc.) without putting them in the library.
-// We only use #[path] here because this is support code for benchmarks and examples,
-// not first-class library code, and we want to keep it out of the public API.
+// Share bench utilities (balanced_sum) without putting them in the library.
 #[path = "../benches/common.rs"]
 mod common;
 
@@ -18,10 +16,10 @@ use std::num::NonZeroU32;
 use std::time::Instant;
 
 use computable::{
-    Binary, Bounds, Computable, FiniteBounds, XBinary, XUsize, pi, pi_bounds_at_precision,
+    Binary, Bounds, Computable, FiniteBounds, XBinary, XI, pi, pi_bounds_at_precision,
 };
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{Signed, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -34,7 +32,7 @@ use common::balanced_sum;
 fn try_finite_bounds(bounds: &Bounds) -> Option<FiniteBounds> {
     match (bounds.small(), bounds.large()) {
         (XBinary::Finite(lower), XBinary::Finite(upper)) => {
-            Some(FiniteBounds::new(lower.clone(), upper))
+            Some(FiniteBounds::new(lower.clone(), upper.clone()))
         }
         _ => None,
     }
@@ -213,13 +211,13 @@ fn integer_roots_analysis(rng: &mut StdRng) {
     }
     let float_duration = float_start.elapsed();
 
-    let epsilon = XUsize::Finite(0);
+    let epsilon = XI::from_i32(0);
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
         .iter()
         .map(|&(value, n)| {
-            Computable::constant(Binary::new(BigInt::from(value), BigInt::from(0))).nth_root(n)
+            Computable::constant(Binary::new(BigInt::from(value), 0_i32)).nth_root(n)
         })
         .collect();
     let total = balanced_sum(terms);
@@ -256,7 +254,7 @@ fn integer_roots_analysis(rng: &mut StdRng) {
 
 fn inv_analysis(rng: &mut StdRng) {
     const SAMPLE_COUNT: usize = 100;
-    const PRECISION_BITS: usize = 256;
+    const PRECISION_BITS: u32 = 256;
 
     let inputs: Vec<f64> = (0..SAMPLE_COUNT)
         .map(|_| rng.gen_range(0.1..100.0))
@@ -266,7 +264,7 @@ fn inv_analysis(rng: &mut StdRng) {
     let float_sum: f64 = inputs.iter().map(|x| 1.0 / x).sum();
     let float_duration = float_start.elapsed();
 
-    let epsilon = XUsize::Finite(PRECISION_BITS);
+    let epsilon = XI::from_i32(-(PRECISION_BITS as i32));
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
@@ -306,7 +304,7 @@ fn inv_analysis(rng: &mut StdRng) {
 
 fn sin_analysis(rng: &mut StdRng) {
     const SAMPLE_COUNT: usize = 100;
-    const PRECISION_BITS: usize = 128;
+    const PRECISION_BITS: u32 = 128;
 
     let inputs: Vec<f64> = (0..SAMPLE_COUNT)
         .map(|i| {
@@ -324,7 +322,7 @@ fn sin_analysis(rng: &mut StdRng) {
     let float_sum: f64 = inputs.iter().map(|x| x.sin()).sum();
     let float_duration = float_start.elapsed();
 
-    let epsilon = XUsize::Finite(PRECISION_BITS);
+    let epsilon = XI::from_i32(-(PRECISION_BITS as i32));
 
     let comp_start = Instant::now();
     let terms: Vec<Computable> = inputs
@@ -372,14 +370,14 @@ fn sin_analysis(rng: &mut StdRng) {
 }
 
 fn pi_analysis() {
-    let precision_bits: &[usize] = &[32, 64, 128, 256, 512, 1024];
+    let precision_bits: &[u32] = &[32, 64, 128, 256, 512, 1024];
 
     println!("== Pi Refinement Analysis ==");
     println!();
     let pi_f64 = Binary::from_f64(std::f64::consts::PI).unwrap();
 
     for &bits in precision_bits {
-        let epsilon = XUsize::Finite(bits);
+        let epsilon = XI::from_i32(-(bits as i32));
 
         let start = Instant::now();
         let bounds = pi()
@@ -410,7 +408,10 @@ fn pi_analysis() {
         let duration = start.elapsed();
         let width = upper.sub(&lower);
         let sum = lower.add(&upper);
-        let mid = Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one());
+        let mid = Binary::new(
+            sum.mantissa().clone(),
+            sum.exponent().checked_sub(1).expect("exponent overflow"),
+        );
         println!(
             "  {bits:>4} bits: {duration:>12?}  width: {:<30}  midpoint: {mid}",
             width
@@ -418,7 +419,7 @@ fn pi_analysis() {
     }
 
     // Arithmetic with pi
-    let pi_arith_epsilon = XUsize::Finite(64);
+    let pi_arith_epsilon = XI::from_i32(-64);
 
     println!();
     println!("== Pi Arithmetic ==");
@@ -428,15 +429,13 @@ fn pi_analysis() {
         (
             "2pi",
             2.0 * std::f64::consts::PI,
-            Box::new(|| Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0))) * pi())
+            Box::new(|| Computable::constant(Binary::new(BigInt::from(2), 0_i32)) * pi())
                 as Box<dyn Fn() -> Computable>,
         ),
         (
             "pi/2",
             std::f64::consts::FRAC_PI_2,
-            Box::new(|| {
-                Computable::constant(Binary::new(BigInt::from(1), BigInt::from(-1))) * pi()
-            }),
+            Box::new(|| Computable::constant(Binary::new(BigInt::from(1), -1_i32)) * pi()),
         ),
         (
             "pi^2",
@@ -459,7 +458,7 @@ fn pi_analysis() {
     }
 
     // sin(n*pi) — should be ~0
-    let sin_pi_epsilon = XUsize::Finite(32);
+    let sin_pi_epsilon = XI::from_i32(-32);
 
     println!();
     println!("== sin(n * pi) — should contain 0 ==");
@@ -470,7 +469,7 @@ fn pi_analysis() {
         let n_pi = if multiplier == 1 {
             pi()
         } else {
-            Computable::constant(Binary::new(BigInt::from(multiplier), BigInt::from(0))) * pi()
+            Computable::constant(Binary::new(BigInt::from(multiplier), 0_i32)) * pi()
         };
         let bounds = n_pi
             .sin()
@@ -492,8 +491,8 @@ fn pi_analysis() {
     println!("== High Precision Pi ==");
     println!();
 
-    for &bits in &[2048usize, 4096, 8192] {
-        let high_prec_epsilon = XUsize::Finite(bits);
+    for &bits in &[2048u32, 4096, 8192] {
+        let high_prec_epsilon = XI::from_i32(-(bits as i32));
         let start = Instant::now();
         let bounds = pi()
             .refine_to_default(high_prec_epsilon)
@@ -501,7 +500,7 @@ fn pi_analysis() {
         let duration = start.elapsed();
         println!(
             "  {bits:>5} bits (~{} digits): {duration:>10?}  width: {}",
-            (bits as f64 * 0.301).round() as u64,
+            (f64::from(bits) * 0.301).round() as u64,
             bounds.width()
         );
     }

@@ -7,21 +7,20 @@
 
 use std::sync::Arc;
 
-use num_bigint::{BigInt, BigUint};
-use num_integer::Integer;
-use num_traits::{One, Signed, ToPrimitive, Zero};
-use parking_lot::RwLock;
-
 use crate::binary::{
     Binary, Bounds, ReciprocalWithRemainder, UXBinary, XBinary, extend_reciprocal,
     reciprocal_with_remainder,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{self, XIsize, XUsize};
+use crate::sane::{self, U, XI};
+use num_bigint::{BigInt, BigUint};
+use num_integer::Integer;
+use num_traits::{One, Signed, ToPrimitive, Zero};
+use parking_lot::RwLock;
 
 /// Minimum seed precision bits for division initialization.
-const MIN_SEED_PRECISION_BITS: usize = 64;
+const MIN_SEED_PRECISION_BITS: U = 64;
 
 /// Division state for computing 1/x via the stable prefix of the inner interval.
 struct PrefixDivision {
@@ -29,7 +28,7 @@ struct PrefixDivision {
     /// The stable prefix value (common high bits of aligned endpoints).
     prefix: BigUint,
     /// Number of uncertain low bits: denom ∈ [prefix << shift, (prefix+1) << shift).
-    prefix_shift: usize,
+    prefix_shift: U,
     /// Exponent of the aligned interval (the common exponent after alignment).
     prefix_exponent: BigInt,
 }
@@ -49,9 +48,9 @@ pub struct InvOp {
 /// Info extracted from the stable prefix of the inner interval endpoints.
 struct PrefixInfo {
     prefix: BigUint,
-    prefix_shift: usize,
+    prefix_shift: U,
     prefix_exponent: BigInt,
-    prefix_bits: usize,
+    prefix_bits: U,
 }
 
 /// Extract the stable prefix from two positive Binary values.
@@ -78,7 +77,7 @@ fn extract_prefix(abs_lower: &Binary, abs_upper: &Binary) -> Option<PrefixInfo> 
         // Exact: endpoints are equal, all bits are stable
         0
     } else {
-        sane::bits_as_usize(diff.bits())
+        sane::bits_as_u(diff.bits())
     };
 
     // prefix = lo >> diff_bits (common high bits)
@@ -88,12 +87,12 @@ fn extract_prefix(abs_lower: &Binary, abs_upper: &Binary) -> Option<PrefixInfo> 
         return None;
     }
 
-    let prefix_bits = sane::bits_as_usize(prefix.bits());
+    let prefix_bits = sane::bits_as_u(prefix.bits());
 
     Some(PrefixInfo {
         prefix,
         prefix_shift: diff_bits,
-        prefix_exponent: exponent,
+        prefix_exponent: BigInt::from(exponent),
         prefix_bits,
     })
 }
@@ -141,8 +140,13 @@ fn bounds_from_division(div: &PrefixDivision) -> (Binary, Binary) {
         }
     };
 
-    let upper = Binary::new(BigInt::from(upper_mantissa), result_exponent.clone());
-    let lower = Binary::new(BigInt::from(lower_mantissa), result_exponent);
+    let result_exp_i = result_exponent.to_i32().unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "result exponent exceeds I in bounds_from_division"
+        )
+    });
+    let upper = Binary::new(BigInt::from(upper_mantissa), result_exp_i);
+    let lower = Binary::new(BigInt::from(lower_mantissa), result_exp_i);
 
     (lower, upper)
 }
@@ -157,9 +161,9 @@ impl NodeOp for InvOp {
                 let lower = existing.small();
                 let upper = existing.large();
                 let zero = XBinary::zero();
-                if lower <= &zero && upper >= zero {
+                if lower <= &zero && *upper >= zero {
                     Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf))
-                } else if upper < zero {
+                } else if *upper < zero {
                     Ok(Bounds::new(XBinary::NegInf, XBinary::zero()))
                 } else {
                     Ok(Bounds::new(XBinary::zero(), XBinary::PosInf))
@@ -177,7 +181,7 @@ impl NodeOp for InvOp {
         }
     }
 
-    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let mut state = self.division_state.write();
 
@@ -186,7 +190,7 @@ impl NodeOp for InvOp {
         let upper = input_bounds.large();
         let zero = XBinary::zero();
 
-        if lower <= &zero && upper >= zero {
+        if lower <= &zero && upper >= &zero {
             // Interval spans zero — can't compute reciprocal yet
             *state = None;
             return Ok(true);
@@ -237,17 +241,34 @@ impl NodeOp for InvOp {
 
         // Convert target to precision bits and compute min quotient bits needed.
         // For Inf targets, fall back to doubling (one_shot_feasible = false).
-        let (min_q, one_shot_feasible) =
-            if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits() {
+        let (min_q, one_shot_feasible) = match target_width_exp {
+            XI::Finite {
+                sign: crate::sane::Sign::Neg,
+                magnitude,
+            } => {
+                // Fine target: precision_bits = magnitude.
+                let precision_bits = magnitude;
                 let q = required_quotient_bits(
                     precision_bits,
                     prefix_info.prefix_shift,
                     &prefix_info.prefix_exponent,
                 );
-                (q, precision_bits <= crate::MAX_COMPUTATION_BITS)
-            } else {
+                (q, true)
+            }
+            XI::Finite { .. } | XI::PosInf => {
+                // Coarse target (e >= 0) or unbounded: precision_bits = 0.
+                let q = required_quotient_bits(
+                    0,
+                    prefix_info.prefix_shift,
+                    &prefix_info.prefix_exponent,
+                );
+                (q, true)
+            }
+            XI::NegInf => {
+                // Exact target: fall back to doubling.
                 (doubled, false)
-            };
+            }
+        };
 
         let target = if prefix_info.prefix_shift > 0 {
             let max_useful = sane_mul_or_max(prefix_info.prefix_bits, 2);
@@ -321,7 +342,7 @@ impl NodeOp for InvOp {
         true
     }
 
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         let min_abs = match self.inner.cached_bounds() {
             Some(b) => {
                 let (lo, hi) = b.abs();
@@ -341,20 +362,20 @@ impl NodeOp for InvOp {
 /// `2^(-Q - shift - exponent)` is at most `2^(-precision_bits)`.
 ///
 /// Requires: `Q ≥ precision_bits - shift - exponent`.
-/// Clamps to `[0, MAX_COMPUTATION_BITS]`.
-fn required_quotient_bits(precision_bits: usize, shift: usize, exponent: &BigInt) -> usize {
+/// Clamps to `[0, U::MAX]`.
+fn required_quotient_bits(precision_bits: U, shift: U, exponent: &BigInt) -> U {
     let target = BigInt::from(precision_bits) - BigInt::from(shift) - exponent;
     if target <= BigInt::zero() {
         return 0;
     }
-    match target.to_usize() {
-        Some(q) => q.min(crate::MAX_COMPUTATION_BITS),
-        None => crate::MAX_COMPUTATION_BITS,
+    match target.to_u32() {
+        Some(q) => q,
+        None => U::MAX,
     }
 }
 
-/// Saturating multiply for usize: returns `a * b` or `usize::MAX` on overflow.
-fn sane_mul_or_max(a: usize, b: usize) -> usize {
+/// Saturating multiply for U: returns `a * b` or `U::MAX` on overflow.
+fn sane_mul_or_max(a: U, b: U) -> U {
     a.saturating_mul(b)
 }
 
@@ -362,7 +383,7 @@ fn sane_mul_or_max(a: usize, b: usize) -> usize {
 mod tests {
     use crate::binary::{Bounds, XBinary};
     use crate::refinement::bounds_width_leq;
-    use crate::sane::XUsize;
+    use crate::sane::XI;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
 
     #[test]
@@ -379,13 +400,13 @@ mod tests {
         // should produce bounds that bracket 1/3.
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
-        let tolerance_exp = XUsize::Finite(8);
+        let tolerance_exp = XI::from_i32(-8);
         let bounds = inv
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let three = bin(3, 0);
         let one = bin(1, 0);
 

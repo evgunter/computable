@@ -7,14 +7,14 @@
 //! - `NodeOp` trait for composable operations (arithmetic, transcendental, etc.)
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
 use crate::prefix::Prefix;
-use crate::sane::XIsize;
+use crate::sane::{U, XI};
 
 /// Shared API for retrieving bounds with lazy computation.
 pub trait BoundsAccess {
@@ -95,7 +95,7 @@ where
         let previous_state = snapshot.state.clone();
         let next_state = (self.refine)(previous_state.clone())?;
         if next_state == previous_state {
-            if previous_bounds.small() == &previous_bounds.large() {
+            if previous_bounds.small() == previous_bounds.large() {
                 return Ok(());
             }
             return Err(ComputableError::StateUnchanged);
@@ -134,7 +134,7 @@ pub trait NodeOp: Send + Sync {
         let bounds = self.compute_bounds()?;
         Ok(Prefix::from_lower_upper(
             bounds.small().clone(),
-            bounds.large(),
+            bounds.large().clone(),
         ))
     }
 
@@ -143,7 +143,7 @@ pub trait NodeOp: Send + Sync {
     /// Contract: after returning `Ok(true)`, `compute_prefix()` should return
     /// a Prefix with `width_exponent < current` (at least 1 bit improvement).
     /// Ideally `width_exponent ≤ target_width_exp`.
-    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError>;
+    fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError>;
 
     fn children(&self) -> Vec<Arc<Node>>;
     fn is_refiner(&self) -> bool;
@@ -155,7 +155,7 @@ pub trait NodeOp: Send + Sync {
     /// still allowing this node to meet the target. Every non-leaf NodeOp
     /// must implement this — there is no default, so forgetting to implement
     /// it for a new operation is a compile error.
-    fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary;
+    fn child_demand_budget(&self, target_width: &UXBinary, child_idx: bool) -> UXBinary;
 
     /// Whether this op's `child_demand_budget` depends on cached bounds.
     ///
@@ -212,7 +212,7 @@ impl Default for RefinementSync {
 /// is called between refinement steps (outside of refine_to), it may return stale cached
 /// values. Consider whether this is acceptable for your use case.
 pub struct Node {
-    pub id: usize,
+    pub id: U,
     pub op: Arc<dyn NodeOp>,
     /// Prefix cache for the refinement system (power-of-2 width).
     pub prefix_cache: RwLock<Option<Prefix>>,
@@ -223,7 +223,7 @@ pub struct Node {
 
 impl Node {
     pub fn new(op: Arc<dyn NodeOp>) -> Arc<Self> {
-        static NODE_IDS: AtomicUsize = AtomicUsize::new(0);
+        static NODE_IDS: AtomicU32 = AtomicU32::new(0);
         Arc::new(Self {
             id: NODE_IDS.fetch_add(1, Ordering::Relaxed),
             op,
@@ -244,25 +244,54 @@ impl Node {
     }
 
     /// Returns exact bounds, computing and caching if needed.
+    ///
+    /// Only caches bounds (not prefix) to avoid the overhead of
+    /// `Prefix::from_lower_upper` on every intermediate node during
+    /// cascading evaluation. The prefix is derived lazily by
+    /// `get_prefix()` when needed.
     pub fn get_bounds(&self) -> Result<Bounds, ComputableError> {
         if let Some(bounds) = self.cached_bounds() {
             return Ok(bounds);
         }
         let bounds = self.op.compute_bounds()?;
-        self.set_bounds(bounds.clone());
+        {
+            let mut cache = self.bounds_cache.write();
+            *cache = Some(bounds.clone());
+        }
         Ok(bounds)
     }
 
     /// Returns cached prefix, computing and caching if needed.
+    ///
+    /// If bounds are already cached (from `get_bounds()`), derives the
+    /// prefix from those bounds without recomputing them. This avoids
+    /// redundant `compute_bounds()` calls during cascading evaluation
+    /// where `get_bounds()` has already been called on children.
+    ///
+    /// Uses direct cache writes (no condvar notification) since this is
+    /// initial lazy evaluation, not a refinement update. Notifications
+    /// are only needed when bounds *change* during refinement (via
+    /// `set_prefix` / `set_prefix_and_bounds`).
     pub fn get_prefix(&self) -> Result<Prefix, ComputableError> {
         if let Some(prefix) = self.cached_prefix() {
             return Ok(prefix);
         }
-        let prefix = self.compute_prefix()?;
-        self.set_prefix(prefix.clone());
+        // If bounds are cached, derive prefix from them. This is
+        // cheaper than compute_prefix() which would re-call
+        // compute_bounds() on children.
+        let prefix = if let Some(bounds) = self.cached_bounds() {
+            Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone())
+        } else {
+            self.compute_prefix()?
+        };
+        {
+            let mut cache = self.prefix_cache.write();
+            *cache = Some(prefix.clone());
+        }
         Ok(prefix)
     }
 
+    #[allow(dead_code)]
     pub fn set_prefix(&self, prefix: Prefix) {
         {
             let mut cache = self.prefix_cache.write();
@@ -277,8 +306,19 @@ impl Node {
     }
 
     /// Sets the exact bounds cache and derives prefix from it.
+    #[allow(dead_code)]
     pub fn set_bounds(&self, bounds: Bounds) {
-        let prefix = Prefix::from_lower_upper(bounds.small().clone(), bounds.large());
+        let prefix = Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
+        self.set_prefix_and_bounds(prefix, bounds);
+    }
+
+    /// Sets both prefix and exact bounds caches without re-deriving the prefix.
+    ///
+    /// Use this when the prefix has already been computed from the bounds
+    /// (e.g. during propagation where the prefix is needed for comparison
+    /// before deciding whether to update). Avoids the redundant
+    /// `Prefix::from_lower_upper` that `set_bounds` would perform.
+    pub fn set_prefix_and_bounds(&self, prefix: Prefix, bounds: Bounds) {
         {
             let mut cache = self.prefix_cache.write();
             *cache = Some(prefix);
@@ -296,7 +336,7 @@ impl Node {
     }
 
     /// Performs one refinement step targeting the given width exponent.
-    pub fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    pub fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
         self.op.refine_step(target_width_exp)
     }
 

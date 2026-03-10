@@ -23,7 +23,7 @@
 //! use num_bigint::{BigInt, BigUint};
 //!
 //! // Create a constant
-//! let x = Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0)));
+//! let x = Computable::constant(Binary::new(BigInt::from(2), 0_i32));
 //!
 //! // Arithmetic operations
 //! let y = x.clone() + x.clone();
@@ -90,4 +90,4 @@ pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT
 pub use error::ComputableError;
 pub use ops::{pi, pi_bounds_at_precision};
 pub use ordered_pair::{Interval, IntervalError};
-pub use sane::{MAX_COMPUTATION_BITS, Sane, XIsize, XUsize};
+pub use sane::{I, Sane, Sign, U, XI, XU};

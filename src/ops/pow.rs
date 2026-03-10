@@ -7,14 +7,14 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigUint;
 use num_traits::Zero;
 
 use crate::binary::{Bounds, UBinary, UXBinary, XBinary};
 use crate::binary_utils::power::{is_negative, is_positive, xbinary_max, xbinary_pow};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::XIsize;
+use crate::sane::XI;
 
 /// Integer power operation.
 ///
@@ -57,7 +57,7 @@ impl NodeOp for PowOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XI) -> Result<bool, ComputableError> {
         // This is a passive combinator - it doesn't refine, just propagates bounds
         Ok(false)
     }
@@ -72,7 +72,7 @@ impl NodeOp for PowOp {
 
     /// Max derivative of x^n over [lower, upper] is n · max_abs^(n-1).
     /// Child budget = target / (n · max_abs^(n-1)).
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         let n = self.exponent.get();
         if n == 1 {
             return target_width.clone();
@@ -86,7 +86,7 @@ impl NodeOp for PowOp {
         };
         // Compute max_abs^(n-1) via exponentiation by squaring.
         let power = uxbinary_pow(&max_abs, n - 1);
-        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), BigInt::zero()));
+        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), 0));
         let denominator = n_ux.mul(&power);
         target_width.div_floor(&denominator)
     }
@@ -99,7 +99,7 @@ impl NodeOp for PowOp {
 /// Computes base^exp for UXBinary via exponentiation by squaring.
 pub(crate) fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
     if exp == 0 {
-        return UXBinary::Finite(UBinary::new(BigUint::from(1u32), BigInt::zero()));
+        return UXBinary::Finite(UBinary::new(BigUint::from(1u32), 0));
     }
     match base {
         UXBinary::Inf => UXBinary::Inf,
@@ -107,7 +107,7 @@ pub(crate) fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
             if b.mantissa().is_zero() {
                 return UXBinary::zero();
             }
-            let mut result = UBinary::new(BigUint::from(1u32), BigInt::zero());
+            let mut result = UBinary::new(BigUint::from(1u32), 0);
             let mut base_val = b.clone();
             let mut e = exp;
             while e > 0 {
@@ -168,12 +168,12 @@ fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) ->
 mod tests {
     use crate::binary::{Binary, Bounds};
     use crate::computable::Computable;
-    use crate::sane::XUsize;
+    use crate::sane::XI;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
-    fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XUsize) {
+    fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XI) {
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         assert!(
             lower <= *expected && *expected <= upper,
@@ -193,7 +193,7 @@ mod tests {
 
         let expected = bin(9, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -205,7 +205,7 @@ mod tests {
 
         let expected = bin(8, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -217,7 +217,7 @@ mod tests {
 
         let expected = bin(9, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -229,7 +229,7 @@ mod tests {
 
         let expected = bin(-8, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -240,7 +240,7 @@ mod tests {
         let bounds = squared.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(4, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(16, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(16, 0));
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         let bounds = squared.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(4, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(16, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(16, 0));
     }
 
     #[test]
@@ -262,7 +262,7 @@ mod tests {
         let bounds = squared.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(0, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(9, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(9, 0));
     }
 
     #[test]
@@ -273,7 +273,7 @@ mod tests {
         let bounds = cubed.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(8, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(64, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(64, 0));
     }
 
     #[test]
@@ -284,7 +284,7 @@ mod tests {
         let bounds = cubed.bounds().expect("bounds should succeed");
 
         assert_eq!(unwrap_finite(bounds.small()), bin(-64, 0));
-        assert_eq!(unwrap_finite(&bounds.large()), bin(-8, 0));
+        assert_eq!(unwrap_finite(bounds.large()), bin(-8, 0));
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
 
         let expected = bin(3, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
 
         let expected = bin(1, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -320,7 +320,7 @@ mod tests {
 
         let expected = bin(1, 0);
         assert_eq!(unwrap_finite(bounds.small()), expected);
-        assert_eq!(unwrap_finite(&bounds.large()), expected);
+        assert_eq!(unwrap_finite(bounds.large()), expected);
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
         let three_sq = Computable::constant(bin(3, 0)).pow(2);
         let sum = two_sq + three_sq;
 
-        let tolerance_exp = XUsize::Finite(8);
+        let tolerance_exp = XI::from_i32(-8);
         let bounds = sum
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
@@ -346,7 +346,7 @@ mod tests {
         let sqrt_two = two.nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"));
         let squared = sqrt_two.pow(2);
 
-        let tolerance_exp = XUsize::Finite(8);
+        let tolerance_exp = XI::from_i32(-8);
         let bounds = squared
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");

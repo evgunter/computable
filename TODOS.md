@@ -1,5 +1,40 @@
 # TODOs - Ranked by Ease of Completion
 
+## Tier 0: Easy (Unblocked)
+
+### <a id="sane-i64"></a>sane-i64: Extend `sane_arithmetic!` (or add a new macro) to support i64 checked arithmetic
+**File:** `src/sane.rs`
+The `sane_arithmetic!` macro currently only works with `usize` operands (its guard pattern requires `$guard:ident`). After the BigInt→i64 exponent migration, many sites in the codebase use verbose `checked_mul(...).unwrap_or_else(|| detected_computable_would_exhaust_memory!(...))` chains for i64 exponent arithmetic. A `sane_i64_arithmetic!` macro (or extending the existing macro to accept i64) would make these sites more concise and consistent. Key sites to refactor:
+- `src/ops/sin.rs` `taylor_sin_bounds_rational`: ~10 checked ops computing `common_exp`, `shift_per_step`, `first_shift`, `two_k`/`two_k_plus_1`, and the accumulation loop
+- `src/binary/binary_impl.rs`: `mul`, `normalize`, `Shl`/`Shr` impls
+- `src/binary/ubinary.rs`: `mul`, `div_floor`, `normalize`, `Shl`/`Shr` impls
+- `src/binary/reciprocal.rs`: `reciprocal_of_biguint`, `reciprocal_rounded_abs_extended`
+- `src/binary_utils/bisection.rs`: `midpoint`, `bisection_step_normalized`, `normalize_bounds`
+- `src/ops/nth_root.rs`: `binary_div_floor`, `binary_div_ceil`, `truncate_floor`/`truncate_ceil`
+- `src/finite_interval.rs`: `midpoint`
+
+---
+
+### <a id="op-constructors"></a>op-constructors: Give ops proper constructors so callers don't couple to internal structure
+**File:** `src/computable.rs`
+`Computable::sin` currently reaches into `SinOp`, `InvOp`, `NthRootOp` etc. to construct them with internal `RwLock` fields. Each op should expose a constructor (e.g., `SinOp::new(inner, pi_node)`) that encapsulates initialization, so callers only depend on the public API.
+
+---
+
+### <a id="pi-initial-terms"></a>pi-initial-terms: Reduce INITIAL_PI_TERMS so pi doesn't start with ~47 bits of prefix precision
+**File:** `src/ops/pi.rs`
+`INITIAL_PI_TERMS = 10` gives ~47 bits of prefix precision before any refinement. This means pi can never be tested for coarse-tolerance over-refinement — its initial bounds are already far tighter than any coarse target. Reduce the initial term count (e.g., to 1 or 2) and let the leap formula in `refine_step` handle jumping to the needed precision. The `coarse_epsilon_does_not_over_refine_pi` test in `src/computable.rs` should then be updated to use a smaller multiplier and tighter target/boundary.
+
+---
+
+### <a id="incremental-arctan"></a>incremental-arctan: Cache arctan Taylor series intermediate state for incremental computation
+**File:** `src/ops/pi.rs`
+**Prior attempt:** `mng/pi-no-double` branch (commit `7de0fcd`)
+An `ArctanCache` struct was added to store partial sums and k-power state so additional Taylor terms could be appended in O(delta) instead of recomputing from scratch. The cache was invalidated and rebuilt whenever `precision_bits` increased past the cached precision. In practice, `num_terms` and `precision_bits` increase together (since `precision_bits_for_num_terms` is monotonic), so the cache was invalidated on nearly every refinement step — paying management overhead on top of the same O(N) computation. This caused +80–490% regressions on pi-related benchmarks at higher precision levels.
+A working approach needs to avoid cache invalidation entirely. One idea: compute all terms at a fixed high precision from the start (or use a precision that only grows in large steps), so the cache is extended incrementally without rebuilds.
+
+---
+
 ## Tier 1: Medium (Unblocked)
 
 ### <a id="kill-slow-refiners"></a>kill-slow-refiners: Kill outstanding refiners once precision is achieved

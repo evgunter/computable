@@ -1,5 +1,11 @@
 //! Checked arithmetic for computation-size values (precision bits, term counts, bit lengths).
 //!
+//! # Fixed-width computation types
+//!
+//! All computation sizes use [`U`] (`u32`) rather than platform-dependent `usize`.
+//! This provides compile-time guarantees about the maximum representable value
+//! (`u32::MAX` ≈ 4 billion bits of precision, or ~512 MB per number).
+//!
 //! # Conventions
 //!
 //! - **`detected_computable_with_infinite_value!(...)`**: Use for cases where code encounters
@@ -16,20 +22,18 @@
 //! - **`sane_arithmetic!(var1, var2, ...; expr)`**: Use for integer arithmetic on values
 //!   representing computation sizes (precision bits, term counts, bit lengths). Each
 //!   guard variable is shadowed as a [`Sane`] newtype whose operators use `checked_*`
-//!   internally, panicking on overflow. The result is unwrapped back to `usize` and
-//!   checked against `MAX_COMPUTATION_BITS`.
+//!   internally, panicking on overflow. The result is unwrapped back to [`U`].
 
-/// Maximum reasonable computation size in bits. A computation requiring more than
-/// ~2^32 bits of precision would need ~512 MB just to store one number, and intermediate
-/// results would require far more. Guaranteed `<= usize::MAX` on all platforms.
-pub const MAX_COMPUTATION_BITS: usize = if usize::BITS >= 32 {
-    #[allow(clippy::as_conversions)] // safe: branch guards usize::BITS >= 32
-    {
-        u32::MAX as usize
-    }
-} else {
-    usize::MAX
-};
+/// The unsigned integer type for computation sizes (precision bits, term counts,
+/// bit lengths, node IDs, etc.). Fixed at `u32` for compile-time size guarantees.
+///
+/// A computation requiring more than ~2^32 bits of precision would need ~512 MB
+/// just to store one number, and intermediate results would require far more.
+pub type U = u32;
+
+/// The signed integer type corresponding to [`U`], used for exponents in
+/// [`Binary`]/[`UBinary`] and width exponents in [`XI`]. Fixed at `i32`.
+pub type I = i32;
 
 /// Macro to flag unexpected but potentially valid extended reals cases.
 ///
@@ -85,45 +89,13 @@ macro_rules! detected_computable_would_exhaust_memory {
     };
 }
 
-/// Asserts that a computation size parameter (precision bits, term count, bit length,
-/// etc.) is within reasonable bounds for memory.
-///
-/// # Arguments
-///
-/// * `$val` - An integer value representing a computation size
-///
-/// # Panics
-///
-/// Panics via `detected_computable_would_exhaust_memory!` if the value exceeds
-/// `MAX_COMPUTATION_BITS` (2^32).
-///
-/// # Example
-///
-/// ```should_panic
-/// computable::assert_sane_computation_size!(usize::MAX);
-/// ```
-#[macro_export]
-macro_rules! assert_sane_computation_size {
-    ($val:expr) => {
-        // $val must be usize. If it exceeds MAX_COMPUTATION_BITS, the
-        // computation would exhaust memory, so we panic early.
-        let __val: usize = $val;
-        if __val > $crate::MAX_COMPUTATION_BITS {
-            $crate::detected_computable_would_exhaust_memory!(concat!(
-                stringify!($val),
-                " exceeds MAX_COMPUTATION_BITS"
-            ));
-        }
-    };
-}
-
-/// Guards one or more `usize` variables and evaluates an arithmetic expression using
+/// Guards one or more [`U`] variables and evaluates an arithmetic expression using
 /// checked arithmetic via [`Sane`].
 ///
 /// Each guard variable is shadowed as a [`Sane`] newtype whose `+`, `-`, `*`, `/`
 /// operators use `checked_*` internally, panicking via
 /// [`detected_computable_would_exhaust_memory!`] on overflow. The result is unwrapped
-/// back to `usize` and checked against [`MAX_COMPUTATION_BITS`].
+/// back to [`U`].
 ///
 /// # Syntax
 ///
@@ -138,9 +110,9 @@ macro_rules! assert_sane_computation_size {
 /// ```
 /// use computable::sane_arithmetic;
 ///
-/// let num_terms: usize = 10;
+/// let num_terms: u32 = 10;
 /// let exponent = sane_arithmetic!(num_terms; 2 * num_terms + 1);
-/// assert_eq!(exponent, 21);
+/// assert_eq!(exponent, 21_u32);
 /// ```
 #[macro_export]
 macro_rules! sane_arithmetic {
@@ -150,50 +122,57 @@ macro_rules! sane_arithmetic {
             let $guard = $crate::Sane($guard);
         )+
         let $crate::Sane(__result) = { $expr };
-        $crate::assert_sane_computation_size!(__result);
         __result
     }};
 }
 
-/// Converts a `u64` bit count (e.g. from `BigUint::bits()`) to `usize`,
-/// panicking if the value exceeds `MAX_COMPUTATION_BITS`.
+/// Converts a `u64` bit count (e.g. from `BigUint::bits()`) to [`U`],
+/// panicking if the value exceeds `U::MAX`.
 ///
-/// This centralizes the one unavoidable `u64 -> usize` platform cast that
-/// arises because `num_bigint::BigUint::bits()` returns `u64` but shift
-/// operations and precision parameters use `usize`.
+/// This centralizes the one unavoidable `u64 -> U` cast that arises because
+/// `num_bigint::BigUint::bits()` returns `u64` but shift operations and
+/// precision parameters use [`U`].
 ///
 /// # Panics
 ///
 /// Panics via `detected_computable_would_exhaust_memory!` if `bits` exceeds
-/// `MAX_COMPUTATION_BITS`.
-pub fn bits_as_usize(bits: u64) -> usize {
-    // MAX_COMPUTATION_BITS <= usize::MAX by construction, so this single check
-    // guarantees both "won't exhaust memory" and "fits in usize".
-    #[allow(clippy::as_conversions)] // usize -> u64: always widens or is a no-op
-    let max = MAX_COMPUTATION_BITS as u64;
-    if bits > max {
-        detected_computable_would_exhaust_memory!("bit count exceeds MAX_COMPUTATION_BITS");
-    }
-    #[allow(clippy::as_conversions)] // safe: bits <= MAX_COMPUTATION_BITS <= usize::MAX
+/// `U::MAX`.
+/// Compile-time guarantee that `usize` is at least as wide as [`U`] (`u32`),
+/// so `u32 as usize` is always a lossless widening or identity conversion.
+const _: () = assert!(size_of::<usize>() >= size_of::<U>());
+
+/// Converts a [`U`] (`u32`) to `usize` for use at BigInt shift boundaries.
+///
+/// BigInt shift operators require `usize`, but all computation sizes use [`U`].
+/// The const assertion above guarantees this is lossless on any supported platform.
+pub fn u_as_usize(v: U) -> usize {
+    #[allow(clippy::as_conversions)]
     {
-        bits as usize
+        v as usize
     }
 }
 
-/// Subtracts one from a `NonZeroUsize`, returning the result as `usize`.
-///
-/// This is trivially correct: `NonZeroUsize` guarantees `>= 1`, so `- 1 >= 0`.
-pub fn sub_one(n: std::num::NonZeroUsize) -> usize {
-    #[allow(clippy::arithmetic_side_effects)]
-    {
-        n.get() - 1
+pub fn bits_as_u(bits: u64) -> U {
+    match U::try_from(bits) {
+        Ok(v) => v,
+        Err(_) => detected_computable_would_exhaust_memory!("bit count exceeds U::MAX"),
     }
 }
 
-/// Subtracts one from a `NonZeroU64`, returning the result as `u64`.
+/// Converts a `u64` bit count to [`I`] (`i32`), panicking if the value
+/// exceeds `I::MAX`. Used in width-exponent computations where bit counts
+/// must be combined with signed exponents.
+pub fn bits_as_i(bits: u64) -> I {
+    match I::try_from(bits) {
+        Ok(v) => v,
+        Err(_) => detected_computable_would_exhaust_memory!("bit count exceeds I::MAX"),
+    }
+}
+
+/// Subtracts one from a `NonZeroU32`, returning the result as [`U`].
 ///
-/// This is trivially correct: `NonZeroU64` guarantees `>= 1`, so `- 1 >= 0`.
-pub fn sub_one_u64(n: std::num::NonZeroU64) -> u64 {
+/// This is trivially correct: `NonZeroU32` guarantees `>= 1`, so `- 1 >= 0`.
+pub fn sub_one(n: std::num::NonZeroU32) -> U {
     #[allow(clippy::arithmetic_side_effects)]
     {
         n.get() - 1
@@ -210,19 +189,12 @@ pub fn sub_one_u64(n: std::num::NonZeroU64) -> u64 {
 /// Created automatically by the [`sane_arithmetic!`] macro — not intended for
 /// direct construction outside of that macro.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Sane(pub usize);
-
-// Compile-time assertions:
-// - usize ≤ 64 bits: our overflow reasoning assumes checked_* catches all overflows
-// - usize ≥ 32 bits: u32 literals can be converted to usize with `as`
-const _: () = assert!(usize::BITS <= 64);
-const _: () = assert!(u32::BITS <= usize::BITS);
+pub struct Sane(pub U);
 
 /// Implements checked arithmetic operators for [`Sane`].
 ///
 /// Each invocation generates three impls: `Sane op Sane`, `Sane op u32`, and
-/// `u32 op Sane`. The `u32` variants convert via `as usize` (safe per
-/// compile-time assert `u32::BITS <= usize::BITS`).
+/// `u32 op Sane`. The `u32` variants construct `Sane` directly since [`U`] is `u32`.
 macro_rules! impl_sane_binary_op {
     ($trait:ident, $method:ident, $checked:ident, $msg:literal) => {
         impl core::ops::$trait for Sane {
@@ -240,9 +212,7 @@ macro_rules! impl_sane_binary_op {
             type Output = Sane;
             #[inline]
             fn $method(self, rhs: u32) -> Sane {
-                #[allow(clippy::as_conversions)]
-                // safe: compile-time assert guarantees u32 fits in usize
-                core::ops::$trait::$method(self, Sane(rhs as usize))
+                core::ops::$trait::$method(self, Sane(rhs))
             }
         }
 
@@ -250,9 +220,7 @@ macro_rules! impl_sane_binary_op {
             type Output = Sane;
             #[inline]
             fn $method(self, rhs: Sane) -> Sane {
-                #[allow(clippy::as_conversions)]
-                // safe: compile-time assert guarantees u32 fits in usize
-                core::ops::$trait::$method(Sane(self as usize), rhs)
+                core::ops::$trait::$method(Sane(self), rhs)
             }
         }
     };
@@ -263,29 +231,104 @@ impl_sane_binary_op!(Sub, sub, checked_sub, "Sane subtraction underflow");
 impl_sane_binary_op!(Mul, mul, checked_mul, "Sane multiplication overflow");
 impl_sane_binary_op!(Div, div, checked_div, "Sane division by zero");
 
+/// Sign of an [`XI`] value, following `num_bigint::Sign` convention.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sign {
+    Pos,
+    Neg,
+}
+
+impl std::ops::Neg for Sign {
+    type Output = Sign;
+    fn neg(self) -> Sign {
+        match self {
+            Self::Pos => Self::Neg,
+            Self::Neg => Self::Pos,
+        }
+    }
+}
+
 /// Signed integer extended with ±infinity, used for width/magnitude exponents.
 ///
 /// - `PosInf`: 2^(+inf) = unbounded
 /// - `NegInf`: 2^(-inf) = 0 (exact)
-/// - `Finite(e)`: normal 2^e
+/// - `Finite { sign, magnitude }`: normal 2^(±magnitude)
 ///
-/// Uses `isize` (the signed equivalent of `usize`) because width exponents represent
-/// precision — how many bits are known. On 64-bit platforms this is identical to `i64`;
-/// on 32-bit it is sufficient since `MAX_COMPUTATION_BITS = u32::MAX`.
+/// Uses sign-magnitude representation ([`Sign`] + [`U`]) so that negation
+/// is always a simple sign flip with no overflow risk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum XIsize {
+pub enum XI {
     NegInf,
-    Finite(isize),
+    Finite { sign: Sign, magnitude: U },
     PosInf,
 }
 
-impl PartialOrd for XIsize {
+impl XI {
+    /// Creates a finite `XI` from an `i32`. Canonicalizes zero to `Sign::Pos`.
+    pub fn from_i32(v: i32) -> Self {
+        let sign = if v >= 0_i32 { Sign::Pos } else { Sign::Neg };
+        Self::Finite {
+            sign,
+            magnitude: v.unsigned_abs(),
+        }
+    }
+
+    /// Returns the value as `i64`, or `None` for infinities.
+    ///
+    /// Always succeeds for `Finite` since sign + `u32` fits in `i64`.
+    pub fn to_i64(self) -> Option<i64> {
+        match self {
+            Self::Finite { sign, magnitude } => {
+                let mag = i64::from(magnitude);
+                Some(match sign {
+                    Sign::Pos => mag,
+                    #[allow(clippy::arithmetic_side_effects)]
+                    Sign::Neg => -mag,
+                })
+            }
+            Self::NegInf | Self::PosInf => None,
+        }
+    }
+
+    /// Extracts the finite value as `i64`.
+    ///
+    /// For infinity variants, panics — caller must handle those separately.
+    pub fn finite_i64(self) -> i64 {
+        self.to_i64().unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "infinite exponent where finite expected"
+            )
+        })
+    }
+
+    /// Interprets this width exponent as a precision requirement in bits.
+    ///
+    /// - `NegInf` (width = 0, exact) → `XU::Inf` (infinite precision needed)
+    /// - Negative or zero exponent → `XU::Finite(magnitude)` (bits of precision)
+    /// - Positive exponent → `XU::Finite(0)` (coarse target, no precision)
+    /// - `PosInf` (width = ∞) → `XU::Finite(0)` (unbounded, no precision)
+    pub fn to_precision_bits(self) -> XU {
+        match self {
+            Self::NegInf => XU::Inf,
+            Self::Finite {
+                sign: Sign::Neg,
+                magnitude,
+            } => XU::Finite(magnitude),
+            Self::Finite {
+                sign: Sign::Pos, ..
+            }
+            | Self::PosInf => XU::Finite(0),
+        }
+    }
+}
+
+impl PartialOrd for XI {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for XIsize {
+impl Ord for XI {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         match (self, other) {
@@ -295,52 +338,42 @@ impl Ord for XIsize {
             (Self::PosInf, Self::PosInf) => Ordering::Equal,
             (Self::PosInf, _) => Ordering::Greater,
             (_, Self::PosInf) => Ordering::Less,
-            (Self::Finite(a), Self::Finite(b)) => a.cmp(b),
+            (
+                Self::Finite {
+                    sign: s1,
+                    magnitude: m1,
+                },
+                Self::Finite {
+                    sign: s2,
+                    magnitude: m2,
+                },
+            ) => match (s1, s2) {
+                (Sign::Pos, Sign::Neg) => Ordering::Greater,
+                (Sign::Neg, Sign::Pos) => Ordering::Less,
+                (Sign::Pos, Sign::Pos) => m1.cmp(m2),
+                (Sign::Neg, Sign::Neg) => m2.cmp(m1),
+            },
         }
     }
 }
 
-impl XIsize {
-    /// Interprets this width exponent as a precision requirement in bits.
-    ///
-    /// - `NegInf` (width = 0, exact) → `XUsize::Inf` (infinite precision needed)
-    /// - `Finite(e)` with `e <= 0` → `XUsize::Finite(|e|)` (|e| bits of precision)
-    /// - `Finite(e)` with `e > 0` → `XUsize::Finite(0)` (coarse target, no precision)
-    /// - `PosInf` (width = ∞) → `XUsize::Finite(0)` (unbounded, no precision)
-    ///
-    /// This replaces the dangerous `unsigned_abs()` pattern that mapped
-    /// `NegInf` (encoded as `i64::MIN`) to `2^63`.
-    pub fn to_precision_bits(self) -> XUsize {
-        match self {
-            Self::NegInf => XUsize::Inf,
-            Self::Finite(e) if e <= 0 => {
-                // e is in range isize::MIN..=0, so unsigned_abs() fits in usize.
-                #[allow(clippy::arithmetic_side_effects)]
-                let abs = e.unsigned_abs();
-                XUsize::Finite(abs)
-            }
-            Self::Finite(_) | Self::PosInf => XUsize::Finite(0),
-        }
-    }
-}
-
-/// A `usize` extended with positive infinity, analogous to `UXBinary`.
+/// A [`U`] extended with positive infinity, analogous to `UXBinary`.
 ///
 /// When used as a tolerance exponent: `Finite(n)` means epsilon = 2^(-n),
 /// `Inf` means epsilon = 0 (exact convergence required).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum XUsize {
-    Finite(usize),
+pub enum XU {
+    Finite(U),
     Inf,
 }
 
-impl PartialOrd for XUsize {
+impl PartialOrd for XU {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for XUsize {
+impl Ord for XU {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         match (self, other) {
@@ -352,27 +385,33 @@ impl Ord for XUsize {
     }
 }
 
-impl std::ops::Neg for XUsize {
-    type Output = XIsize;
+impl From<XU> for XI {
+    /// Converts `XU` to `XI`: `Finite(n)` → positive `XI`, `Inf` → `PosInf`.
+    fn from(xu: XU) -> Self {
+        match xu {
+            XU::Inf => XI::PosInf,
+            XU::Finite(n) => XI::Finite {
+                sign: Sign::Pos,
+                magnitude: n,
+            },
+        }
+    }
+}
 
-    /// Negates to produce an `XIsize`: `Finite(n)` → `XIsize::Finite(-(n as isize))`,
-    /// `Inf` → `XIsize::NegInf`.
-    ///
-    /// Replaces `tolerance_to_exp`.
-    fn neg(self) -> XIsize {
+impl std::ops::Neg for XI {
+    type Output = XI;
+
+    /// Negates by flipping the sign: `PosInf` ↔ `NegInf`, sign flip for finite.
+    /// Always safe — no arithmetic overflow possible.
+    fn neg(self) -> XI {
         match self {
-            Self::Inf => XIsize::NegInf,
-            Self::Finite(n) => {
-                // isize::try_from(n) fails when n > isize::MAX. In that case the
-                // negated value would be < isize::MIN, so map to NegInf.
-                match isize::try_from(n) {
-                    Ok(signed) => match signed.checked_neg() {
-                        Some(negated) => XIsize::Finite(negated),
-                        None => XIsize::NegInf,
-                    },
-                    Err(_) => XIsize::NegInf,
-                }
-            }
+            Self::PosInf => Self::NegInf,
+            Self::NegInf => Self::PosInf,
+            Self::Finite { magnitude: 0, .. } => self,
+            Self::Finite { sign, magnitude } => Self::Finite {
+                sign: -sign,
+                magnitude,
+            },
         }
     }
 }
@@ -405,15 +444,15 @@ mod tests {
 
     #[test]
     fn sane_arithmetic_macro_works() {
-        let n: usize = 10;
+        let n: U = 10;
         let result = crate::sane_arithmetic!(n; 2 * n + 1);
-        assert_eq!(result, 21_usize);
+        assert_eq!(result, 21_u32);
     }
 
     #[test]
     #[should_panic(expected = "Sane multiplication overflow")]
     fn sane_mul_overflow_panics() {
-        let _ = Sane(usize::MAX) * Sane(2);
+        let _ = Sane(U::MAX) * Sane(2);
     }
 
     #[test]
@@ -429,54 +468,61 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "exceeds MAX_COMPUTATION_BITS")]
+    #[should_panic(expected = "Sane addition overflow")]
     fn sane_arithmetic_macro_rejects_large_result() {
-        let n: usize = MAX_COMPUTATION_BITS;
-        // n + 1 doesn't overflow usize, but exceeds MAX_COMPUTATION_BITS
+        let n: U = U::MAX;
+        // n + 1 overflows U (u32), caught by checked_add in Sane
         let _ = crate::sane_arithmetic!(n; n + 1);
     }
 
-    // --- XIsize tests ---
+    // --- XI tests ---
 
     #[test]
-    fn xisize_ordering() {
-        assert!(XIsize::NegInf < XIsize::Finite(-1000));
-        assert!(XIsize::Finite(-1000) < XIsize::Finite(0));
-        assert!(XIsize::Finite(0) < XIsize::Finite(1000));
-        assert!(XIsize::Finite(1000) < XIsize::PosInf);
-        assert_eq!(XIsize::NegInf, XIsize::NegInf);
-        assert_eq!(XIsize::PosInf, XIsize::PosInf);
+    fn xi_ordering() {
+        assert!(XI::NegInf < XI::from_i32(-1000));
+        assert!(XI::from_i32(-1000) < XI::from_i32(0));
+        assert!(XI::from_i32(0) < XI::from_i32(1000));
+        assert!(XI::from_i32(1000) < XI::PosInf);
+        assert_eq!(XI::NegInf, XI::NegInf);
+        assert_eq!(XI::PosInf, XI::PosInf);
+    }
+
+    // --- XU tests ---
+
+    #[test]
+    fn xu_ordering() {
+        assert!(XU::Finite(0) < XU::Finite(10));
+        assert!(XU::Finite(10) < XU::Inf);
+        assert_eq!(XU::Inf, XU::Inf);
     }
 
     #[test]
-    fn xisize_to_precision_bits() {
-        assert_eq!(XIsize::Finite(0).to_precision_bits(), XUsize::Finite(0));
-        assert_eq!(XIsize::Finite(-10).to_precision_bits(), XUsize::Finite(10));
-        assert_eq!(
-            XIsize::Finite(-100).to_precision_bits(),
-            XUsize::Finite(100)
-        );
-        // Positive exponents: coarse target, no precision needed
-        assert_eq!(XIsize::Finite(5).to_precision_bits(), XUsize::Finite(0));
-        // NegInf = exact = infinite precision
-        assert_eq!(XIsize::NegInf.to_precision_bits(), XUsize::Inf);
-        // PosInf = unbounded = no precision needed
-        assert_eq!(XIsize::PosInf.to_precision_bits(), XUsize::Finite(0));
-    }
-
-    // --- XUsize tests ---
-
-    #[test]
-    fn xusize_ordering() {
-        assert!(XUsize::Finite(0) < XUsize::Finite(10));
-        assert!(XUsize::Finite(10) < XUsize::Inf);
-        assert_eq!(XUsize::Inf, XUsize::Inf);
+    fn xu_to_xi_conversion() {
+        assert_eq!(XI::from(XU::Inf), XI::PosInf);
+        assert_eq!(XI::from(XU::Finite(0)), XI::from_i32(0));
+        assert_eq!(XI::from(XU::Finite(42)), XI::from_i32(42));
     }
 
     #[test]
-    fn xusize_neg() {
-        assert_eq!(-XUsize::Inf, XIsize::NegInf);
-        assert_eq!(-XUsize::Finite(0), XIsize::Finite(0));
-        assert_eq!(-XUsize::Finite(42), XIsize::Finite(-42));
+    fn xi_neg() {
+        assert_eq!(-XI::PosInf, XI::NegInf);
+        assert_eq!(-XI::NegInf, XI::PosInf);
+        assert_eq!(-XI::from_i32(0), XI::from_i32(0));
+        assert_eq!(-XI::from_i32(42), XI::from_i32(-42));
+        assert_eq!(-XI::from(XU::Finite(42)), XI::from_i32(-42));
+        assert_eq!(-XI::from(XU::Inf), XI::NegInf);
+    }
+
+    #[test]
+    fn bits_as_i_converts_valid() {
+        assert_eq!(bits_as_i(0), 0_i32);
+        assert_eq!(bits_as_i(42), 42_i32);
+        assert_eq!(bits_as_i(u64::try_from(i32::MAX).unwrap()), i32::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "bit count exceeds I::MAX")]
+    fn bits_as_i_panics_on_overflow() {
+        let _ = bits_as_i(u64::try_from(i32::MAX).unwrap() + 1);
     }
 }

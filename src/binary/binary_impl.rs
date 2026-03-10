@@ -7,14 +7,12 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, Mul, Neg, Shl, Shr, Sub};
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 use num_traits::{Float, Signed, Zero};
 
+use crate::sane::I;
+
 use super::error::BinaryError;
-
-use crate::ordered_pair::Interval;
-
-use super::shift::shift_mantissa_chunked;
 
 /// Exact binary number represented as `mantissa * 2^exponent`.
 ///
@@ -23,20 +21,39 @@ use super::shift::shift_mantissa_chunked;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binary {
     mantissa: BigInt,
-    exponent: BigInt,
+    exponent: I,
 }
 
 impl Binary {
     /// Creates a new Binary number, normalizing the representation.
-    pub fn new(mantissa: BigInt, exponent: BigInt) -> Self {
+    pub fn new(mantissa: BigInt, exponent: I) -> Self {
         Self::normalize(mantissa, exponent)
+    }
+
+    /// Creates a Binary from components that are already in canonical form
+    /// (mantissa is odd or zero). Skips the normalize step.
+    pub(crate) fn new_normalized(mantissa: BigInt, exponent: I) -> Self {
+        debug_assert!(
+            mantissa.is_zero() && exponent == 0_i32
+                || !mantissa.is_zero() && mantissa.magnitude().trailing_zeros() == Some(0),
+            "new_normalized: mantissa must be odd (or both zero), got mantissa={mantissa}, exponent={exponent}"
+        );
+        Self { mantissa, exponent }
     }
 
     /// Returns the zero value.
     pub fn zero() -> Self {
         Self {
             mantissa: BigInt::zero(),
-            exponent: BigInt::zero(),
+            exponent: 0,
+        }
+    }
+
+    /// Returns the value one (1 = 1 * 2^0).
+    pub fn one() -> Self {
+        Self {
+            mantissa: BigInt::from(1_i32),
+            exponent: 0,
         }
     }
 
@@ -45,9 +62,9 @@ impl Binary {
         &self.mantissa
     }
 
-    /// Returns a reference to the exponent.
-    pub fn exponent(&self) -> &BigInt {
-        &self.exponent
+    /// Returns the exponent.
+    pub fn exponent(&self) -> I {
+        self.exponent
     }
 
     /// Converts an f64 to a Binary.
@@ -62,7 +79,7 @@ impl Binary {
     /// let binary = Binary::from_f64(1.5).unwrap();
     /// // 1.5 = 3 * 2^-1
     /// assert_eq!(binary.mantissa(), &num_bigint::BigInt::from(3));
-    /// assert_eq!(binary.exponent(), &num_bigint::BigInt::from(-1));
+    /// assert_eq!(binary.exponent(), -1);
     /// ```
     pub fn from_f64(value: f64) -> Result<Self, BinaryError> {
         if value.is_nan() {
@@ -76,58 +93,101 @@ impl Binary {
         }
         let (mantissa, exponent, sign) = value.integer_decode();
         let signed_mantissa = BigInt::from(sign) * BigInt::from(mantissa);
-        Ok(Self::new(signed_mantissa, BigInt::from(exponent)))
+        Ok(Self::new(signed_mantissa, I::from(exponent)))
     }
 
     /// Adds two Binary numbers.
     pub fn add(&self, other: &Self) -> Self {
+        if self.mantissa.is_zero() {
+            return other.clone();
+        }
+        if other.mantissa.is_zero() {
+            return self.clone();
+        }
         let (lhs, rhs, exponent) = Self::align_mantissas(self, other);
         Self::normalize(lhs + rhs, exponent)
     }
 
     /// Subtracts another Binary number from this one.
     pub fn sub(&self, other: &Self) -> Self {
+        if other.mantissa.is_zero() {
+            return self.clone();
+        }
+        if self.mantissa.is_zero() {
+            return other.neg();
+        }
         let (lhs, rhs, exponent) = Self::align_mantissas(self, other);
         Self::normalize(lhs - rhs, exponent)
     }
 
-    /// Negates this Binary number.
+    /// Negates this Binary number (borrowing).
     pub fn neg(&self) -> Self {
         if self.mantissa.is_zero() {
             return self.clone();
         }
         Self {
             mantissa: -self.mantissa.clone(),
-            exponent: self.exponent.clone(),
+            exponent: self.exponent,
+        }
+    }
+
+    /// Negates this Binary number, consuming it to avoid cloning the mantissa.
+    pub fn neg_owned(self) -> Self {
+        if self.mantissa.is_zero() {
+            return self;
+        }
+        Self {
+            mantissa: -self.mantissa,
+            exponent: self.exponent,
         }
     }
 
     /// Multiplies two Binary numbers.
     pub fn mul(&self, other: &Self) -> Self {
-        let exponent = &self.exponent + &other.exponent;
+        if self.mantissa.is_zero() || other.mantissa.is_zero() {
+            return Self::zero();
+        }
+        let exponent = self
+            .exponent
+            .checked_add(other.exponent)
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in Binary::mul")
+            });
         let mantissa = &self.mantissa * &other.mantissa;
-        Self::normalize(mantissa, exponent)
+        Self::new_normalized(mantissa, exponent)
     }
 
     /// Returns the magnitude (absolute value) of this Binary number as a UBinary.
     pub fn magnitude(&self) -> super::ubinary::UBinary {
         use super::ubinary::UBinary;
-        UBinary::new(self.mantissa.magnitude().clone(), self.exponent.clone())
+        if self.mantissa.is_zero() {
+            return UBinary::zero();
+        }
+        UBinary::new_normalized(self.mantissa.magnitude().clone(), self.exponent)
     }
 
     /// Normalizes the representation by factoring out powers of 2 from the mantissa.
-    fn normalize(mut mantissa: BigInt, mut exponent: BigInt) -> Self {
+    fn normalize(mut mantissa: BigInt, mut exponent: I) -> Self {
         if mantissa.is_zero() {
             return Self {
                 mantissa,
-                exponent: BigInt::zero(),
+                exponent: 0,
             };
         }
 
         if let Some(tz_u64) = mantissa.magnitude().trailing_zeros() {
-            let tz = crate::sane::bits_as_usize(tz_u64);
+            let tz = crate::sane::bits_as_u(tz_u64);
             mantissa >>= tz;
-            exponent += BigInt::from(tz);
+            let tz_i = I::try_from(tz).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "trailing zeros exceed I::MAX in Binary::normalize"
+                )
+            });
+            exponent = exponent.checked_add(tz_i).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in Binary::normalize"
+                )
+            });
         }
 
         Self { mantissa, exponent }
@@ -136,64 +196,81 @@ impl Binary {
     /// Aligns the mantissas of two Binary numbers to a common exponent.
     /// Returns (lhs_mantissa, rhs_mantissa, common_exponent) where both mantissas
     /// are shifted to the minimum exponent of the two inputs.
-    pub fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigInt, BigInt, BigInt) {
-        let exponent = if lhs.exponent <= rhs.exponent {
-            lhs.exponent.clone()
+    pub fn align_mantissas(lhs: &Self, rhs: &Self) -> (BigInt, BigInt, I) {
+        let exponent = std::cmp::min(lhs.exponent, rhs.exponent);
+        let lhs_shift = lhs.exponent.abs_diff(exponent);
+        let rhs_shift = rhs.exponent.abs_diff(exponent);
+        let lhs_mantissa = if lhs_shift == 0 {
+            lhs.mantissa.clone()
         } else {
-            rhs.exponent.clone()
+            &lhs.mantissa << crate::sane::u_as_usize(lhs_shift)
         };
-        let lhs_shift = BigUint::try_from(&lhs.exponent - &exponent).unwrap_or_default();
-        let rhs_shift = BigUint::try_from(&rhs.exponent - &exponent).unwrap_or_default();
-        let lhs_mantissa = Self::shift_mantissa(&lhs.mantissa, &lhs_shift);
-        let rhs_mantissa = Self::shift_mantissa(&rhs.mantissa, &rhs_shift);
+        let rhs_mantissa = if rhs_shift == 0 {
+            rhs.mantissa.clone()
+        } else {
+            &rhs.mantissa << crate::sane::u_as_usize(rhs_shift)
+        };
         (lhs_mantissa, rhs_mantissa, exponent)
     }
 
-    /// Shifts a mantissa left by the given amount, handling large shifts.
-    fn shift_mantissa(mantissa: &BigInt, shift: &BigUint) -> BigInt {
-        if shift.is_zero() {
-            return mantissa.clone();
-        }
-        shift_mantissa_chunked::<BigInt>(mantissa, shift, usize::MAX)
-    }
-
     /// Compares two binary values with potentially different exponents.
+    ///
+    /// Uses a bit-length fast path: for values with different magnitude bit lengths,
+    /// the comparison is determined in O(1) without shifting. Only falls back to
+    /// mantissa alignment when bit lengths are equal.
     pub(crate) fn cmp_shifted(
         mantissa: &BigInt,
-        exponent: BigInt,
+        exponent: I,
         other: &BigInt,
-        other_exp: BigInt,
+        other_exp: I,
     ) -> Ordering {
-        fn cmp_large_exp(
-            large_mantissa: &BigInt,
-            small_mantissa: &BigInt,
-            pair: Interval<BigInt, BigUint>,
-        ) -> Ordering {
-            use num_traits::ToPrimitive;
-
-            let shift_amount_opt = pair.width().to_usize();
-
-            if let Some(shift_amount) = shift_amount_opt {
-                let shifted = large_mantissa << shift_amount;
-                shifted.cmp(small_mantissa)
-            } else if large_mantissa.is_zero() {
-                BigInt::zero().cmp(small_mantissa)
-            } else if large_mantissa.is_positive() {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
+        // 1. Sign-based fast path
+        let self_sign = mantissa.sign();
+        let other_sign = other.sign();
+        match self_sign.cmp(&other_sign) {
+            Ordering::Equal => {}
+            ord @ Ordering::Less | ord @ Ordering::Greater => return ord,
         }
 
+        // Both have the same sign. Handle zero cases.
+        if mantissa.is_zero() {
+            // Both zero (same sign and self is zero means other is also zero)
+            return Ordering::Equal;
+        }
+
+        // Both non-zero with the same sign.
+        // 2. Bit-length fast path on magnitudes
+        // For non-zero: |value| = |mantissa| * 2^exponent, |mantissa| is odd
+        // Bit length of |value| = magnitude.bits() + exponent
+        let self_bits =
+            i128::from(mantissa.magnitude().bits()).saturating_add(i128::from(exponent));
+        let other_bits = i128::from(other.magnitude().bits()).saturating_add(i128::from(other_exp));
+
+        if self_bits != other_bits {
+            // Different magnitude bit lengths — determined by bit length.
+            // For positive values: larger bit length means larger value.
+            // For negative values: larger magnitude bit length means smaller (more negative) value.
+            let mag_ord = self_bits.cmp(&other_bits);
+            return if mantissa.is_positive() {
+                mag_ord
+            } else {
+                mag_ord.reverse()
+            };
+        }
+
+        // 3. Same bit length — must align and compare mantissas
+        // abs_diff on I returns u32, which fits in usize on all supported platforms.
         match exponent.cmp(&other_exp) {
             Ordering::Equal => mantissa.cmp(other),
             Ordering::Greater => {
-                let pair = Interval::new(exponent, other_exp);
-                cmp_large_exp(mantissa, other, pair)
+                let shifted: BigInt =
+                    mantissa << crate::sane::u_as_usize(exponent.abs_diff(other_exp));
+                shifted.cmp(other)
             }
             Ordering::Less => {
-                let pair = Interval::new(other_exp, exponent);
-                cmp_large_exp(other, mantissa, pair).reverse()
+                let shifted: BigInt =
+                    other << crate::sane::u_as_usize(other_exp.abs_diff(exponent));
+                mantissa.cmp(&shifted)
             }
         }
     }
@@ -219,7 +296,7 @@ impl Neg for Binary {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        Binary::neg(&self)
+        self.neg_owned()
     }
 }
 
@@ -236,7 +313,18 @@ impl Shl<u32> for Binary {
 
     #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
     fn shl(self, rhs: u32) -> Self::Output {
-        Self::new(self.mantissa, self.exponent + BigInt::from(rhs))
+        if self.mantissa.is_zero() {
+            return self;
+        }
+        let rhs_i = I::try_from(rhs).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("shift exceeds I::MAX in Binary::shl")
+        });
+        Self::new_normalized(
+            self.mantissa,
+            self.exponent.checked_add(rhs_i).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in Binary::shl")
+            }),
+        )
     }
 }
 
@@ -245,7 +333,18 @@ impl Shr<u32> for Binary {
 
     #[allow(clippy::suspicious_arithmetic_impl)] // shifting = exponent adjustment
     fn shr(self, rhs: u32) -> Self::Output {
-        Self::new(self.mantissa, self.exponent - BigInt::from(rhs))
+        if self.mantissa.is_zero() {
+            return self;
+        }
+        let rhs_i = I::try_from(rhs).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("shift exceeds I::MAX in Binary::shr")
+        });
+        Self::new_normalized(
+            self.mantissa,
+            self.exponent.checked_sub(rhs_i).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in Binary::shr")
+            }),
+        )
     }
 }
 
@@ -263,9 +362,9 @@ impl Ord for Binary {
     fn cmp(&self, other: &Self) -> Ordering {
         Self::cmp_shifted(
             &self.mantissa,
-            self.exponent.clone(),
+            self.exponent,
             &other.mantissa,
-            other.exponent.clone(),
+            other.exponent,
         )
     }
 }
@@ -278,7 +377,7 @@ impl PartialOrd for Binary {
 
 impl fmt::Display for Binary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        super::display::format_binary_display(f, &self.mantissa, &self.exponent)
+        super::display::format_binary_display(f, &self.mantissa, self.exponent)
     }
 }
 
@@ -304,14 +403,14 @@ mod tests {
     fn binary_normalizes_even_mantissa() {
         let value = bin(8, 0);
         assert_eq!(value.mantissa(), &BigInt::from(1_i32));
-        assert_eq!(value.exponent(), &BigInt::from(3_i32));
+        assert_eq!(value.exponent(), 3_i32);
     }
 
     #[test]
     fn binary_zero_uses_zero_exponent() {
-        let value = Binary::new(BigInt::zero(), BigInt::from(42_i32));
+        let value = Binary::new(BigInt::zero(), 42);
         assert_eq!(value.mantissa(), &BigInt::zero());
-        assert_eq!(value.exponent(), &BigInt::zero());
+        assert_eq!(value.exponent(), 0_i32);
     }
 
     #[test]
@@ -323,30 +422,22 @@ mod tests {
 
     #[test]
     fn binary_ordering_handles_large_exponent_gaps() {
-        use num_traits::One;
-
-        let huge_exp = BigInt::from(usize::MAX) + BigInt::one();
-        let tiny_exp = -huge_exp.clone();
-        let huge_pos = Binary::new(BigInt::from(1_i32), huge_exp.clone());
-        let tiny_pos = Binary::new(BigInt::from(1_i32), tiny_exp.clone());
+        let huge_pos = Binary::new(BigInt::from(1_i32), I::MAX);
+        let tiny_pos = Binary::new(BigInt::from(1_i32), I::MIN);
         assert!(huge_pos > tiny_pos);
 
-        let huge_neg = Binary::new(BigInt::from(-1_i32), huge_exp);
+        let huge_neg = Binary::new(BigInt::from(-1_i32), I::MAX);
         assert!(huge_neg < tiny_pos);
     }
 
     #[test]
     fn binary_ordering_overflow_path_uses_sign() {
-        use num_traits::One;
-
-        let huge_exp = BigInt::from(usize::MAX) + BigInt::one();
-        let tiny_exp = -huge_exp.clone();
-        let huge_pos = Binary::new(BigInt::from(1_i32), huge_exp.clone());
-        let tiny_neg = Binary::new(BigInt::from(-1_i32), tiny_exp.clone());
+        let huge_pos = Binary::new(BigInt::from(1_i32), I::MAX);
+        let tiny_neg = Binary::new(BigInt::from(-1_i32), I::MIN);
         assert!(huge_pos > tiny_neg);
 
-        let huge_neg = Binary::new(BigInt::from(-1_i32), huge_exp);
-        let tiny_pos = Binary::new(BigInt::from(1_i32), tiny_exp);
+        let huge_neg = Binary::new(BigInt::from(-1_i32), I::MAX);
+        let tiny_pos = Binary::new(BigInt::from(1_i32), I::MIN);
         assert!(huge_neg < tiny_pos);
     }
 
@@ -382,7 +473,7 @@ mod tests {
         let pos = bin(3, 2);
         let neg = -pos;
         assert_eq!(neg.mantissa(), &BigInt::from(-3_i32));
-        assert_eq!(neg.exponent(), &BigInt::from(2_i32));
+        assert_eq!(neg.exponent(), 2_i32);
     }
 
     #[test]
@@ -397,12 +488,12 @@ mod tests {
         // 1.5 = 3 * 2^-1
         let result = Binary::from_f64(1.5).expect("should succeed");
         assert_eq!(result.mantissa(), &BigInt::from(3_i32));
-        assert_eq!(result.exponent(), &BigInt::from(-1_i32));
+        assert_eq!(result.exponent(), -1_i32);
 
         // -2.0 = -1 * 2^1
         let neg_result = Binary::from_f64(-2.0).expect("should succeed");
         assert_eq!(neg_result.mantissa(), &BigInt::from(-1_i32));
-        assert_eq!(neg_result.exponent(), &BigInt::from(1_i32));
+        assert_eq!(neg_result.exponent(), 1_i32);
     }
 
     #[test]

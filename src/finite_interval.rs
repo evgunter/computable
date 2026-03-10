@@ -6,7 +6,7 @@
 //! public API.
 
 use num_bigint::BigInt;
-use num_traits::{One, Zero};
+use num_traits::Zero;
 
 use crate::binary::{Binary, UBinary};
 
@@ -51,9 +51,9 @@ impl FiniteInterval {
         &self.lower
     }
 
-    /// Returns the upper bound (cloned for ownership).
-    pub fn hi(&self) -> Binary {
-        self.upper.clone()
+    /// Returns the upper bound.
+    pub fn hi(&self) -> &Binary {
+        &self.upper
     }
 
     /// Alias for `lo()` (compatibility with code that used `Interval::small()`).
@@ -107,7 +107,7 @@ impl FiniteInterval {
     pub fn scale_bigint(&self, k: &BigInt) -> Self {
         use num_traits::Signed;
 
-        let abs_k = UBinary::new(k.magnitude().clone(), BigInt::zero());
+        let abs_k = UBinary::new(k.magnitude().clone(), 0);
 
         if k.is_negative() {
             self.interval_neg().scale_positive(&abs_k)
@@ -119,7 +119,15 @@ impl FiniteInterval {
     /// Returns the midpoint: `(lower + upper) / 2`.
     pub fn midpoint(&self) -> Binary {
         let sum = self.lower.add(&self.upper);
-        Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one())
+        if sum.mantissa().is_zero() {
+            return Binary::zero();
+        }
+        Binary::new_normalized(
+            sum.mantissa().clone(),
+            sum.exponent().checked_sub(1).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")
+            }),
+        )
     }
 
     /// Returns the join (smallest enclosing interval) of two intervals.

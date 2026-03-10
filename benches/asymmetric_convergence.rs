@@ -12,7 +12,7 @@
 //! making compute_bounds increasingly expensive. The wasted PiOp computation
 //! dominates total time for moderate precision targets.
 
-mod common;
+mod bench_macros;
 
 #[cfg(not(feature = "criterion-bench"))]
 use gungraun::*;
@@ -21,23 +21,23 @@ use std::num::NonZeroU32;
 
 use num_bigint::BigInt;
 
-use common::{bench_group, bench_main, epsilon};
+use bench_macros::{bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
 use computable::Bounds;
 use computable::{Binary, Computable, pi};
 
 fn sqrt_2() -> Computable {
-    Computable::constant(Binary::new(BigInt::from(2_i64), BigInt::from(0_i64)))
+    Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32))
         .nth_root(NonZeroU32::new(2_u32).unwrap())
 }
 
 fn cbrt_3() -> Computable {
-    Computable::constant(Binary::new(BigInt::from(3_i64), BigInt::from(0_i64)))
+    Computable::constant(Binary::new(BigInt::from(3_i64), 0_i32))
         .nth_root(NonZeroU32::new(3_u32).unwrap())
 }
 
 fn constant(value: i64) -> Computable {
-    Computable::constant(Binary::new(BigInt::from(value), BigInt::from(0_i64)))
+    Computable::constant(Binary::new(BigInt::from(value), 0_i32))
 }
 
 // --- mixed (asymmetric) ---

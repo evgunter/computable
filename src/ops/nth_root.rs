@@ -1,24 +1,23 @@
-//! N-th root operation with binary search refinement.
+//! N-th root operation with Newton-Raphson refinement.
 //!
 //! This module implements the n-th root operation (x^(1/n)) using:
-//! - Binary search (bisection) for guaranteed convergence
-//! - Interval arithmetic for provably correct bounds
+//! - Newton-Raphson iteration for quadratic convergence (~9 steps for 256 bits)
+//! - Directed rounding for provably correct bounds
 //!
-//! The algorithm maintains an interval [lower, upper] where the true root lies,
-//! and refines by bisection: if mid^n <= target, the root is in [mid, upper],
-//! otherwise it's in [lower, mid].
+//! The algorithm maintains an interval [lower, upper] where the true root lies.
+//! Each Newton step doubles the number of correct bits (quadratic convergence).
 //!
-//! This module uses the generic binary search helper from [`crate::binary::bisection`],
-//! which can be reused for other operations that use bisection (e.g., finding roots
-//! of monotonic functions).
+//! Newton iteration for y = x^(1/n): y_{k+1} = ((n-1)*y + x/y^{n-1}) / n
+//! Convexity of y^n ensures Newton from above stays above the root (valid upper bound).
+//! Lower bound: x / upper^{n-1} <= root when upper >= root.
 //!
 //! TODO: Contra the README, even-degree roots of inputs that overlap with negative
-//! numbers (but aren't completely negative) currently just return (0, ∞) bounds
+//! numbers (but aren't completely negative) currently just return (0, inf) bounds
 //! instead of returning a recoverable error that would trigger refinement of the
 //! input until the bounds are fully non-negative. This should be fixed to match
 //! the behavior described in the README for sqrt.
 //!
-//! BLOCKED: This requires node-initiated refinement — the ability for a node's
+//! BLOCKED: This requires node-initiated refinement -- the ability for a node's
 //! `refine_step` to return a recoverable error requesting that the coordinator
 //! refine a specific input before retrying. The current model doesn't support
 //! this: the coordinator decides which refiners to step, and nodes cannot signal
@@ -27,57 +26,81 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_traits::{One, Signed, Zero};
 use parking_lot::RwLock;
 
-use crate::binary::{Binary, Bounds, FiniteBounds, UXBinary, XBinary};
-use crate::binary_utils::bisection::{
-    PrefixBisectionResult, PrefixBounds, bisection_step_normalized, midpoint, normalize_bounds,
-};
+use crate::binary::{Binary, Bounds, UXBinary, XBinary};
+use crate::binary_utils::bisection::midpoint;
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::XIsize;
+use crate::sane::{self, I, U, XI};
 
-/// N-th root operation with binary search refinement.
+/// Minimum seed precision bits for Newton-Raphson initialization.
+///
+/// Used as the floor for both `compute_bounds()` seeds and `refine_step()`
+/// precision caps. This ensures Newton-Raphson converges quickly even for
+/// low-precision requests. The magnitude-aware cap in `refine_step()` handles
+/// the upper bound to prevent over-refinement.
+const MIN_SEED_PRECISION_BITS: usize = 64;
+
+/// Computes the mantissa precision bits needed to achieve a target width
+/// exponent for a value with the given magnitude exponent.
+///
+/// For a value of magnitude ~2^M, achieving width ≤ 2^e requires
+/// `M - e` bits of mantissa precision. Returns at least `MIN_SEED_PRECISION_BITS`.
+fn precision_for_target(magnitude_exp: i64, target_width_exp: i64) -> usize {
+    let needed = magnitude_exp.saturating_sub(target_width_exp);
+    if needed <= 0_i64 {
+        MIN_SEED_PRECISION_BITS
+    } else {
+        // Safe: needed > 0 and usize is at least 64 bits on supported platforms,
+        // so the conversion from positive i64 never fails.
+        let needed_usize = usize::try_from(needed).unwrap_or(usize::MAX);
+        needed_usize.max(MIN_SEED_PRECISION_BITS)
+    }
+}
+
+/// N-th root operation with Newton-Raphson refinement.
 ///
 /// Computes x^(1/n) where n is the root degree.
 /// For n=2, this is square root; n=3 is cube root, etc.
 ///
 /// # Constraints
-/// - For even n: requires x >= 0 (otherwise returns infinite bounds)
+/// - For even n: requires x >= 0 (otherwise returns domain error)
 /// - For odd n: supports all real x (negative values have negative roots)
 pub struct NthRootOp {
     /// The input node whose n-th root we're computing.
     pub inner: Arc<Node>,
     /// The root degree (n in x^(1/n)). Guaranteed to be >= 1 by the type system.
     pub degree: NonZeroU32,
-    /// Current bisection state: tracks the interval for the root.
+    /// Newton-Raphson state. `None` until first `refine_step`.
     ///
-    /// This is `None` until the first `compute_bounds()` call, which initializes
+    /// This is `None` until the first `refine_step` call, which initializes
     /// it from the input bounds. We use `Option` because initialization requires
     /// calling `inner.get_bounds()` which can fail, but node construction (via
     /// `nth_root()`) is not supposed to be fallible. By deferring initialization
-    /// to the first `compute_bounds()` call (which returns `Result`), we can
-    /// propagate errors through the normal Result path.
-    ///
-    /// Each refinement step halves this interval via bisection.
-    pub bisection_state: RwLock<Option<BisectionState>>,
+    /// to the first call (which returns `Result`), we can propagate errors
+    /// through the normal Result path.
+    pub newton_state: RwLock<Option<NthRootNewtonState>>,
 }
 
-/// State for the bisection algorithm.
-/// Tracks the current interval bounds for the n-th root in prefix form.
+/// State for Newton-Raphson nth root computation.
 #[derive(Clone, Debug)]
-pub struct BisectionState {
-    /// Current bounds in prefix form.
-    pub bounds: PrefixBounds,
+pub struct NthRootNewtonState {
+    /// Current lower bound on the nth root.
+    pub lower: Binary,
+    /// Current upper bound on the nth root.
+    pub upper: Binary,
     /// The target value (x) whose n-th root we're computing.
     pub target: Binary,
     /// Whether the result should be negated (for odd roots of negative numbers).
     pub negate_result: bool,
-    /// If set, the exact root value (set when bisection hits Exact).
+    /// If set, the exact root value.
     pub exact_value: Option<Binary>,
+    /// Current mantissa precision budget in bits. Doubles each N-R step.
+    pub precision: usize,
 }
 
 impl NodeOp for NthRootOp {
@@ -86,38 +109,95 @@ impl NodeOp for NthRootOp {
 
         // Fast path: read lock to check if already initialized.
         {
-            let state = self.bisection_state.read();
-            if let Some(s) = &*state {
-                return Ok(bounds_from_bisection_state(s));
+            let read_guard = self.newton_state.read();
+            if let Some(s) = &*read_guard {
+                return Ok(bounds_from_newton_state(s));
             }
         }
-        // Slow path: upgrade to write lock and initialize.
+
+        // Slow path: upgrade to write lock and eagerly initialize.
+        // Eager initialization is critical: returning wide initial bounds
+        // (e.g., [1, target]) before Newton refinement would cause massive
+        // bound explosions when many nth-root nodes are summed.
         // Double-check after acquiring write lock (another thread may have initialized).
-        let mut state = self.bisection_state.write();
-        if let Some(s) = &*state {
-            return Ok(bounds_from_bisection_state(s));
+        let mut write_guard = self.newton_state.write();
+        if let Some(s) = &*write_guard {
+            return Ok(bounds_from_newton_state(s));
         }
-        let s = initialize_nth_root_bisection_state(&input_bounds, self.degree.get())?;
-        let bounds = bounds_from_bisection_state(&s);
-        *state = Some(s);
+        let s = initialize_nth_root_newton_state(
+            &input_bounds,
+            self.degree.get(),
+            MIN_SEED_PRECISION_BITS,
+        )?;
+        let bounds = bounds_from_newton_state(&s);
+        *write_guard = Some(s);
         Ok(bounds)
     }
 
-    // TODO: investigate using target_width_exp to leap bisection toward the target precision
-    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
-        // Ensure bisection state is initialized (compute_bounds is always called
+    fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
+        // Ensure state is initialized (compute_bounds is always called
         // before refine_step by the coordinator, but be defensive).
         {
-            let state = self.bisection_state.read();
-            if state.is_none() {
-                drop(state);
+            let read_guard = self.newton_state.read();
+            if read_guard.is_none() {
+                drop(read_guard);
                 // Trigger initialization via compute_bounds.
                 self.compute_bounds()?;
             }
         }
 
-        let mut state = self.bisection_state.write();
-        let s = match state.as_mut() {
+        // Convert target_width_exp to a precision cap in bits.
+        // This prevents unbounded precision growth: the refiner_loop calls
+        // refine_step up to 16 times per dispatch, and Newton doubles precision
+        // each step. Without a cap, 16 steps would escalate from 64 to
+        // 64 * 2^16 = 4M bits, making binary_pow astronomically expensive.
+        //
+        // The precision needed depends on both the target width exponent AND
+        // the magnitude of the result. For a value of magnitude ~2^M, achieving
+        // width ≤ 2^e requires (M - e) mantissa bits. We estimate the result
+        // magnitude from the Newton target value and root degree.
+        let precision_cap = match target_width_exp {
+            XI::NegInf => {
+                // Exact target: no cap (allow unbounded precision).
+                sane::u_as_usize(U::MAX)
+            }
+            XI::Finite { .. } => {
+                let e_i64 = target_width_exp.finite_i64();
+                // Estimate result magnitude from the stored target value.
+                // For x^(1/n), result ≈ 2^(log2(x)/n).
+                let read_guard = self.newton_state.read();
+                let result_magnitude_exp = match &*read_guard {
+                    Some(s) => {
+                        let target_bits = sane::u_as_usize(sane::bits_as_u(
+                            s.target.mantissa().magnitude().bits(),
+                        ));
+                        let target_exp = i64::from(s.target.exponent())
+                            .saturating_add(i64::try_from(target_bits).unwrap_or(i64::MAX));
+                        // Divide by degree to get result magnitude exponent.
+                        // degree >= 1 (NonZeroU32), so division is safe.
+                        let degree_i64 = i64::from(self.degree.get());
+                        #[allow(clippy::arithmetic_side_effects)]
+                        let result_exp = target_exp / degree_i64;
+                        result_exp
+                    }
+                    None => 0_i64,
+                };
+                // Allow 2x headroom beyond what's needed so Newton has room
+                // to converge past the target (truncation in division/power
+                // loses precision). Also ensure at least MIN_SEED_PRECISION_BITS.
+                precision_for_target(result_magnitude_exp, e_i64)
+                    .saturating_mul(2)
+                    .max(MIN_SEED_PRECISION_BITS)
+            }
+            XI::PosInf => {
+                // Unbounded: use seed precision.
+                MIN_SEED_PRECISION_BITS
+            }
+        };
+
+        // Perform one Newton step
+        let mut write_guard = self.newton_state.write();
+        let s = match write_guard.as_mut() {
             Some(s) => s,
             None => return Err(ComputableError::InfiniteBounds),
         };
@@ -127,23 +207,9 @@ impl NodeOp for NthRootOp {
             return Ok(false);
         }
 
-        // One bisection step per dispatch. Each step halves the interval
-        // (1 bit improvement), which always produces a visible Prefix change.
-        // The coordinator handles iteration count and re-dispatches.
         let degree = self.degree.get();
-        let target = &s.target;
-        let result =
-            bisection_step_normalized(&s.bounds, |mid| binary_pow(mid, degree).cmp(target));
-
-        match result {
-            PrefixBisectionResult::Narrowed(new_bounds) => {
-                s.bounds = new_bounds;
-            }
-            PrefixBisectionResult::Exact(mid) => {
-                s.exact_value = Some(mid);
-            }
-        }
-        Ok(true)
+        let made_progress = newton_step_nth_root(s, degree, precision_cap);
+        Ok(made_progress)
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
@@ -154,16 +220,15 @@ impl NodeOp for NthRootOp {
         true
     }
 
-    /// Sensitivity of x^(1/n): derivative = (1/n) · x^((1-n)/n).
-    /// Max |derivative| at smallest input x = a: (1/n) · a^((1-n)/n).
-    /// Child budget = target · n · a^((n-1)/n).
+    /// Sensitivity of x^(1/n): derivative = (1/n) * x^((1-n)/n).
+    /// Max |derivative| at smallest input x = a: (1/n) * a^((1-n)/n).
+    /// Child budget = target * n * a^((n-1)/n).
     ///
-    /// We approximate a^((n-1)/n) ≈ a, which is conservative (budget too
-    /// loose) for a ≥ 1 and slightly tight for a < 1. This avoids needing
+    /// We approximate a^((n-1)/n) ~ a, which is conservative (budget too
+    /// loose) for a >= 1 and slightly tight for a < 1. This avoids needing
     /// to compute an nth root inside the budget function.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         use crate::binary::UBinary;
-        use num_bigint::BigUint;
 
         let n = self.degree.get();
         if n == 1 {
@@ -176,7 +241,7 @@ impl NodeOp for NthRootOp {
             }
             None => return target_width.clone(),
         };
-        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), BigInt::zero()));
+        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), 0));
         target_width.mul(&n_ux).mul(&min_abs)
     }
 
@@ -185,38 +250,44 @@ impl NodeOp for NthRootOp {
     }
 }
 
-/// Extracts bounds from an initialized bisection state.
-fn bounds_from_bisection_state(s: &BisectionState) -> Bounds {
-    let finite_bounds = {
-        let bounds = if let Some(exact) = &s.exact_value {
-            FiniteBounds::point(exact.clone())
+/// Extracts bounds from an initialized Newton state.
+fn bounds_from_newton_state(s: &NthRootNewtonState) -> Bounds {
+    if let Some(exact) = &s.exact_value {
+        let val = if s.negate_result {
+            exact.neg()
         } else {
-            s.bounds.to_finite_bounds()
+            exact.clone()
         };
-        if s.negate_result {
-            bounds.interval_neg()
-        } else {
-            bounds
-        }
+        return Bounds::new(XBinary::Finite(val.clone()), XBinary::Finite(val));
+    }
+
+    let (out_lo, out_hi) = if s.negate_result {
+        (
+            XBinary::Finite(s.upper.neg()),
+            XBinary::Finite(s.lower.neg()),
+        )
+    } else {
+        (
+            XBinary::Finite(s.lower.clone()),
+            XBinary::Finite(s.upper.clone()),
+        )
     };
-    Bounds::from_lower_and_width(
-        XBinary::Finite(finite_bounds.small().clone()),
-        UXBinary::Finite(finite_bounds.width().clone()),
-    )
+    Bounds::new(out_lo, out_hi)
 }
 
-/// Initializes the bisection state for nth root computation.
+/// Initializes Newton-Raphson state for nth root computation.
 ///
-/// Takes the midpoint of input bounds as the target value, then sets up initial
-/// bisection bounds to find the nth root of that target.
-fn initialize_nth_root_bisection_state(
+/// Takes the midpoint of input bounds as the target value, then sets up
+/// initial bounds and performs Newton steps at the seed precision.
+fn initialize_nth_root_newton_state(
     input_bounds: &Bounds,
     degree: u32,
-) -> Result<BisectionState, ComputableError> {
+    seed_precision: usize,
+) -> Result<NthRootNewtonState, ComputableError> {
     let lower = input_bounds.small();
     let upper = &input_bounds.large();
 
-    // Get the target value - use midpoint for intervals, exact for points
+    // Get the target value
     let target = match (lower, upper) {
         (XBinary::Finite(l), XBinary::Finite(u)) => midpoint(l, u),
         _ => return Err(ComputableError::InfiniteBounds),
@@ -236,55 +307,374 @@ fn initialize_nth_root_bisection_state(
         (target.clone(), false)
     };
 
-    // Initial bounds for bisection: [0 or small, max(1, target)]
-    let one = Binary::new(BigInt::one(), BigInt::zero());
+    // Handle zero
+    if actual_target.mantissa().is_zero() {
+        return Ok(NthRootNewtonState {
+            lower: Binary::zero(),
+            upper: Binary::zero(),
+            target: actual_target,
+            negate_result,
+            exact_value: Some(Binary::zero()),
+            precision: seed_precision,
+        });
+    }
 
-    let bisection_lower = if actual_target.mantissa().is_zero() {
-        Binary::zero()
-    } else if actual_target < one {
-        // For 0 < target < 1, the root is > target, so use target as lower bound
-        actual_target.clone()
+    // Handle degree 1: root is the target itself
+    if degree == 1 {
+        return Ok(NthRootNewtonState {
+            lower: actual_target.clone(),
+            upper: actual_target.clone(),
+            target: actual_target.clone(),
+            negate_result,
+            exact_value: Some(actual_target),
+            precision: seed_precision,
+        });
+    }
+
+    // Initial bounds: [1, target] for target >= 1, [target, 1] for target < 1
+    let one = Binary::new(BigInt::from(1_i32), 0);
+    let (init_lower, init_upper) = if actual_target < one {
+        (actual_target.clone(), one)
     } else {
-        // For target >= 1, the root is <= target, so use 1 as lower bound
-        one.clone()
+        (one, actual_target.clone())
     };
 
-    let bisection_upper = if actual_target.mantissa().is_zero() {
-        Binary::zero()
-    } else if actual_target < one {
-        // For 0 < target < 1, the root is < 1, so use 1 as upper bound
-        one
-    } else {
-        // For target >= 1, the root is <= target, so use target as upper bound
-        actual_target.clone()
-    };
-
-    // Normalize bounds once at initialization to ensure bisection automatically
-    // selects shortest representations at each step
-    let initial_bounds = FiniteBounds::new(bisection_lower, bisection_upper);
-    let normalized = normalize_bounds(&initial_bounds)?;
-
-    // Extract mantissa and exponent from normalized bounds.
-    // Use width's exponent since it's always correct (even when lower is zero,
-    // which normalizes to exponent 0).
-    let exponent = normalized.width().exponent().clone();
-    let normalized_lower = normalized.small();
-
-    // If lower is zero, mantissa is 0 regardless of exponent.
-    // Otherwise, we need to ensure the mantissa is at the width's exponent.
-    let mantissa = if normalized_lower.mantissa().is_zero() {
-        BigInt::zero()
-    } else {
-        // Lower should already be at the correct exponent from normalize_bounds
-        normalized_lower.mantissa().clone()
-    };
-
-    Ok(BisectionState {
-        bounds: PrefixBounds::new(mantissa, exponent),
+    let mut state = NthRootNewtonState {
+        lower: init_lower,
+        upper: init_upper,
         target: actual_target,
         negate_result,
         exact_value: None,
-    })
+        precision: seed_precision,
+    };
+
+    // Perform 2 initial Newton steps for a good seed.
+    // Use a generous cap during initialization to allow the seed to converge
+    // well; the refine_step cap will control subsequent growth.
+    let init_cap = seed_precision
+        .saturating_mul(8)
+        .min(sane::u_as_usize(U::MAX));
+    for _ in 0_u32..2_u32 {
+        newton_step_nth_root(&mut state, degree, init_cap);
+    }
+
+    Ok(state)
+}
+
+/// Performs one Newton-Raphson step on the nth root state.
+///
+/// Newton iteration: y_{new} = ((n-1)*y + target/y^{n-1}) / n
+///
+/// From convexity of y^n:
+/// - Newton from above (starting at upper) stays above: valid upper bound
+/// - Lower bound: target / upper^{n-1} <= root (since upper >= root)
+///
+/// The `precision_cap` limits how far precision can grow, preventing
+/// the refiner_loop from escalating mantissa sizes exponentially.
+///
+/// Returns `true` if bounds improved, `false` otherwise.
+fn newton_step_nth_root(state: &mut NthRootNewtonState, degree: u32, precision_cap: usize) -> bool {
+    if state.exact_value.is_some() {
+        return false;
+    }
+
+    let precision = state.precision;
+    let y = &state.upper;
+    let target = &state.target;
+    let n = degree;
+    let n_minus_1 = n.saturating_sub(1);
+
+    // Compute y^(n-1). For sqrt (n=2), n_minus_1 == 1 so just clone y.
+    let y_pow = if n_minus_1 == 1 {
+        y.clone()
+    } else {
+        binary_pow(y, n_minus_1)
+    };
+
+    // If y^(n-1) is zero (shouldn't happen for positive upper), bail
+    if y_pow.mantissa().is_zero() {
+        return false;
+    }
+
+    // Newton step: y_new = ((n-1)*y + target/y^{n-1}) / n
+    // For upper bound, round up: use ceil division
+    let n_minus_1_times_y = scalar_mul(y, n_minus_1);
+    let quotient_ceil = binary_div_ceil(target, &y_pow, precision);
+    let numerator_ceil = n_minus_1_times_y.add(&quotient_ceil);
+    let new_upper = binary_div_ceil_by_u32(&numerator_ceil, n, precision);
+
+    // Lower bound: target / upper_new^{n-1}, rounded down
+    // Use the better upper (new if improved, old otherwise).
+    let upper_improved = new_upper < state.upper;
+
+    // Reuse y_pow when upper didn't improve (effective_upper == y, so
+    // effective_upper^(n-1) == y_pow already computed above).
+    let effective_upper_pow = if upper_improved {
+        if n_minus_1 == 1 {
+            new_upper.clone()
+        } else {
+            binary_pow(&new_upper, n_minus_1)
+        }
+    } else {
+        y_pow
+    };
+    let new_lower = if effective_upper_pow.mantissa().is_zero() {
+        state.lower.clone()
+    } else {
+        binary_div_floor(target, &effective_upper_pow, precision)
+    };
+
+    let lower_improved = new_lower > state.lower;
+
+    // Double precision for next step (quadratic convergence),
+    // but cap at the precision limit to prevent runaway growth.
+    state.precision = precision
+        .saturating_mul(2)
+        .min(precision_cap)
+        .min(sane::u_as_usize(U::MAX));
+
+    if upper_improved || lower_improved {
+        if upper_improved {
+            state.upper = new_upper;
+        }
+        if lower_improved {
+            state.lower = new_lower;
+        }
+
+        // Check if we found exact root
+        if state.lower == state.upper {
+            state.exact_value = Some(state.lower.clone());
+        }
+
+        true
+    } else {
+        false
+    }
+}
+
+/// Multiply a Binary by a u32 scalar.
+fn scalar_mul(x: &Binary, scalar: u32) -> Binary {
+    let mantissa = x.mantissa() * BigInt::from(scalar);
+    Binary::new(mantissa, x.exponent())
+}
+
+/// Divides a by b, rounding toward negative infinity (floor).
+/// Result has at most `precision` bits of mantissa.
+fn binary_div_floor(a: &Binary, b: &Binary, precision: usize) -> Binary {
+    if a.mantissa().is_zero() {
+        return Binary::zero();
+    }
+
+    let a_sign = a.mantissa().sign();
+    let b_sign = b.mantissa().sign();
+    let result_negative =
+        (a_sign == num_bigint::Sign::Minus) != (b_sign == num_bigint::Sign::Minus);
+
+    let a_abs = a.mantissa().magnitude().clone();
+    let b_abs = b.mantissa().magnitude().clone();
+
+    let b_bits = sane::u_as_usize(sane::bits_as_u(b_abs.bits()));
+    let shift = precision.checked_add(b_bits).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "precision + b_bits overflow in binary_div_floor"
+        )
+    });
+
+    // Shift a left by `shift` bits, then divide by b
+    let a_shifted = &a_abs << shift;
+    let (quotient, remainder) = num_integer::Integer::div_rem(&a_shifted, &b_abs);
+
+    // For floor division:
+    // - positive result: use quotient as-is (truncation toward zero = floor)
+    // - negative result: if remainder != 0, subtract 1
+    let final_quotient = if result_negative && !remainder.is_zero() {
+        quotient + BigUint::from(1_u32)
+    } else {
+        quotient
+    };
+
+    let mantissa = if result_negative {
+        -BigInt::from(final_quotient)
+    } else {
+        BigInt::from(final_quotient)
+    };
+
+    // Exponent: a_exp - b_exp - shift
+    let shift_i = I::try_from(shift).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("shift exceeds I in binary_div_floor")
+    });
+    let exp = a
+        .exponent()
+        .checked_sub(b.exponent())
+        .and_then(|e| e.checked_sub(shift_i))
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "exponent overflow in binary_div_floor"
+            )
+        });
+
+    let result = Binary::new(mantissa, exp);
+    truncate_floor(&result, precision)
+}
+
+/// Divides a by b, rounding toward positive infinity (ceil).
+/// Result has at most `precision` bits of mantissa.
+fn binary_div_ceil(a: &Binary, b: &Binary, precision: usize) -> Binary {
+    if a.mantissa().is_zero() {
+        return Binary::zero();
+    }
+
+    let a_sign = a.mantissa().sign();
+    let b_sign = b.mantissa().sign();
+    let result_negative =
+        (a_sign == num_bigint::Sign::Minus) != (b_sign == num_bigint::Sign::Minus);
+
+    let a_abs = a.mantissa().magnitude().clone();
+    let b_abs = b.mantissa().magnitude().clone();
+
+    let b_bits = sane::u_as_usize(sane::bits_as_u(b_abs.bits()));
+    let shift = precision.checked_add(b_bits).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "precision + b_bits overflow in binary_div_ceil"
+        )
+    });
+
+    let a_shifted = &a_abs << shift;
+    let (quotient, remainder) = num_integer::Integer::div_rem(&a_shifted, &b_abs);
+
+    // For ceil division:
+    // - positive result with remainder: add 1
+    // - negative result: use quotient as-is (truncation toward zero = ceil for negatives)
+    let final_quotient = if !result_negative && !remainder.is_zero() {
+        quotient + BigUint::from(1_u32)
+    } else {
+        quotient
+    };
+
+    let mantissa = if result_negative {
+        -BigInt::from(final_quotient)
+    } else {
+        BigInt::from(final_quotient)
+    };
+
+    let shift_i = I::try_from(shift).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("shift exceeds I in binary_div_ceil")
+    });
+    let exp = a
+        .exponent()
+        .checked_sub(b.exponent())
+        .and_then(|e| e.checked_sub(shift_i))
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in binary_div_ceil")
+        });
+
+    let result = Binary::new(mantissa, exp);
+    truncate_ceil(&result, precision)
+}
+
+/// Divides a Binary by a u32 scalar, rounding toward positive infinity (ceil).
+/// Result has at most `precision` bits of mantissa.
+fn binary_div_ceil_by_u32(a: &Binary, divisor: u32, precision: usize) -> Binary {
+    if a.mantissa().is_zero() {
+        return Binary::zero();
+    }
+
+    let divisor_big = BigInt::from(divisor);
+
+    // Shift mantissa left by `precision` bits to preserve fractional precision
+    let shifted_mantissa = a.mantissa() << precision;
+    let (quotient, remainder) = num_integer::Integer::div_rem(&shifted_mantissa, &divisor_big);
+
+    // For ceil: if positive and remainder != 0, add 1
+    // if negative and remainder != 0, keep as-is (truncation toward zero = ceil for negatives)
+    let final_quotient = if quotient.is_positive() && !remainder.is_zero() {
+        quotient + BigInt::one()
+    } else {
+        // truncation toward zero is already ceil for negatives (or zero remainder)
+        quotient
+    };
+
+    let precision_i = I::try_from(precision).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!(
+            "precision exceeds I in binary_div_ceil_by_u32"
+        )
+    });
+    let exp = a.exponent().checked_sub(precision_i).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "exponent overflow in binary_div_ceil_by_u32"
+        )
+    });
+
+    let result = Binary::new(final_quotient, exp);
+    truncate_ceil(&result, precision)
+}
+
+/// Truncate a Binary to at most `precision_bits` mantissa bits,
+/// rounding toward -infinity (floor). The result is always <= the input.
+fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
+    let bit_length = sane::u_as_usize(sane::bits_as_u(x.mantissa().magnitude().bits()));
+    let Some(shift) = bit_length
+        .checked_sub(precision_bits)
+        .filter(|&s| s > 0_usize)
+    else {
+        return x.clone();
+    };
+    let shifted = x.mantissa().magnitude() >> shift;
+
+    // For positive values, truncation toward zero IS floor.
+    // For negative values, truncation toward zero is ceil, so subtract 1.
+    // Note: shift > 0 on an odd (normalized) mantissa always loses bits,
+    // so there is always a remainder for negative values.
+    let signed = if x.mantissa().is_negative() {
+        -BigInt::from(shifted) - BigInt::from(1_i32)
+    } else {
+        BigInt::from(shifted)
+    };
+
+    Binary::new(
+        signed,
+        x.exponent()
+            .checked_add(I::try_from(shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("shift exceeds I in truncate")
+            }))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
+            }),
+    )
+}
+
+/// Truncate a Binary to at most `precision_bits` mantissa bits,
+/// rounding toward +infinity (ceil). The result is always >= the input.
+fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
+    let bit_length = sane::u_as_usize(sane::bits_as_u(x.mantissa().magnitude().bits()));
+    let Some(shift) = bit_length
+        .checked_sub(precision_bits)
+        .filter(|&s| s > 0_usize)
+    else {
+        return x.clone();
+    };
+    let shifted = x.mantissa().magnitude() >> shift;
+
+    // For positive values, truncation toward zero is floor, so add 1.
+    // For negative values, truncation toward zero IS ceil.
+    // Note: shift > 0 on an odd (normalized) mantissa always loses bits,
+    // so there is always a remainder for positive values.
+    let signed = if !x.mantissa().is_negative() {
+        BigInt::from(shifted) + BigInt::from(1_i32)
+    } else {
+        -BigInt::from(shifted)
+    };
+
+    Binary::new(
+        signed,
+        x.exponent()
+            .checked_add(I::try_from(shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("shift exceeds I in truncate")
+            }))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
+            }),
+    )
 }
 
 #[cfg(test)]
@@ -292,7 +682,7 @@ mod tests {
     use super::*;
     use crate::computable::Computable;
     use crate::refinement::bounds_width_leq;
-    use crate::sane::XUsize;
+    use crate::sane::XI;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
     /// Helper to create NonZeroU32 from a literal in tests.
@@ -303,11 +693,10 @@ mod tests {
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        tolerance_exp: &XUsize,
+        tolerance_exp: &XI,
     ) {
         let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
+        let upper = unwrap_finite(bounds.large());
 
         assert!(
             lower <= *expected && *expected <= upper,
@@ -327,7 +716,7 @@ mod tests {
         // sqrt(4) = 2
         let four = Computable::constant(bin(4, 0));
         let sqrt_four = four.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sqrt_four
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -341,7 +730,7 @@ mod tests {
         // sqrt(2) ~= 1.414...
         let two = Computable::constant(bin(2, 0));
         let sqrt_two = two.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sqrt_two
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -359,7 +748,7 @@ mod tests {
         // cbrt(8) = 2
         let eight = Computable::constant(bin(8, 0));
         let cbrt_eight = eight.nth_root(nz(3));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = cbrt_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -373,7 +762,7 @@ mod tests {
         // cbrt(-8) = -2
         let neg_eight = Computable::constant(bin(-8, 0));
         let cbrt_neg_eight = neg_eight.nth_root(nz(3));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = cbrt_neg_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -387,7 +776,7 @@ mod tests {
         // 16^(1/4) = 2
         let sixteen = Computable::constant(bin(16, 0));
         let fourth_root = sixteen.nth_root(nz(4));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = fourth_root
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -401,7 +790,7 @@ mod tests {
         // sqrt(0.5) ~= 0.707...
         let half = Computable::constant(bin(1, -1));
         let sqrt_half = half.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sqrt_half
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -421,7 +810,7 @@ mod tests {
         let cbrt_8 = Computable::constant(bin(8, 0)).nth_root(nz(3));
         let sum = sqrt_2 + cbrt_8;
 
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XI::from_i32(-8);
         let bounds = sum
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -443,7 +832,7 @@ mod tests {
 
         let expected = bin(0, 0);
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         assert!(lower <= expected && expected <= upper);
     }
@@ -451,33 +840,42 @@ mod tests {
     #[test]
     fn sqrt_of_interval_overlapping_zero() {
         // Test even root of a Computable with bounds overlapping zero: [-1, 4]
-        // Bisection targets the midpoint of the input (1.5), so output bounds
-        // contain sqrt(1.5) ~ 1.22, not the full range of possible roots.
+        // Newton targets the midpoint of the input (1.5), so output bounds
+        // should contain sqrt(1.5) ~ 1.2247.
         let interval = interval_noop_computable(-1, 4);
         let sqrt_interval = interval.nth_root(nz(2));
         let bounds = sqrt_interval.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
-        // Bisection-based bounds should contain sqrt(midpoint) ~ sqrt(1.5) ~ 1.22
-        assert!(lower <= bin(1, 0), "lower {} should be <= 1", lower);
-        assert!(upper >= bin(1, 0), "upper {} should be >= 1", upper);
+        // Bounds should contain sqrt(1.5) ~ 1.2247
+        let expected_f64 = 1.5_f64.sqrt();
+        let expected_binary = XBinary::from_f64(expected_f64)
+            .expect("expected value should convert to extended binary");
+        let expected = unwrap_finite(&expected_binary);
+        assert!(
+            lower <= expected && expected <= upper,
+            "Expected sqrt(1.5) ~ {} to be in bounds [{}, {}]",
+            expected,
+            lower,
+            upper
+        );
     }
 
     #[test]
     fn cbrt_of_interval_overlapping_zero() {
         // Test odd root of a Computable with bounds overlapping zero: [-8, 27]
-        // Bisection targets the midpoint of the input (9.5), so output bounds
+        // Newton targets the midpoint of the input (9.5), so output bounds
         // contain cbrt(9.5) ~ 2.11, not the full range of possible roots.
         let interval = interval_noop_computable(-8, 27);
         let cbrt_interval = interval.nth_root(nz(3));
         let bounds = cbrt_interval.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
-        // Bisection-based bounds should contain cbrt(midpoint) ~ cbrt(9.5) ~ 2.11
+        // Newton-based bounds should contain cbrt(midpoint) ~ cbrt(9.5) ~ 2.11
         assert!(lower <= bin(2, 0), "lower {} should be <= 2", lower);
         assert!(upper >= bin(2, 0), "upper {} should be >= 2", upper);
     }

@@ -31,12 +31,21 @@ impl XBinary {
         Self::Finite(Binary::zero())
     }
 
-    /// Negates this extended binary number.
+    /// Negates this extended binary number (borrowing).
     pub fn neg(&self) -> Self {
         match self {
             Self::NegInf => Self::PosInf,
             Self::PosInf => Self::NegInf,
             Self::Finite(value) => Self::Finite(value.neg()),
+        }
+    }
+
+    /// Negates this extended binary number, consuming it to avoid cloning.
+    pub fn neg_owned(self) -> Self {
+        match self {
+            Self::NegInf => Self::PosInf,
+            Self::PosInf => Self::NegInf,
+            Self::Finite(value) => Self::Finite(value.neg_owned()),
         }
     }
 
@@ -168,7 +177,7 @@ impl Neg for XBinary {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        XBinary::neg(&self)
+        self.neg_owned()
     }
 }
 
@@ -279,7 +288,7 @@ mod tests {
         if let XBinary::Finite(value) = result {
             // 1.5 = 3 * 2^-1
             assert_eq!(value.mantissa(), &BigInt::from(3_i32));
-            assert_eq!(value.exponent(), &BigInt::from(-1_i32));
+            assert_eq!(value.exponent(), -1_i32);
         } else {
             panic!("expected finite value");
         }

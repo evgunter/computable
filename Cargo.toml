@@ -13,6 +13,7 @@ autobenches = false
 [features]
 criterion-bench = []
 time-bench = []
+bench-lite = []
 
 [dependencies]
 crossbeam-channel = "0.5"
@@ -52,6 +53,10 @@ harness = false
 
 [[bench]]
 name = "asymmetric_convergence"
+harness = false
+
+[[bench]]
+name = "targeted"
 harness = false
 
 [lints.clippy]

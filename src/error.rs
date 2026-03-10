@@ -14,6 +14,7 @@
 
 use crate::binary::BinaryError;
 use crate::ordered_pair::IntervalError;
+use crate::sane::U;
 
 use std::fmt;
 
@@ -31,7 +32,7 @@ pub enum ComputableError {
     /// The refinement coordination channel was closed unexpectedly.
     RefinementChannelClosed,
     /// Maximum refinement iterations reached without meeting precision.
-    MaxRefinementIterations { max: usize },
+    MaxRefinementIterations { max: U },
     /// Error from binary number operations.
     Binary(BinaryError),
     /// Input is outside the domain of the operation (e.g., negative for even roots).
