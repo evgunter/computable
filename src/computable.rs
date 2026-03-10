@@ -133,10 +133,7 @@ impl Computable {
     /// The error bound |x|^(2n+1)/(2n+1)! is also computed conservatively (rounded up)
     /// to ensure the true value is always contained within the returned bounds.
     pub fn sin(self) -> Self {
-        let pi_node = Node::new(Arc::new(PiOp {
-            num_terms: RwLock::new(crate::ops::pi::INITIAL_PI_TERMS),
-            bounds_cache: RwLock::new(None),
-        }));
+        let pi_node = Node::new(Arc::new(PiOp::new(crate::ops::pi::INITIAL_PI_TERMS)));
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
             pi_node,

@@ -3,28 +3,34 @@
 //! This module implements pi as a Computable number using:
 //! - Machin's formula: pi/4 = 4*arctan(1/5) - arctan(1/239)
 //! - Taylor series for arctan with rigorous error bounds
-//! - Directed rounding for interval arithmetic
+//! - InvOp (Newton-Raphson) for incremental reciprocal refinement
 //!
 //! ## Key Design Decisions
 //!
-//! 1. **Full Interval Propagation**: Every intermediate computation tracks [lo, hi] bounds
-//! 2. **Directed Rounding**: Lower bounds round down, upper bounds round up
+//! 1. **InvOp-backed reciprocals**: Each Taylor term `1/((2i+1)*k^(2i+1))` is an
+//!    InvOp node. Existing approximations are refined incrementally (precision doubles
+//!    per N-R step) rather than recomputed from scratch.
+//! 2. **Full Interval Propagation**: Every intermediate computation tracks [lo, hi] bounds
 //! 3. **Error Bound Tracking**: Taylor truncation error is computed conservatively
 //! 4. **Dynamic Precision**: Pi bounds can be refined to arbitrary precision
 
 use std::sync::Arc;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, reciprocal_of_biguint,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, XBinary,
+    reciprocal_of_biguint,
 };
 use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
 use crate::error::ComputableError;
-use crate::node::{Node, NodeOp};
+use crate::node::{BaseNode, Node, NodeOp, TypedBaseNode};
 use crate::sane::{Sane, U, XI};
+
+use super::BaseOp;
+use super::InvOp;
 
 /// Initial number of Taylor series terms for pi computation.
 pub(crate) const INITIAL_PI_TERMS: U = 10;
@@ -90,10 +96,7 @@ fn precision_bits_for_num_terms(num_terms: U) -> U {
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
 pub fn pi() -> Computable {
-    let node = Node::new(Arc::new(PiOp {
-        num_terms: RwLock::new(INITIAL_PI_TERMS),
-        bounds_cache: RwLock::new(None),
-    }));
+    let node = Node::new(Arc::new(PiOp::new(INITIAL_PI_TERMS)));
     Computable::from_node(node)
 }
 
@@ -128,16 +131,213 @@ pub struct PiBoundsCache {
 }
 
 /// Pi computation operation using Machin's formula.
+///
+/// Internally stores InvOp nodes for each Taylor series term. These are
+/// driven manually by `compute_prefix` (not as graph children, since the
+/// term count is dynamic).
 pub struct PiOp {
-    pub num_terms: RwLock<U>,
+    state: RwLock<PiState>,
     /// Cache of the last `compute_bounds` result, keyed on `num_terms`.
     /// Eliminates redundant Taylor series recomputation during bound propagation.
-    pub bounds_cache: RwLock<Option<PiBoundsCache>>,
+    bounds_cache: RwLock<Option<PiBoundsCache>>,
+}
+
+struct PiState {
+    num_terms: U,
+    atan5_terms: Vec<Arc<Node>>,
+    atan239_terms: Vec<Arc<Node>>,
+    /// 5^(2*num_terms+1), ready for the next term or error bound
+    k5_power: BigInt,
+    /// 239^(2*num_terms+1), ready for the next term or error bound
+    k239_power: BigInt,
+}
+
+impl PiOp {
+    pub fn new(num_terms: U) -> Self {
+        PiOp {
+            state: RwLock::new(PiState::new(num_terms)),
+            bounds_cache: RwLock::new(None),
+        }
+    }
+}
+
+impl PiState {
+    fn new(n: U) -> Self {
+        let k5 = BigInt::from(5_i64);
+        let k239 = BigInt::from(239_i64);
+        let k5_sq = &k5 * &k5;
+        let k239_sq = &k239 * &k239;
+
+        let mut atan5_terms = Vec::with_capacity(crate::sane::u_as_usize(n));
+        let mut atan239_terms = Vec::with_capacity(crate::sane::u_as_usize(n));
+
+        let mut k5_power = k5; // 5^1
+        let mut k239_power = k239; // 239^1
+
+        for i in 0..n {
+            let coeff = BigInt::from(i) * 2_i64 + 1_i64;
+
+            let denom5 = &coeff * &k5_power;
+            atan5_terms.push(make_inv_node(denom5));
+
+            let denom239 = &coeff * &k239_power;
+            atan239_terms.push(make_inv_node(denom239));
+
+            k5_power = &k5_power * &k5_sq;
+            k239_power = &k239_power * &k239_sq;
+        }
+
+        PiState {
+            num_terms: n,
+            atan5_terms,
+            atan239_terms,
+            k5_power,
+            k239_power,
+        }
+    }
+
+    fn extend_to(&mut self, n: U) {
+        if n <= self.num_terms {
+            return;
+        }
+
+        let k5_sq = BigInt::from(25_i64);
+        let k239_sq = BigInt::from(239_i64 * 239_i64);
+
+        for i in self.num_terms..n {
+            let coeff = BigInt::from(i) * 2_i64 + 1_i64;
+
+            let denom5 = &coeff * &self.k5_power;
+            self.atan5_terms.push(make_inv_node(denom5));
+
+            let denom239 = &coeff * &self.k239_power;
+            self.atan239_terms.push(make_inv_node(denom239));
+
+            self.k5_power = &self.k5_power * &k5_sq;
+            self.k239_power = &self.k239_power * &k239_sq;
+        }
+
+        self.num_terms = n;
+    }
+}
+
+/// Creates an InvOp node that computes `1/denominator` using Newton-Raphson.
+fn make_inv_node(denominator: BigInt) -> Arc<Node> {
+    let binary = Binary::new(denominator, 0);
+    let base: Arc<dyn BaseNode> = Arc::new(TypedBaseNode::new(
+        binary,
+        |v: &Binary| {
+            Ok(Bounds::new(
+                XBinary::Finite(v.clone()),
+                XBinary::Finite(v.clone()),
+            ))
+        },
+        |v: Binary| Ok(v),
+    ));
+    let constant_node = Node::new(Arc::new(BaseOp { base }));
+    Node::new(Arc::new(InvOp {
+        inner: constant_node,
+        division_state: RwLock::new(None),
+    }))
+}
+
+/// Drives an InvOp node until its prefix width is at most `2^(-target_width_bits)`.
+///
+/// `refine_precision` is passed to `refine_step` as the seed precision hint.
+/// It must be large enough that the InvOp's initial reciprocal seed is nonzero
+/// (i.e., larger than `log2(denominator)`).
+fn refine_node_to_precision(
+    node: &Arc<Node>,
+    target_width_bits: U,
+    refine_precision: U,
+) -> Result<(), ComputableError> {
+    const MAX_ITERS: U = 64;
+    let exp = i32::try_from(target_width_bits)
+        .unwrap_or(i32::MAX)
+        .checked_neg()
+        .unwrap_or(i32::MIN);
+    let tolerance = UBinary::new(BigUint::from(1_u32), exp);
+    for _ in 0..MAX_ITERS {
+        let bounds = node.get_bounds()?;
+        match bounds.width() {
+            UXBinary::Finite(w) if *w <= tolerance => return Ok(()),
+            UXBinary::Finite(_) | UXBinary::Inf => {}
+        }
+        let target_exp = XI::from_i32(
+            i32::try_from(refine_precision)
+                .map(|p| p.checked_neg().unwrap_or(i32::MIN))
+                .unwrap_or(i32::MIN),
+        );
+        node.refine_step(target_exp)?;
+        let new_bounds = node.op.compute_bounds()?;
+        node.set_bounds(new_bounds);
+    }
+    Err(ComputableError::MaxRefinementIterations { max: MAX_ITERS })
+}
+
+/// Sums arctan Taylor terms from InvOp nodes, applying sign alternation and error bounds.
+///
+/// Each `terms[i]` is an InvOp node computing `1/((2i+1)*k^(2i+1))`.
+/// `k_power` is `k^(2*num_terms+1)` for the truncation error bound.
+fn sum_arctan_terms(
+    terms: &[Arc<Node>],
+    num_terms: U,
+    precision_bits: U,
+    k_power: &BigInt,
+) -> Result<(Binary, Binary), ComputableError> {
+    // The InvOp seed precision must exceed the denominator's bit length,
+    // otherwise floor(2^p / denom) = 0 and N-R is stuck at zero.
+    // k_power = k^(2*num_terms+1) bounds all term denominators.
+    let k_power_bits = crate::sane::bits_as_u(k_power.magnitude().bits());
+    let refine_precision = precision_bits.max(k_power_bits.saturating_add(10));
+
+    let mut sum_lo = Binary::zero();
+    let mut sum_hi = Binary::zero();
+
+    for (i, node) in terms
+        .iter()
+        .take(crate::sane::u_as_usize(num_terms))
+        .enumerate()
+    {
+        refine_node_to_precision(node, precision_bits, refine_precision)?;
+
+        let bounds = node.get_bounds()?;
+        let lo = match bounds.small() {
+            XBinary::Finite(b) => b.clone(),
+            XBinary::NegInf | XBinary::PosInf => return Err(ComputableError::InfiniteBounds),
+        };
+        let hi = match bounds.large() {
+            XBinary::Finite(b) => b.clone(),
+            XBinary::NegInf | XBinary::PosInf => return Err(ComputableError::InfiniteBounds),
+        };
+
+        if i % 2 == 0 {
+            // Positive term: sum_lo += lo, sum_hi += hi
+            sum_lo = sum_lo.add(&lo);
+            sum_hi = sum_hi.add(&hi);
+        } else {
+            // Negative term: sum_lo -= hi, sum_hi -= lo
+            sum_lo = sum_lo.sub(&hi);
+            sum_hi = sum_hi.sub(&lo);
+        }
+    }
+
+    // Taylor truncation error: 1 / ((2n+1) * k^(2n+1))
+    let error_coeff = BigInt::from(crate::sane_arithmetic!(num_terms; 2 * num_terms + 1));
+    let error_denom = &error_coeff * k_power;
+    let error = reciprocal_of_biguint(
+        error_denom.magnitude(),
+        precision_bits,
+        ReciprocalRounding::Ceil,
+    );
+
+    Ok((sum_lo.sub(&error), sum_hi.add(&error)))
 }
 
 impl NodeOp for PiOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
-        let num_terms = *self.num_terms.read();
+        let state = self.state.read();
+        let num_terms = state.num_terms;
 
         // Check cache: if num_terms hasn't changed, return the cached result.
         {
@@ -150,8 +350,38 @@ impl NodeOp for PiOp {
         }
 
         let precision_bits = precision_bits_for_num_terms(num_terms);
-        let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
-        // Normalize to prefix form to prevent precision accumulation
+
+        // Compute arctan(1/5) bounds via InvOp nodes
+        let (atan5_lo, atan5_hi) = sum_arctan_terms(
+            &state.atan5_terms,
+            num_terms,
+            precision_bits,
+            &state.k5_power,
+        )?;
+
+        // Compute arctan(1/239) bounds via InvOp nodes
+        let (atan239_lo, atan239_hi) = sum_arctan_terms(
+            &state.atan239_terms,
+            num_terms,
+            precision_bits,
+            &state.k239_power,
+        )?;
+
+        // pi = 16*arctan(1/5) - 4*arctan(1/239)
+        let sixteen = Binary::new(BigInt::from(1_i32), 4); // 2^4 = 16
+        let four = Binary::new(BigInt::from(1_i32), 2); // 2^2 = 4
+
+        let term1_lo = atan5_lo.mul(&sixteen);
+        let term1_hi = atan5_hi.mul(&sixteen);
+
+        let term2_lo = atan239_lo.mul(&four);
+        let term2_hi = atan239_hi.mul(&four);
+
+        // Interval subtraction: [term1_lo, term1_hi] - [term2_lo, term2_hi]
+        let pi_lo = term1_lo.sub(&term2_hi);
+        let pi_hi = term1_hi.sub(&term2_lo);
+
+        // Normalize to prevent precision accumulation
         let finite = FiniteBounds::new(pi_lo, pi_hi);
         let result = normalize_finite_to_bounds(&finite)?;
 
@@ -168,7 +398,7 @@ impl NodeOp for PiOp {
     }
 
     fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
-        let mut num_terms = self.num_terms.write();
+        let mut state = self.state.write();
 
         // Compute the needed term count from the target width exponent.
         // XI::Finite(e) means width ≤ 2^e. For precision we need |e| bits
@@ -176,7 +406,7 @@ impl NodeOp for PiOp {
         let needed = match target_width_exp {
             XI::NegInf => {
                 // Exact target: need infinite precision — double terms.
-                (*num_terms).checked_mul(2).unwrap_or(U::MAX)
+                state.num_terms.checked_mul(2).unwrap_or(U::MAX)
             }
             XI::Finite {
                 sign: crate::sane::Sign::Neg,
@@ -193,8 +423,8 @@ impl NodeOp for PiOp {
             }
         };
 
-        if needed > *num_terms {
-            *num_terms = needed;
+        if needed > state.num_terms {
+            state.extend_to(needed);
             Ok(true)
         } else {
             // Already have enough terms — no further refinement needed.
