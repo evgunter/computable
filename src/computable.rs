@@ -7,9 +7,6 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use num_bigint::BigInt;
-use num_traits::One;
-
 use crate::binary::Bounds;
 use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
@@ -138,19 +135,22 @@ impl Computable {
     pub fn sin(self) -> Self {
         let pi_node = Node::new(Arc::new(PiOp {
             num_terms: RwLock::new(crate::ops::pi::INITIAL_PI_TERMS),
+            bounds_cache: RwLock::new(None),
         }));
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
             pi_node,
-            num_terms: RwLock::new(BigInt::one()),
+            num_terms: RwLock::new(1),
+            bounds_cache: RwLock::new(None),
         }));
         Self { node }
     }
 
     /// Computes the n-th root of this computable number.
     ///
-    /// Uses binary search (bisection) for guaranteed convergence with provably
-    /// correct bounds. For each refinement step, the interval is halved.
+    /// Uses Newton-Raphson iteration for quadratic convergence with provably
+    /// correct bounds. Each refinement step approximately doubles the number
+    /// of correct bits.
     ///
     /// # Arguments
     /// * `degree` - The root degree (n in x^(1/n)). Must be >= 1, enforced by the type system.
@@ -167,7 +167,7 @@ impl Computable {
         let node = Node::new(Arc::new(NthRootOp {
             inner: Arc::clone(&self.node),
             degree,
-            bisection_state: RwLock::new(None),
+            newton_state: RwLock::new(None),
         }));
         Self { node }
     }
@@ -207,10 +207,7 @@ impl Computable {
                         );
                     }
                 }
-                Computable::constant(Binary::new(
-                    num_bigint::BigInt::from(1),
-                    num_bigint::BigInt::from(0),
-                ))
+                Computable::constant(Binary::one())
             }
             Some(nonzero_exp) => {
                 let node = Node::new(Arc::new(PowOp {
@@ -332,8 +329,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
+        let upper = unwrap_finite(bounds.large());
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");
@@ -358,8 +354,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
+        let upper = unwrap_finite(bounds.large());
         let expected = 2.0_f64 * 2.0_f64.sqrt();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");

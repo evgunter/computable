@@ -2,6 +2,19 @@
 
 ## Tier 0: Easy (Unblocked)
 
+### <a id="sane-i64"></a>sane-i64: Extend `sane_arithmetic!` (or add a new macro) to support i64 checked arithmetic
+**File:** `src/sane.rs`
+The `sane_arithmetic!` macro currently only works with `usize` operands (its guard pattern requires `$guard:ident`). After the BigInt→i64 exponent migration, many sites in the codebase use verbose `checked_mul(...).unwrap_or_else(|| detected_computable_would_exhaust_memory!(...))` chains for i64 exponent arithmetic. A `sane_i64_arithmetic!` macro (or extending the existing macro to accept i64) would make these sites more concise and consistent. Key sites to refactor:
+- `src/ops/sin.rs` `taylor_sin_bounds_rational`: ~10 checked ops computing `common_exp`, `shift_per_step`, `first_shift`, `two_k`/`two_k_plus_1`, and the accumulation loop
+- `src/binary/binary_impl.rs`: `mul`, `normalize`, `Shl`/`Shr` impls
+- `src/binary/ubinary.rs`: `mul`, `div_floor`, `normalize`, `Shl`/`Shr` impls
+- `src/binary/reciprocal.rs`: `reciprocal_of_biguint`, `reciprocal_rounded_abs_extended`
+- `src/binary_utils/bisection.rs`: `midpoint`, `bisection_step_normalized`, `normalize_bounds`
+- `src/ops/nth_root.rs`: `binary_div_floor`, `binary_div_ceil`, `truncate_floor`/`truncate_ceil`
+- `src/finite_interval.rs`: `midpoint`
+
+---
+
 ### <a id="op-constructors"></a>op-constructors: Give ops proper constructors so callers don't couple to internal structure
 **File:** `src/computable.rs`
 `Computable::sin` currently reaches into `SinOp`, `InvOp`, `NthRootOp` etc. to construct them with internal `RwLock` fields. Each op should expose a constructor (e.g., `SinOp::new(inner, pi_node)`) that encapsulates initialization, so callers only depend on the public API.

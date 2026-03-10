@@ -19,7 +19,7 @@ use computable::{
     Binary, Bounds, Computable, FiniteBounds, XBinary, XU, pi, pi_bounds_at_precision,
 };
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{Signed, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -32,7 +32,7 @@ use common::balanced_sum;
 fn try_finite_bounds(bounds: &Bounds) -> Option<FiniteBounds> {
     match (bounds.small(), bounds.large()) {
         (XBinary::Finite(lower), XBinary::Finite(upper)) => {
-            Some(FiniteBounds::new(lower.clone(), upper))
+            Some(FiniteBounds::new(lower.clone(), upper.clone()))
         }
         _ => None,
     }
@@ -217,7 +217,7 @@ fn integer_roots_analysis(rng: &mut StdRng) {
     let terms: Vec<Computable> = inputs
         .iter()
         .map(|&(value, n)| {
-            Computable::constant(Binary::new(BigInt::from(value), BigInt::from(0))).nth_root(n)
+            Computable::constant(Binary::new(BigInt::from(value), 0_i64)).nth_root(n)
         })
         .collect();
     let total = balanced_sum(terms);
@@ -408,7 +408,10 @@ fn pi_analysis() {
         let duration = start.elapsed();
         let width = upper.sub(&lower);
         let sum = lower.add(&upper);
-        let mid = Binary::new(sum.mantissa().clone(), sum.exponent() - BigInt::one());
+        let mid = Binary::new(
+            sum.mantissa().clone(),
+            sum.exponent().checked_sub(1).expect("exponent overflow"),
+        );
         println!(
             "  {bits:>4} bits: {duration:>12?}  width: {:<30}  midpoint: {mid}",
             width
@@ -426,15 +429,13 @@ fn pi_analysis() {
         (
             "2pi",
             2.0 * std::f64::consts::PI,
-            Box::new(|| Computable::constant(Binary::new(BigInt::from(2), BigInt::from(0))) * pi())
+            Box::new(|| Computable::constant(Binary::new(BigInt::from(2), 0_i64)) * pi())
                 as Box<dyn Fn() -> Computable>,
         ),
         (
             "pi/2",
             std::f64::consts::FRAC_PI_2,
-            Box::new(|| {
-                Computable::constant(Binary::new(BigInt::from(1), BigInt::from(-1))) * pi()
-            }),
+            Box::new(|| Computable::constant(Binary::new(BigInt::from(1), -1_i64)) * pi()),
         ),
         (
             "pi^2",
@@ -468,7 +469,7 @@ fn pi_analysis() {
         let n_pi = if multiplier == 1 {
             pi()
         } else {
-            Computable::constant(Binary::new(BigInt::from(multiplier), BigInt::from(0))) * pi()
+            Computable::constant(Binary::new(BigInt::from(multiplier), 0_i64)) * pi()
         };
         let bounds = n_pi
             .sin()

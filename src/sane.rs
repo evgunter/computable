@@ -169,16 +169,6 @@ pub fn sub_one(n: std::num::NonZeroU32) -> U {
     }
 }
 
-/// Subtracts one from a `NonZeroU64`, returning the result as `u64`.
-///
-/// This is trivially correct: `NonZeroU64` guarantees `>= 1`, so `- 1 >= 0`.
-pub fn sub_one_u64(n: std::num::NonZeroU64) -> u64 {
-    #[allow(clippy::arithmetic_side_effects)]
-    {
-        n.get() - 1
-    }
-}
-
 /// Newtype for checked arithmetic on computation-size values.
 ///
 /// Overloads `+`, `-`, `*`, `/` to use `checked_*` internally, panicking via

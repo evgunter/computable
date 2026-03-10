@@ -20,7 +20,7 @@ impl NodeOp for BaseOp {
     fn refine_step(&self, _target_width_exp: XI) -> Result<bool, ComputableError> {
         self.base.refine()?;
         let bounds = BoundsAccess::get_bounds(self.base.as_ref())?;
-        if bounds.small() == &bounds.large() {
+        if bounds.small() == bounds.large() {
             return Ok(false);
         }
         Ok(true)

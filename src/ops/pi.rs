@@ -15,7 +15,6 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::One;
 use parking_lot::RwLock;
 
 use crate::binary::{
@@ -93,6 +92,7 @@ fn precision_bits_for_num_terms(num_terms: U) -> U {
 pub fn pi() -> Computable {
     let node = Node::new(Arc::new(PiOp {
         num_terms: RwLock::new(INITIAL_PI_TERMS),
+        bounds_cache: RwLock::new(None),
     }));
     Computable::from_node(node)
 }
@@ -119,19 +119,52 @@ pub fn pi_bounds_at_precision(precision_bits: U) -> (Binary, Binary) {
     compute_pi_bounds(num_terms, reciprocal_precision)
 }
 
+/// Cached inputs and result for `compute_bounds`, avoiding redundant Machin
+/// formula recomputation when `compute_bounds` is called multiple times at the
+/// same `num_terms` (which happens between `refine_step` calls).
+pub struct PiBoundsCache {
+    num_terms: U,
+    result: Bounds,
+}
+
 /// Pi computation operation using Machin's formula.
 pub struct PiOp {
     pub num_terms: RwLock<U>,
+    /// Cache of the last `compute_bounds` result, keyed on `num_terms`.
+    /// Eliminates redundant Taylor series recomputation during bound propagation.
+    pub bounds_cache: RwLock<Option<PiBoundsCache>>,
 }
 
 impl NodeOp for PiOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let num_terms = *self.num_terms.read();
+
+        // Check cache: if num_terms hasn't changed, return the cached result.
+        {
+            let cache = self.bounds_cache.read();
+            if let Some(cached) = cache.as_ref()
+                && cached.num_terms == num_terms
+            {
+                return Ok(cached.result.clone());
+            }
+        }
+
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
         // Normalize to prefix form to prevent precision accumulation
         let finite = FiniteBounds::new(pi_lo, pi_hi);
-        normalize_finite_to_bounds(&finite)
+        let result = normalize_finite_to_bounds(&finite)?;
+
+        // Store in cache for future calls with the same num_terms.
+        {
+            let mut cache = self.bounds_cache.write();
+            *cache = Some(PiBoundsCache {
+                num_terms,
+                result: result.clone(),
+            });
+        }
+
+        Ok(result)
     }
 
     fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
@@ -146,12 +179,13 @@ impl NodeOp for PiOp {
             }
         }
 
-        // With per-refiner budgets, the leap formula always produces needed > num_terms
-        // when the coordinator dispatches (otherwise the refiner would have been skipped).
-        unreachable!(
-            "PiOp: leap did not advance; target_width_exp={:?}, num_terms={}",
-            target_width_exp, *num_terms
-        )
+        // Fallback: the leap formula may not advance when the coordinator
+        // dispatches this refiner in edge cases (e.g. needed <= num_terms due
+        // to imprecision in the leap estimate). Double num_terms to guarantee
+        // forward progress.
+        let current = *num_terms;
+        *num_terms = crate::sane_arithmetic!(current; current * 2);
+        Ok(true)
     }
 
     fn children(&self) -> Vec<Arc<Node>> {
@@ -195,8 +229,8 @@ fn compute_pi_bounds(num_terms: U, precision_bits: U) -> (Binary, Binary) {
     // So: pi_lo = 16*atan_5_lo - 4*atan_239_hi
     //     pi_hi = 16*atan_5_hi - 4*atan_239_lo
 
-    let sixteen = Binary::new(BigInt::from(1_i32), BigInt::from(4_i32)); // 2^4 = 16
-    let four = Binary::new(BigInt::from(1_i32), BigInt::from(2_i32)); // 2^2 = 4
+    let sixteen = Binary::new_normalized(BigInt::from(1_i32), 4_i64); // 2^4 = 16
+    let four = Binary::new_normalized(BigInt::from(1_i32), 2_i64); // 2^2 = 4
 
     // 16 * arctan(1/5) bounds
     let term1_lo = atan_5_lo.mul(&sixteen);
@@ -243,8 +277,11 @@ fn arctan_recip_bounds(k: u64, num_terms: U, precision_bits: U) -> (Binary, Bina
 
     for i in 0..num_terms {
         // Term i: (-1)^i / ((2i+1) * k^(2i+1))
-        let coeff = BigInt::from(i) * 2_i64 + 1_i64; // 2i+1
-        let denominator = &coeff * &k_power; // (2i+1) * k^(2i+1)
+        // coeff = 2i+1 always fits in i64 (guarded by sane_arithmetic!), avoiding
+        // the BigInt::from(i) * 2 + 1 allocation chain in the original code.
+        let coeff_usize = crate::sane_arithmetic!(i; 2 * i + 1);
+        let coeff_i64 = i64::from(coeff_usize);
+        let denominator = &k_power * coeff_i64; // (2i+1) * k^(2i+1)
 
         let is_positive_term = i % 2 == 0;
 
@@ -266,8 +303,9 @@ fn arctan_recip_bounds(k: u64, num_terms: U, precision_bits: U) -> (Binary, Bina
     // Derive error bound from the loop's final k_power state.
     // After the loop, k_power = k^(2*num_terms + 1) (advanced one past the last term).
     // Error = 1 / ((2n+1) * k^(2n+1))
-    let error_coeff = BigInt::from(crate::sane_arithmetic!(num_terms; 2 * num_terms + 1));
-    let error_denom = &error_coeff * &k_power;
+    let error_coeff_usize = crate::sane_arithmetic!(num_terms; 2 * num_terms + 1);
+    let error_coeff_i64 = i64::from(error_coeff_usize);
+    let error_denom = &k_power * error_coeff_i64;
     let error = reciprocal_of_biguint(
         error_denom.magnitude(),
         precision_bits,
@@ -321,7 +359,7 @@ pub fn two_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
 
     let pi_interval = pi_interval_at_precision(precision_bits);
     // 2*pi: multiply by 2
-    let two = UBinary::new(BigUint::from(1u32), BigInt::from(1_i32)); // 2^1 = 2
+    let two = UBinary::new(BigUint::from(1u32), 1_i64); // 2^1 = 2
     pi_interval.scale_positive(&two)
 }
 
@@ -329,8 +367,18 @@ pub fn two_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
 pub fn half_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
     let (pi_lo, pi_hi) = pi_bounds_at_precision(precision_bits);
     // pi/2: divide by 2 (decrement exponent by 1)
-    let half_pi_lo = Binary::new(pi_lo.mantissa().clone(), pi_lo.exponent() - BigInt::one());
-    let half_pi_hi = Binary::new(pi_hi.mantissa().clone(), pi_hi.exponent() - BigInt::one());
+    let half_pi_lo = Binary::new_normalized(
+        pi_lo.mantissa().clone(),
+        pi_lo.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in half_pi")
+        }),
+    );
+    let half_pi_hi = Binary::new_normalized(
+        pi_hi.mantissa().clone(),
+        pi_hi.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in half_pi")
+        }),
+    );
     FiniteBounds::new(half_pi_lo, half_pi_hi)
 }
 
@@ -341,14 +389,14 @@ mod tests {
     use crate::sane::XU;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
-        Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
+        Binary::new(BigInt::from(mantissa), exponent)
     }
 
     fn epsilon_as_binary(n: U) -> Binary {
         let n_i64 = i64::from(n);
         Binary::new(
             BigInt::from(1_i32),
-            BigInt::from(n_i64.checked_neg().expect("negation does not overflow")),
+            n_i64.checked_neg().expect("negation does not overflow"),
         )
     }
 
@@ -423,7 +471,7 @@ mod tests {
             .expect("refine should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let pi_f64 = pi_f64_binary();
 
         // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
@@ -493,7 +541,7 @@ mod tests {
             .expect("refine to 2^-128 should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let width = upper.sub(&lower);
         let eps_binary = epsilon_as_binary(128);

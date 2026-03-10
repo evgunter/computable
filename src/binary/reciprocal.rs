@@ -85,7 +85,12 @@ pub fn reciprocal_of_biguint(
             (&numerator + denominator - BigUint::one()).div_floor(denominator)
         }
     };
-    let exponent = -BigInt::from(precision_bits);
+    let precision_i64 = i64::from(precision_bits);
+    let exponent = precision_i64.checked_neg().unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "exponent overflow in reciprocal_of_biguint"
+        )
+    });
     Binary::new(BigInt::from(quotient), exponent)
 }
 
@@ -100,7 +105,7 @@ mod tests {
 
         // 2^8 / 5 = 256 / 5 = 51 (floor)
         assert_eq!(result.mantissa(), &BigInt::from(51_i32));
-        assert_eq!(result.exponent(), &BigInt::from(-8_i32));
+        assert_eq!(result.exponent(), -8_i64);
     }
 
     #[test]
@@ -112,9 +117,9 @@ mod tests {
 
         // 2^8 / 3 = 85.33..., floor=85, ceil=86
         assert_eq!(floor.mantissa(), &BigInt::from(85_i32));
-        assert_eq!(floor.exponent(), &BigInt::from(-8_i32));
+        assert_eq!(floor.exponent(), -8_i64);
         assert_eq!(ceil.mantissa(), &BigInt::from(43_i32));
-        assert_eq!(ceil.exponent(), &BigInt::from(-7_i32)); // 43 * 2^-7 = 86 * 2^-8
+        assert_eq!(ceil.exponent(), -7_i64); // 43 * 2^-7 = 86 * 2^-8
         assert!(ceil > floor);
     }
 

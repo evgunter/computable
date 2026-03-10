@@ -17,7 +17,7 @@ use crate::sane::U;
 /// let eight = bin(1, 3);    // 1 * 2^3 = 8
 /// ```
 pub fn bin(mantissa: i64, exponent: i64) -> Binary {
-    Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
+    Binary::new(BigInt::from(mantissa), exponent)
 }
 
 /// Creates a UBinary (unsigned) from mantissa and exponent.
@@ -28,7 +28,7 @@ pub fn bin(mantissa: i64, exponent: i64) -> Binary {
 /// let epsilon = ubin(1, -8); // 1 * 2^(-8) ≈ 0.004
 /// ```
 pub fn ubin(mantissa: u64, exponent: i64) -> UBinary {
-    UBinary::new(BigUint::from(mantissa), BigInt::from(exponent))
+    UBinary::new(BigUint::from(mantissa), exponent)
 }
 
 /// Creates an XBinary (extended binary, allowing infinity) from mantissa and exponent.
@@ -78,7 +78,7 @@ pub fn epsilon_as_binary(n: U) -> Binary {
     let n_i64 = i64::from(n);
     Binary::new(
         BigInt::from(1_i32),
-        BigInt::from(n_i64.checked_neg().expect("negation does not overflow")),
+        n_i64.checked_neg().expect("negation does not overflow"),
     )
 }
 
@@ -94,7 +94,7 @@ pub fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
 
 /// Refines bounds by collapsing them to their midpoint.
 pub fn interval_refine(state: Bounds) -> Result<Bounds, crate::error::ComputableError> {
-    let midpoint = midpoint_between(state.small(), &state.large());
+    let midpoint = midpoint_between(state.small(), state.large());
     Ok(Bounds::new(
         XBinary::Finite(midpoint.clone()),
         XBinary::Finite(midpoint),

@@ -55,6 +55,10 @@ harness = false
 name = "asymmetric_convergence"
 harness = false
 
+[[bench]]
+name = "targeted"
+harness = false
+
 [lints.clippy]
 # These lints apply to all targets (lib, examples, benches).
 # The lib promotes them to deny via lib.rs; examples/benches just get warnings.

@@ -34,19 +34,57 @@ use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::sane::{U, XI, XU};
 
+/// Cached inputs and result for `sin_bounds`, avoiding redundant Taylor series
+/// recomputation when `compute_bounds` is called multiple times with the same inputs.
+pub struct SinBoundsCache {
+    input_bounds: Bounds,
+    pi_bounds: Bounds,
+    num_terms: U,
+    result: Bounds,
+}
+
 /// Sine operation with Taylor series refinement.
 pub struct SinOp {
     pub inner: Arc<Node>,
     pub pi_node: Arc<Node>,
-    pub num_terms: RwLock<BigInt>,
+    pub num_terms: RwLock<U>,
+    /// Cache of the last `sin_bounds` result, keyed on inputs.
+    /// Eliminates redundant Taylor series recomputation during bound propagation.
+    pub bounds_cache: RwLock<Option<SinBoundsCache>>,
 }
 
 impl NodeOp for SinOp {
     fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
         let input_bounds = self.inner.get_bounds()?;
         let pi_bounds = self.pi_node.get_bounds()?;
-        let num_terms = self.num_terms.read().clone();
-        sin_bounds(&input_bounds, &pi_bounds, &num_terms)
+        let num_terms = *self.num_terms.read();
+
+        // Check cache: if inputs haven't changed, return the cached result.
+        {
+            let cache = self.bounds_cache.read();
+            if let Some(cached) = cache.as_ref()
+                && cached.input_bounds == input_bounds
+                && cached.pi_bounds == pi_bounds
+                && cached.num_terms == num_terms
+            {
+                return Ok(cached.result.clone());
+            }
+        }
+
+        let result = sin_bounds(&input_bounds, &pi_bounds, num_terms)?;
+
+        // Store in cache for future calls with the same inputs.
+        {
+            let mut cache = self.bounds_cache.write();
+            *cache = Some(SinBoundsCache {
+                input_bounds,
+                pi_bounds,
+                num_terms,
+                result: result.clone(),
+            });
+        }
+
+        Ok(result)
     }
 
     fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
@@ -54,11 +92,11 @@ impl NodeOp for SinOp {
 
         // Leap based on coordinator's precision target.
         if let XU::Finite(precision_bits) = target_width_exp.to_precision_bits() {
-            // n*3 bits ~ conservative Taylor accuracy estimate, so n = precision_bits / 3.
-            let needed_n = (precision_bits / 3).max(1);
-            let needed = BigInt::from(needed_n);
-            if needed > *num_terms {
-                *num_terms = needed;
+            // Each Taylor term contributes ~3.5-7 bits; precision_bits / 4 is
+            // conservative yet ~25% tighter than the previous / 3 estimate.
+            let needed_n = (precision_bits / 4).max(1);
+            if needed_n > *num_terms {
+                *num_terms = needed_n;
             }
         }
 
@@ -67,15 +105,14 @@ impl NodeOp for SinOp {
         if let Ok(input_bounds) = self.inner.get_bounds()
             && let Some(width_bits) = estimate_precision_bits(&input_bounds)
         {
-            let needed_n = (width_bits / 3).max(1);
-            let needed = BigInt::from(needed_n);
-            if needed > *num_terms {
-                *num_terms = needed;
+            let needed_n = (width_bits / 4).max(1);
+            if needed_n > *num_terms {
+                *num_terms = needed_n;
             }
         }
 
         // Always +1: keeps refiner alive, sole driver for exact inputs
-        *num_terms += BigInt::one();
+        *num_terms = num_terms.saturating_add(1);
         Ok(true)
     }
 
@@ -137,10 +174,10 @@ impl NodeOp for SinOp {
 fn sin_bounds(
     input_bounds: &Bounds,
     pi_bounds: &Bounds,
-    num_terms: &BigInt,
+    num_terms: U,
 ) -> Result<Bounds, ComputableError> {
-    let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
-    let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
+    let pos_one = Binary::one();
+    let neg_one = pos_one.neg();
 
     // Extract finite bounds, or return [-1, 1] for any infinite bounds
     let lower = input_bounds.small();
@@ -155,13 +192,7 @@ fn sin_bounds(
         }
     };
 
-    // Convert num_terms to U (capped at reasonable limit)
-    let n = num_terms
-        .to_u32()
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("num_terms exceeds U::MAX")
-        })
-        .max(1);
+    let n = num_terms.max(1);
 
     // Range reduction subtracts k * 2π from the input, introducing error
     // proportional to max_abs(input) * width(π). When input is 0 this
@@ -178,7 +209,7 @@ fn sin_bounds(
         let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
         let sin_result = compute_sin_on_monotonic_interval(&input_interval, n);
         let clamped_lo = std::cmp::max(sin_result.lo().clone(), neg_one);
-        let clamped_hi = std::cmp::min(sin_result.hi(), pos_one);
+        let clamped_hi = std::cmp::min(sin_result.hi().clone(), pos_one);
         let finite = FiniteBounds::new(clamped_lo, clamped_hi);
         return normalize_finite_to_bounds(&finite);
     }
@@ -196,19 +227,44 @@ fn sin_bounds(
         }
     };
 
-    // Derive two_pi and half_pi from pi by scaling
-    let two = UBinary::new(num_bigint::BigUint::from(1_u32), BigInt::from(1_i32)); // 2^1 = 2
-    let two_pi_interval = pi_interval.scale_positive(&two);
-    let half_pi_lo = Binary::new(
+    // Derive two_pi and half_pi from pi by shifting exponents (avoiding BigInt multiply).
+    // Scaling by 2 shifts exponent +1; scaling by 1/2 shifts exponent -1.
+    // Using from_lower_and_width avoids the abs_distance re-computation in new().
+    let pi_width = pi_interval.width();
+    let two_pi_lo = Binary::new_normalized(
         pi_interval.lo().mantissa().clone(),
-        pi_interval.lo().exponent() - BigInt::one(),
+        pi_interval
+            .lo()
+            .exponent()
+            .checked_add(1_i64)
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
+            }),
     );
-    let half_pi_hi_val = pi_interval.hi();
-    let half_pi_hi = Binary::new(
-        half_pi_hi_val.mantissa().clone(),
-        half_pi_hi_val.exponent() - BigInt::one(),
+    let two_pi_width = UBinary::new_normalized(
+        pi_width.mantissa().clone(),
+        pi_width.exponent().checked_add(1_i64).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
+        }),
     );
-    let half_pi_interval = FiniteBounds::new(half_pi_lo, half_pi_hi);
+    let two_pi_interval = FiniteBounds::from_lower_and_width(two_pi_lo, two_pi_width);
+    let half_pi_lo = Binary::new_normalized(
+        pi_interval.lo().mantissa().clone(),
+        pi_interval
+            .lo()
+            .exponent()
+            .checked_sub(1_i64)
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
+            }),
+    );
+    let half_pi_width = UBinary::new_normalized(
+        pi_width.mantissa().clone(),
+        pi_width.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
+        }),
+    );
+    let half_pi_interval = FiniteBounds::from_lower_and_width(half_pi_lo, half_pi_width);
 
     // Process each endpoint through range reduction with full interval tracking
     let input_interval = FiniteBounds::new(lower_bin.clone(), upper_bin.clone());
@@ -249,7 +305,7 @@ fn sin_bounds(
             if sign_flip {
                 (sin_bounds.hi().neg(), sin_bounds.lo().neg())
             } else {
-                (sin_bounds.lo().clone(), sin_bounds.hi())
+                (sin_bounds.lo().clone(), sin_bounds.hi().clone())
             }
         }
         ReductionResult::ContainsMax { sin_min } => {
@@ -334,22 +390,31 @@ fn reduce_to_pi_range_interval(
     two_pi: &FiniteBounds,
     pi: &FiniteBounds,
 ) -> FiniteBounds {
-    let two_pi_mid = two_pi.midpoint();
-    let neg_pi_hi = pi.hi().neg();
+    // Pre-compute pi.hi() once — used for both the range check and its negation.
+    let pi_hi = pi.hi();
+    let neg_pi_hi = pi_hi.neg();
 
-    let mut current = input.clone();
+    // Quick check: if input is already in range, avoid all computation.
+    let input_hi = input.hi();
+    if *input.lo() >= neg_pi_hi && *input_hi <= *pi_hi {
+        return input.clone();
+    }
+
+    let two_pi_mid = two_pi.midpoint();
 
     // Compute k analytically: k = round(midpoint(input) / midpoint(2π)).
     // This is a single BigInt computation that works for arbitrarily large inputs.
     // Using midpoints here is fine because k is just an integer we choose — the
     // soundness comes from the interval subtraction, not from k being exact.
-    let current_mid = current.midpoint();
-    let k = compute_reduction_factor(&current_mid, &two_pi_mid);
+    let input_mid = input.midpoint();
+    let k = compute_reduction_factor(&input_mid, &two_pi_mid);
 
-    if !k.is_zero() {
+    let mut current = if k.is_zero() {
+        input.clone()
+    } else {
         let k_times_two_pi = two_pi.scale_bigint(&k);
-        current = current.interval_sub(&k_times_two_pi);
-    }
+        input.interval_sub(&k_times_two_pi)
+    };
 
     // After the analytical reduction, we should be close to [-π, π].
     // At most 2 fixup iterations handle the case where k was off by 1
@@ -361,7 +426,8 @@ fn reduce_to_pi_range_interval(
         // for the uncertainty in the pi approximation. The reduced value doesn't need
         // to be exactly in [-π, π]; it just needs to be close enough that the interval
         // comparisons can correctly determine which trigonometric identity to apply.
-        if *current.lo() >= neg_pi_hi && current.hi() <= pi.hi() {
+        let current_hi = current.hi();
+        if *current.lo() >= neg_pi_hi && *current_hi <= *pi_hi {
             return current;
         }
 
@@ -399,9 +465,19 @@ fn reduce_to_half_pi_range_interval(
     // First reduce to [-pi, pi]
     let reduced = reduce_to_pi_range_interval(input, two_pi, pi);
 
-    // Now determine which branch(es) the reduced interval falls into
-    let neg_half_pi = half_pi.interval_neg(); // [-pi/2_hi, -pi/2_lo]
-    let neg_pi = pi.interval_neg(); // [-pi_hi, -pi_lo]
+    // Pre-compute hi() values that are used multiple times below.
+    // Each hi() call computes lower + width, so caching these avoids
+    // redundant BigInt additions.
+    let reduced_hi = reduced.hi();
+    let half_pi_hi = half_pi.hi();
+    let pi_hi = pi.hi();
+    // For neg_half_pi = -[half_pi_lo, half_pi_hi] = [-half_pi_hi, -half_pi_lo]:
+    //   neg_half_pi.lo() = -half_pi_hi, neg_half_pi.hi() = -half_pi_lo
+    let neg_half_pi_hi = half_pi.lo().neg(); // = -half_pi_lo
+    let neg_half_pi_lo = half_pi_hi.neg(); // = -half_pi_hi
+    // For neg_pi = -[pi_lo, pi_hi] = [-pi_hi, -pi_lo]:
+    //   neg_pi.hi() = -pi_lo
+    let neg_pi_hi = pi.lo().neg(); // = -pi_lo
 
     // Key comparisons using conservative bounds:
     // To check if interval is entirely in [-pi/2, pi/2]:
@@ -409,7 +485,7 @@ fn reduce_to_half_pi_range_interval(
     //   AND reduced.lo >= neg_half_pi.hi (interval entirely above -pi/2)
 
     // Case 1: Entirely in [-pi/2, pi/2]
-    if reduced.hi() <= *half_pi.lo() && *reduced.lo() >= neg_half_pi.hi() {
+    if *reduced_hi <= *half_pi.lo() && *reduced.lo() >= neg_half_pi_hi {
         return ReductionResult::InRange {
             interval: reduced,
             sign_flip: false,
@@ -418,7 +494,7 @@ fn reduce_to_half_pi_range_interval(
 
     // Case 2: Entirely in [pi/2, pi]
     // reduced.lo >= half_pi.lo AND reduced.hi <= pi.hi
-    if *reduced.lo() >= *half_pi.lo() && reduced.hi() <= pi.hi() {
+    if *reduced.lo() >= *half_pi.lo() && *reduced_hi <= *pi_hi {
         // Transform: x -> pi - x
         // sin(x) = sin(pi - x) for x in [pi/2, pi]
         // pi - [a, b] using interval arithmetic:
@@ -433,7 +509,7 @@ fn reduce_to_half_pi_range_interval(
     // Case 3: Entirely in [-pi, -pi/2]
     // reduced.hi <= neg_half_pi.hi (which is -pi/2_lo, the least negative)
     // AND reduced.lo >= neg_pi.hi (which is -pi_lo, the least negative -pi)
-    if reduced.hi() <= neg_half_pi.hi() && *reduced.lo() >= neg_pi.hi() {
+    if *reduced_hi <= neg_half_pi_hi && *reduced.lo() >= neg_pi_hi {
         // Transform: x -> -pi - x, then negate result
         // sin(x) = -sin(-pi - x) for x in [-pi, -pi/2]
         // Actually: sin(x) = sin(-pi - x) = -sin(pi + x)
@@ -451,8 +527,8 @@ fn reduce_to_half_pi_range_interval(
     // Determine which critical points the interval might straddle.
     // The "both" check must come before the individual cases so that an interval
     // straddling BOTH ±pi/2 returns ContainsBoth rather than just ContainsMax.
-    let spans_max = *reduced.lo() < half_pi.hi() && reduced.hi() > *half_pi.lo();
-    let spans_min = *reduced.lo() < neg_half_pi.hi() && reduced.hi() > *neg_half_pi.lo();
+    let spans_max = *reduced.lo() < *half_pi_hi && *reduced_hi > *half_pi.lo();
+    let spans_min = *reduced.lo() < neg_half_pi_hi && *reduced_hi > neg_half_pi_lo;
 
     // Case 4: Straddles both pi/2 and -pi/2
     if spans_max && spans_min {
@@ -464,7 +540,7 @@ fn reduce_to_half_pi_range_interval(
         // The interval contains pi/2 where sin = 1
         // Compute the minimum sin value at the endpoints
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(reduced_hi, n, pi, half_pi);
         let sin_min = if sin_bounds_at_lo.lo() < sin_bounds_at_hi.lo() {
             sin_bounds_at_lo.lo().clone()
         } else {
@@ -478,11 +554,14 @@ fn reduce_to_half_pi_range_interval(
     if spans_min {
         // The interval contains -pi/2 where sin = -1
         let sin_bounds_at_lo = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
-        let sin_max = if sin_bounds_at_lo.hi() > sin_bounds_at_hi.hi() {
-            sin_bounds_at_lo.hi()
+        let sin_bounds_at_hi = compute_sin_bounds_for_point_with_pi(reduced_hi, n, pi, half_pi);
+        // Cache hi() to avoid cloning twice per FiniteBounds.
+        let hi_at_lo = sin_bounds_at_lo.hi();
+        let hi_at_hi = sin_bounds_at_hi.hi();
+        let sin_max = if hi_at_lo > hi_at_hi {
+            hi_at_lo.clone()
         } else {
-            sin_bounds_at_hi.hi()
+            hi_at_hi.clone()
         };
 
         return ReductionResult::ContainsMin { sin_max };
@@ -492,16 +571,16 @@ fn reduce_to_half_pi_range_interval(
     // This happens when the interval crosses a branch boundary (e.g., between
     // center and upper regions) without containing pi/2 or -pi/2.
     // Compute conservative bounds at both endpoints and take their union.
-    let neg_one = Binary::new(BigInt::from(-1_i32), BigInt::zero());
-    let pos_one = Binary::new(BigInt::from(1_i32), BigInt::zero());
+    let pos_one = Binary::one();
+    let neg_one = pos_one.neg();
 
     let sin_bounds_1 = compute_sin_bounds_for_point_with_pi(reduced.lo(), n, pi, half_pi);
-    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(&reduced.hi(), n, pi, half_pi);
+    let sin_bounds_2 = compute_sin_bounds_for_point_with_pi(reduced_hi, n, pi, half_pi);
     let combined = sin_bounds_1.join(&sin_bounds_2);
 
     ReductionResult::SpansMultipleBranches {
         overall_lo: combined.lo().clone().max(neg_one),
-        overall_hi: combined.hi().min(pos_one),
+        overall_hi: combined.hi().clone().min(pos_one),
     }
 }
 
@@ -519,7 +598,11 @@ fn compute_sin_bounds_for_point_with_pi(
     pi: &FiniteBounds,
     half_pi: &FiniteBounds,
 ) -> FiniteBounds {
-    let neg_half_pi = half_pi.interval_neg(); // [-pi/2_hi, -pi/2_lo]
+    // Pre-compute hi() and derived negation values to avoid redundant BigInt ops.
+    // neg_half_pi = -[half_pi_lo, half_pi_hi] = [-half_pi_hi, -half_pi_lo]
+    let half_pi_hi = half_pi.hi();
+    let neg_half_pi_hi = half_pi.lo().neg(); // = -half_pi_lo
+    let neg_half_pi_lo = half_pi_hi.neg(); // = -half_pi_hi
 
     // For the transformation, we use the full interval to get proper bounds
     let x_interval = FiniteBounds::point(x.clone());
@@ -530,9 +613,9 @@ fn compute_sin_bounds_for_point_with_pi(
     // - x is definitively below -half_pi if x < neg_half_pi.lo() (i.e., x < -half_pi.hi())
     // - Otherwise, x might be in a boundary region where we need to consider multiple branches
 
-    let definitely_above_half_pi = x > &half_pi.hi();
-    let definitely_below_neg_half_pi = *x < *neg_half_pi.lo();
-    let definitely_in_center = *x >= neg_half_pi.hi() && x <= half_pi.lo();
+    let definitely_above_half_pi = x > half_pi_hi;
+    let definitely_below_neg_half_pi = *x < neg_half_pi_lo;
+    let definitely_in_center = *x >= neg_half_pi_hi && x <= half_pi.lo();
 
     if definitely_in_center {
         // x is definitively in [-pi/2, pi/2], use directly
@@ -604,19 +687,27 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
 
     let shifted_mx = mx << crate::sane::u_as_usize(precision_bits);
     let quotient = &shifted_mx / mp;
-    let result_exp = ex - ep - BigInt::from(precision_bits);
+    let precision_bits_i64 = i64::from(precision_bits);
+    let result_exp = ex
+        .checked_sub(ep)
+        .and_then(|v| v.checked_sub(precision_bits_i64))
+        .unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "exponent overflow in compute_reduction_factor"
+            )
+        });
 
-    if result_exp >= BigInt::zero() {
-        let shift = result_exp
-            .to_biguint()
-            .unwrap_or_else(|| unreachable!("result_exp is non-negative"));
-        crate::binary::shift_mantissa_chunked(&quotient, &shift, usize::MAX)
+    if result_exp >= 0 {
+        let shift = usize::try_from(result_exp).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!(
+                "shift exceeds usize in compute_reduction_factor"
+            )
+        });
+        &quotient << shift
     } else {
-        let magnitude = (-&result_exp)
-            .to_biguint()
-            .unwrap_or_else(|| unreachable!("negated negative is positive"));
+        let magnitude = result_exp.unsigned_abs();
         let quotient_bits = quotient.bits();
-        if magnitude > num_bigint::BigUint::from(quotient_bits) {
+        if magnitude > quotient_bits {
             if quotient.is_negative() {
                 return BigInt::from(-1_i32);
             } else {
@@ -689,7 +780,16 @@ fn truncate_precision_directed(x: &Binary, precision_bits: U, dir: RoundingDirec
         BigInt::from(abs_result)
     };
 
-    Binary::new(signed_result, exponent + BigInt::from(shift))
+    Binary::new(
+        signed_result,
+        exponent
+            .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("shift exceeds i64")
+            }))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("exponent overflow")
+            }),
+    )
 }
 
 //=============================================================================
@@ -713,7 +813,7 @@ fn compute_sin_on_monotonic_interval(interval: &FiniteBounds, n: U) -> FiniteBou
     let truncated_lo =
         truncate_precision_directed(interval.lo(), target_precision, RoundingDirection::Down);
     let truncated_hi =
-        truncate_precision_directed(&interval.hi(), target_precision, RoundingDirection::Up);
+        truncate_precision_directed(interval.hi(), target_precision, RoundingDirection::Up);
 
     let (sin_lo_bounds_lo, _) = taylor_sin_bounds(&truncated_lo, n, target_precision);
     let (_, sin_hi_bounds_hi) = taylor_sin_bounds(&truncated_hi, n, target_precision);
@@ -736,10 +836,11 @@ enum RoundingDirection {
 /// Taylor series: sin(x) = sum_{k=0}^{n-1} (-1)^k * x^(2k+1) / (2k+1)!
 /// Error after n terms: |R_n| <= |x|^(2n+1) / (2n+1)!
 ///
-/// Uses a single loop to compute both the lower (round-down) and upper (round-up)
-/// partial sums simultaneously, then derives the error bound from the loop's final
-/// power/factorial state. This eliminates 2/3 of the expensive BigInt power and
-/// factorial multiplications compared to running three independent loops.
+/// For small n (≤ 16), uses per-term division which has lower overhead.
+/// For larger n, accumulates the exact rational sum as a single fraction P/Q
+/// (where Q is the common factorial denominator), then performs only two BigInt
+/// divisions at the end (one for floor, one for ceil), eliminating O(n)
+/// expensive reciprocal computations.
 fn taylor_sin_bounds(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) {
     if n == 0 {
         // No terms: error bound is |x|^1 / 1! = |x|
@@ -753,6 +854,19 @@ fn taylor_sin_bounds(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) 
         return (error.neg(), error);
     }
 
+    // For small n, per-term division has less overhead than rational accumulation.
+    if n <= 16 {
+        return taylor_sin_bounds_per_term(x, n, target_precision);
+    }
+
+    taylor_sin_bounds_rational(x, n, target_precision)
+}
+
+/// Per-term Taylor series computation. Each term is divided by its factorial
+/// independently using directed rounding. Efficient for small n due to low
+/// overhead, but performs O(n) expensive reciprocal computations.
+fn taylor_sin_bounds_per_term(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) {
+    let x_squared = x.mul(x);
     let mut sum_lo = Binary::zero();
     let mut sum_hi = Binary::zero();
     let mut power = x.clone(); // x^1
@@ -772,7 +886,7 @@ fn taylor_sin_bounds(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) 
 
     for k in 1..n {
         // Advance state: power *= x^2, factorial *= (2k)(2k+1)
-        power = power.mul(x).mul(x);
+        power = power.mul(&x_squared);
         let k_big = BigInt::from(k);
         factorial *= &k_big * 2_i64 * (&k_big * 2_i64 + 1_i64);
 
@@ -801,13 +915,13 @@ fn taylor_sin_bounds(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) 
     // Derive error bound from the loop's final power/factorial state.
     // After the loop, power = x^(2(n-1)+1) = x^(2n-1) and factorial = (2n-1)!.
     // The error term needs |x|^(2n+1) / (2n+1)!, so advance one more step.
-    power = power.mul(x).mul(x); // x^(2n+1)
+    power = power.mul(&x_squared); // x^(2n+1)
     let n_big = BigInt::from(n);
     factorial *= &n_big * 2_i64 * (&n_big * 2_i64 + 1_i64); // (2n+1)!
 
     let error_power = Binary::new(
         BigInt::from(power.mantissa().magnitude().clone()),
-        power.exponent().clone(),
+        power.exponent(),
     );
     let error = divide_by_factorial_directed(
         &error_power,
@@ -817,6 +931,245 @@ fn taylor_sin_bounds(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) 
     );
 
     (sum_lo.sub(&error), sum_hi.add(&error))
+}
+
+/// Rational accumulation Taylor series computation. Accumulates the exact sum
+/// as a single fraction P/Q, performing only two BigInt divisions at the end.
+///
+/// The mantissa powers x^(2k+1) have varying binary exponents e*(2k+1). To sum
+/// them as integers over a common denominator, all terms are aligned to a common
+/// exponent by shifting mantissas appropriately.
+fn taylor_sin_bounds_rational(x: &Binary, n: U, target_precision: U) -> (Binary, Binary) {
+    let m = x.mantissa();
+    let e = x.exponent(); // i64 — no BigInt needed for exponent arithmetic
+
+    // Precompute m^2 for the recurrence power_{k} = power_{k-1} * m^2
+    let m_sq = m * m;
+
+    // Compute remaining factorial ratios: R_k = (2n-1)! / (2k+1)!
+    // R_{n-1} = 1, R_{k-1} = R_k * (2k) * (2k+1)
+    let n_usize = crate::sane::u_as_usize(n);
+    let mut remaining_factors: Vec<BigInt> = Vec::with_capacity(n_usize);
+    remaining_factors.resize(n_usize, BigInt::zero());
+    let n_minus_1 = crate::sane_arithmetic!(n; n - 1);
+    remaining_factors[crate::sane::u_as_usize(n_minus_1)] = BigInt::one();
+    for k in (1..n).rev() {
+        let k_i64 = i64::try_from(k).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("k overflows i64 in Taylor sin")
+        });
+        let two_k = k_i64.checked_mul(2).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("2*k overflows in Taylor sin")
+        });
+        let two_k_plus_1 = two_k.checked_add(1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("2*k+1 overflows in Taylor sin")
+        });
+        let k_minus_1 = crate::sane_arithmetic!(k; k - 1);
+        let k_usize = crate::sane::u_as_usize(k);
+        let k_minus_1_usize = crate::sane::u_as_usize(k_minus_1);
+        remaining_factors[k_minus_1_usize] = &remaining_factors[k_usize] * two_k * two_k_plus_1;
+    }
+
+    // The common denominator Q = (2n-1)! = R_0
+    let common_factorial = remaining_factors[0].clone();
+
+    // Compute the common exponent for alignment using i64 checked arithmetic.
+    // Term k has exponent e*(2k+1). We align all to the minimum exponent.
+    let n_i64 = i64::try_from(n).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("n overflows i64 in Taylor sin")
+    });
+    let (common_exp, shift_per_step, first_shift) = if e < 0 {
+        let two_n_minus_1 = n_i64
+            .checked_mul(2)
+            .and_then(|v| v.checked_sub(1))
+            .unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("2n-1 overflows in Taylor sin")
+            });
+        let common_exp = e.checked_mul(two_n_minus_1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("e*(2n-1) overflows in Taylor sin")
+        });
+        let neg_e = e.checked_neg().unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("-e overflows in Taylor sin")
+        });
+        let neg_two_e = neg_e.checked_mul(2).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("-2*e overflows in Taylor sin")
+        });
+        let n_i64_minus_1 = n_i64.checked_sub(1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("n-1 overflows in Taylor sin")
+        });
+        let first_shift = neg_two_e.checked_mul(n_i64_minus_1).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("-2e*(n-1) overflows in Taylor sin")
+        });
+        let shift_per_step = neg_two_e.checked_neg().unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!(
+                "shift_per_step overflows in Taylor sin"
+            )
+        });
+        (common_exp, shift_per_step, first_shift)
+    } else if e > 0 {
+        let shift_per_step = e.checked_mul(2).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("2*e overflows in Taylor sin")
+        });
+        (e, shift_per_step, 0_i64)
+    } else {
+        (0_i64, 0_i64, 0_i64)
+    };
+
+    // Accumulate: P = sum_k { (-1)^k * m^(2k+1) * R_k * 2^(shift_k) }
+    let mut numerator = BigInt::zero();
+    let mut power_m = m.clone(); // m^(2k+1), starts at m^1
+    let mut current_shift = first_shift;
+
+    for (k, remaining_factor) in remaining_factors.iter().enumerate() {
+        let mut contribution = if k % 2 == 0 {
+            &power_m * remaining_factor
+        } else {
+            -(&power_m * remaining_factor)
+        };
+
+        if current_shift > 0 {
+            let shift = usize::try_from(current_shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "current_shift overflows usize in Taylor sin"
+                )
+            });
+            contribution <<= shift;
+        }
+
+        numerator += contribution;
+
+        if k < crate::sane::u_as_usize(n_minus_1) {
+            power_m *= &m_sq;
+            current_shift = current_shift
+                .checked_add(shift_per_step)
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!(
+                        "current_shift accumulation overflows in Taylor sin"
+                    )
+                });
+        }
+    }
+
+    // sum = numerator * 2^common_exp / common_factorial
+    let (sum_lo, sum_hi) =
+        divide_bigint_directed(&numerator, common_exp, &common_factorial, target_precision);
+
+    // Error bound: |x|^(2n+1) / (2n+1)!
+    power_m *= &m_sq; // advance to m^(2n+1)
+    let two_n = n_i64.checked_mul(2).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "2n overflow in taylor_sin_bounds_rational"
+        )
+    });
+    let two_n_plus_1 = two_n.checked_add(1).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "2n+1 overflow in taylor_sin_bounds_rational"
+        )
+    });
+    let error_exp = e.checked_mul(two_n_plus_1).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "error exponent overflow in taylor_sin_bounds_rational"
+        )
+    });
+
+    let error_factorial = &common_factorial * two_n * two_n_plus_1;
+
+    let abs_power_m = BigInt::from(power_m.magnitude().clone());
+    let (_, error) =
+        divide_bigint_directed(&abs_power_m, error_exp, &error_factorial, target_precision);
+
+    (sum_lo.sub(&error), sum_hi.add(&error))
+}
+
+/// Computes `numerator * 2^exponent / denominator` with directed rounding,
+/// returning both (floor, ceil) as Binary values.
+///
+/// This performs a single BigInt division with enough extra precision bits to
+/// produce `target_precision` significant bits in the quotient. Unlike
+/// `divide_by_factorial_directed` (which computes a reciprocal then multiplies),
+/// this function handles the case where numerator and denominator are of comparable
+/// magnitude without losing precision.
+fn divide_bigint_directed(
+    numerator: &BigInt,
+    exponent: i64,
+    denominator: &BigInt,
+    target_precision: U,
+) -> (Binary, Binary) {
+    use num_integer::Integer;
+
+    if denominator.is_zero() || numerator.is_zero() {
+        return (Binary::zero(), Binary::zero());
+    }
+
+    // We want to compute numerator * 2^exponent / denominator with target_precision
+    // significant bits. To do this as integer arithmetic, shift the numerator left
+    // by enough bits so the integer quotient has the desired precision.
+    //
+    // The quotient |numerator| / |denominator| has roughly
+    // (bits(numerator) - bits(denominator)) bits. We need target_precision bits in
+    // the result, so shift by: target_precision + bits(denominator) - bits(numerator) + 1
+    // (the +1 ensures we don't lose a bit from rounding).
+    let num_bits = crate::sane::bits_as_u(numerator.magnitude().bits());
+    let den_bits = crate::sane::bits_as_u(denominator.magnitude().bits());
+    // We need target_precision significant bits in the quotient.
+    // extra_shift = target_precision + max(0, den_bits - num_bits) + 1
+    let deficit = den_bits.saturating_sub(num_bits);
+    let extra_shift = crate::sane_arithmetic!(target_precision, deficit;
+        target_precision + deficit + 1);
+
+    let is_negative = numerator.is_negative();
+    let abs_num = numerator.magnitude();
+    let abs_den = denominator.magnitude();
+
+    // Shift numerator left by extra_shift bits
+    let shifted_num = abs_num << extra_shift;
+
+    // Integer division: quotient = floor(shifted_num / abs_den)
+    let (quotient, remainder) = shifted_num.div_rem(abs_den);
+    let has_remainder = !remainder.is_zero();
+
+    // The exact value is:
+    //   sign * quotient * 2^(exponent - extra_shift) / 1
+    //   (with possible +1 to quotient for ceiling)
+    //
+    // For floor (toward -inf):
+    //   positive: use quotient as-is (truncation = floor for positive)
+    //   negative: if has_remainder, add 1 to quotient (round away from zero = toward -inf)
+    // For ceil (toward +inf):
+    //   positive: if has_remainder, add 1 to quotient (round away from zero = toward +inf)
+    //   negative: use quotient as-is (truncation = ceil for negative)
+    let extra_shift_i64 = i64::from(extra_shift);
+    let result_exp = exponent.checked_sub(extra_shift_i64).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "exponent overflow in divide_bigint_directed"
+        )
+    });
+
+    let floor_quotient = if is_negative && has_remainder {
+        &quotient + 1u32
+    } else {
+        quotient.clone()
+    };
+    let ceil_quotient = if !is_negative && has_remainder {
+        &quotient + 1u32
+    } else {
+        quotient
+    };
+
+    let floor_mantissa = if is_negative {
+        -BigInt::from(floor_quotient)
+    } else {
+        BigInt::from(floor_quotient)
+    };
+    let ceil_mantissa = if is_negative {
+        -BigInt::from(ceil_quotient)
+    } else {
+        BigInt::from(ceil_quotient)
+    };
+
+    (
+        Binary::new(floor_mantissa, result_exp),
+        Binary::new(ceil_mantissa, result_exp),
+    )
 }
 
 /// Divides a Binary by a BigInt factorial with directed rounding.
@@ -910,8 +1263,7 @@ mod tests {
         tolerance_exp: &XU,
     ) {
         let lower = unwrap_finite(bounds.small());
-        let upper_xb = bounds.large();
-        let upper = unwrap_finite(&upper_xb);
+        let upper = unwrap_finite(bounds.large());
 
         assert!(lower <= *expected && *expected <= upper);
         assert!(bounds_width_leq(bounds, tolerance_exp));
@@ -942,7 +1294,7 @@ mod tests {
             .expect("sin(0) should converge to exact zero");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         assert_eq!(lower, bin(0, 0), "sin(0) lower bound should be exactly 0");
         assert_eq!(upper, bin(0, 0), "sin(0) upper bound should be exactly 0");
     }
@@ -956,10 +1308,9 @@ mod tests {
         let input_bounds = Bounds::new(xbin(0, 0), xbin(0, 0));
         let pi_bounds = Bounds::new(XBinary::NegInf, XBinary::PosInf);
 
-        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(10_i32))
-            .expect("sin_bounds should succeed");
+        let result = sin_bounds(&input_bounds, &pi_bounds, 10).expect("sin_bounds should succeed");
         let lower = unwrap_finite(result.small());
-        let upper = unwrap_finite(&result.large());
+        let upper = unwrap_finite(result.large());
         assert_eq!(
             lower,
             bin(0, 0),
@@ -990,7 +1341,7 @@ mod tests {
         let expected = unwrap_finite(&expected_binary);
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // sin(pi/2) should be very close to 1
         assert!(lower <= expected && expected <= upper);
@@ -1009,7 +1360,7 @@ mod tests {
 
         // sin(pi) ~= 0 (should be close to 0)
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // sin(pi) should be very close to 0
         let small_bound = bin(1, -4);
@@ -1035,7 +1386,7 @@ mod tests {
         let expected = unwrap_finite(&expected_binary);
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // sin(-pi/2) should be very close to -1
         assert!(lower <= expected && expected <= upper);
@@ -1049,7 +1400,7 @@ mod tests {
         let bounds = sin_large.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let neg_one = bin(-1, 0);
         let one = bin(1, 0);
@@ -1074,7 +1425,7 @@ mod tests {
         let expected_value = unwrap_finite(&expected);
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         assert!(lower <= expected_value && expected_value <= upper);
     }
@@ -1086,7 +1437,7 @@ mod tests {
         let sin_interval = computable.sin();
         let bounds = sin_interval.bounds().expect("bounds should succeed");
 
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // The upper bound should be close to 1 since the interval contains pi/2
         assert!(upper >= bin(1, -1)); // Upper bound should be at least 0.5
@@ -1104,7 +1455,7 @@ mod tests {
 
         // sin of unbounded input should be [-1, 1]
         assert_eq!(bounds.small(), &xbin(-1, 0));
-        assert_eq!(&bounds.large(), &xbin(1, 0));
+        assert_eq!(bounds.large(), &xbin(1, 0));
     }
 
     #[test]
@@ -1127,7 +1478,7 @@ mod tests {
         let expected_value = unwrap_finite(&expected);
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         assert!(lower <= expected_value && expected_value <= upper);
     }
@@ -1257,7 +1608,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // Verify bounds are within [-1, 1]
         let neg_one = bin(-1, 0);
@@ -1294,7 +1645,10 @@ mod tests {
 
         let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
         let pi_mid = pi_lo.add(&pi_hi);
-        let pi_approx = Binary::new(pi_mid.mantissa().clone(), pi_mid.exponent() - BigInt::one());
+        let pi_approx = Binary::new(
+            pi_mid.mantissa().clone(),
+            pi_mid.exponent().checked_sub(1_i64).unwrap(),
+        );
 
         let sin_pi = Computable::constant(pi_approx).sin();
         let epsilon = XU::Finite(10);
@@ -1303,7 +1657,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let zero = bin(0, 0);
 
         // sin(pi) = 0, bounds should contain zero
@@ -1337,7 +1691,7 @@ mod tests {
 
         // The 512-bit midpoint should agree with f64 sin(1) to nearly all 53 mantissa bits.
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let midpoint = FiniteBounds::new(lower, upper).midpoint();
         let expected_f64 = 1.0_f64.sin();
         let expected_bin =
@@ -1369,7 +1723,7 @@ mod tests {
             .expect("refine_to should succeed for very large input");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let neg_one = bin(-1, 0);
         let one = bin(1, 0);
@@ -1400,7 +1754,7 @@ mod tests {
             .expect("refine_to should succeed for 2^30 input");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let neg_one = bin(-1, 0);
         let one = bin(1, 0);
@@ -1419,7 +1773,7 @@ mod tests {
             .expect("refine_to should succeed for large negative input");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         let neg_one = bin(-1, 0);
         let one = bin(1, 0);
@@ -1456,13 +1810,12 @@ mod tests {
         let input_bounds = Bounds::new(XBinary::Finite(lo), XBinary::Finite(hi));
         let (pi_lo, pi_hi) = pi_bounds_at_precision(64);
         let pi_bounds = Bounds::new(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
-        let result = sin_bounds(&input_bounds, &pi_bounds, &BigInt::from(5_i32))
-            .expect("sin_bounds should succeed");
+        let result = sin_bounds(&input_bounds, &pi_bounds, 5).expect("sin_bounds should succeed");
 
         // Because the width >= two_pi_lo, the conservative check should trigger
         // and return [-1, 1] (possibly slightly widened by simplification).
         let lower = unwrap_finite(result.small());
-        let upper = unwrap_finite(&result.large());
+        let upper = unwrap_finite(result.large());
 
         // The key property: the bounds must be at least as wide as [-1, 1]
         assert!(lower <= bin(-1, 0), "lower bound {} should be <= -1", lower);
@@ -1477,7 +1830,7 @@ mod tests {
         let bounds = sin_x.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // The interval contains both pi/2 (sin=1) and -pi/2 (sin=-1),
         // so the bounds must cover [-1, 1].
@@ -1502,7 +1855,7 @@ mod tests {
         let bounds = sin_x.bounds().expect("bounds should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
 
         // Width ~6 covers both ±pi/2, so bounds must include [-1, 1]
         assert!(lower <= bin(-1, 0), "lower bound should be <= -1");

@@ -7,11 +7,6 @@
 
 use std::sync::Arc;
 
-use num_bigint::{BigInt, BigUint};
-use num_integer::Integer;
-use num_traits::{One, Signed, ToPrimitive, Zero};
-use parking_lot::RwLock;
-
 use crate::binary::{
     Binary, Bounds, ReciprocalWithRemainder, UXBinary, XBinary, extend_reciprocal,
     reciprocal_with_remainder,
@@ -19,6 +14,10 @@ use crate::binary::{
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::sane::{self, U, XI, XU};
+use num_bigint::{BigInt, BigUint};
+use num_integer::Integer;
+use num_traits::{One, Signed, ToPrimitive, Zero};
+use parking_lot::RwLock;
 
 /// Minimum seed precision bits for division initialization.
 const MIN_SEED_PRECISION_BITS: U = 64;
@@ -93,7 +92,7 @@ fn extract_prefix(abs_lower: &Binary, abs_upper: &Binary) -> Option<PrefixInfo> 
     Some(PrefixInfo {
         prefix,
         prefix_shift: diff_bits,
-        prefix_exponent: exponent,
+        prefix_exponent: BigInt::from(exponent),
         prefix_bits,
     })
 }
@@ -141,8 +140,13 @@ fn bounds_from_division(div: &PrefixDivision) -> (Binary, Binary) {
         }
     };
 
-    let upper = Binary::new(BigInt::from(upper_mantissa), result_exponent.clone());
-    let lower = Binary::new(BigInt::from(lower_mantissa), result_exponent);
+    let result_exp_i64 = result_exponent.to_i64().unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!(
+            "result exponent exceeds i64 in bounds_from_division"
+        )
+    });
+    let upper = Binary::new(BigInt::from(upper_mantissa), result_exp_i64);
+    let lower = Binary::new(BigInt::from(lower_mantissa), result_exp_i64);
 
     (lower, upper)
 }
@@ -157,9 +161,9 @@ impl NodeOp for InvOp {
                 let lower = existing.small();
                 let upper = existing.large();
                 let zero = XBinary::zero();
-                if lower <= &zero && upper >= zero {
+                if lower <= &zero && *upper >= zero {
                     Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf))
-                } else if upper < zero {
+                } else if *upper < zero {
                     Ok(Bounds::new(XBinary::NegInf, XBinary::zero()))
                 } else {
                     Ok(Bounds::new(XBinary::zero(), XBinary::PosInf))
@@ -186,7 +190,7 @@ impl NodeOp for InvOp {
         let upper = input_bounds.large();
         let zero = XBinary::zero();
 
-        if lower <= &zero && upper >= zero {
+        if lower <= &zero && upper >= &zero {
             // Interval spans zero — can't compute reciprocal yet
             *state = None;
             return Ok(true);
@@ -385,7 +389,7 @@ mod tests {
             .expect("refine_to should succeed");
 
         let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(&bounds.large());
+        let upper = unwrap_finite(bounds.large());
         let three = bin(3, 0);
         let one = bin(1, 0);
 
