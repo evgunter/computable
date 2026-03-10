@@ -8,6 +8,7 @@ use num_integer::Integer;
 use num_traits::One;
 
 use super::binary_impl::Binary;
+use crate::sane::U;
 
 /// Result of dividing `2^precision_bits` by a denominator, keeping both quotient and remainder.
 ///
@@ -16,15 +17,15 @@ use super::binary_impl::Binary;
 pub struct ReciprocalWithRemainder {
     pub quotient: BigUint,
     pub remainder: BigUint,
-    pub precision_bits: usize,
+    pub precision_bits: U,
 }
 
 /// Computes `floor(2^precision_bits / denom)` and the remainder.
 pub fn reciprocal_with_remainder(
     denom: &BigUint,
-    precision_bits: usize,
+    precision_bits: U,
 ) -> ReciprocalWithRemainder {
-    let numerator = BigUint::one() << precision_bits;
+    let numerator = BigUint::one() << (crate::sane::u_as_usize(precision_bits));
     let (quotient, remainder) = numerator.div_rem(denom);
     ReciprocalWithRemainder {
         quotient,
@@ -40,13 +41,13 @@ pub fn reciprocal_with_remainder(
 pub fn extend_reciprocal(
     prev: &ReciprocalWithRemainder,
     denom: &BigUint,
-    new_precision: usize,
+    new_precision: U,
 ) -> ReciprocalWithRemainder {
     debug_assert!(new_precision >= prev.precision_bits);
     #[allow(clippy::arithmetic_side_effects)] // guarded by debug_assert above
     let delta = new_precision - prev.precision_bits;
-    let (extra_q, new_r) = (&prev.remainder << delta).div_rem(denom);
-    let new_q = (&prev.quotient << delta) + extra_q;
+    let (extra_q, new_r) = (&prev.remainder << (crate::sane::u_as_usize(delta))).div_rem(denom);
+    let new_q = (&prev.quotient << (crate::sane::u_as_usize(delta))) + extra_q;
     ReciprocalWithRemainder {
         quotient: new_q,
         remainder: new_r,
@@ -73,14 +74,14 @@ pub enum ReciprocalRounding {
 ///
 /// # Arguments
 /// * `denominator` - A positive BigUint to take the reciprocal of
-/// * `precision_bits` - Number of bits of precision for the computation (as usize for bit shifting)
+/// * `precision_bits` - Number of bits of precision for the computation
 /// * `rounding` - Whether to round toward floor or ceiling
 pub fn reciprocal_of_biguint(
     denominator: &BigUint,
-    precision_bits: usize,
+    precision_bits: U,
     rounding: ReciprocalRounding,
 ) -> Binary {
-    let numerator = BigUint::one() << precision_bits;
+    let numerator = BigUint::one() << (crate::sane::u_as_usize(precision_bits));
     let quotient = match rounding {
         ReciprocalRounding::Floor => numerator.div_floor(denominator),
         ReciprocalRounding::Ceil => {

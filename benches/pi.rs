@@ -24,7 +24,8 @@ bench_group! {
 bench_group! {
     name: pi_bounds,
     fn bench_pi_bounds(bits) -> (Binary, Binary) {
-        black_box(pi_bounds_at_precision(bits))
+        #[allow(clippy::as_conversions)] // bench infrastructure: values are small constants
+        black_box(pi_bounds_at_precision(bits as u32))
     }
 }
 
