@@ -415,11 +415,9 @@ fn width_to_xexponent(width: &Binary) -> XI {
         let bits_minus_1_i = I::try_from(bits_minus_1).unwrap_or_else(|_| {
             crate::detected_computable_would_exhaust_memory!("mantissa too large")
         });
-        let result = bits_minus_1_i
-            .checked_add(exponent_i)
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow")
-            });
+        let result = bits_minus_1_i.checked_add(exponent_i).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow")
+        });
         XI::Finite(result)
     } else {
         // Need ceil: bits + exponent

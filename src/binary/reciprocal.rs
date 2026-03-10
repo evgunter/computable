@@ -21,10 +21,7 @@ pub struct ReciprocalWithRemainder {
 }
 
 /// Computes `floor(2^precision_bits / denom)` and the remainder.
-pub fn reciprocal_with_remainder(
-    denom: &BigUint,
-    precision_bits: U,
-) -> ReciprocalWithRemainder {
+pub fn reciprocal_with_remainder(denom: &BigUint, precision_bits: U) -> ReciprocalWithRemainder {
     let numerator = BigUint::one() << (crate::sane::u_as_usize(precision_bits));
     let (quotient, remainder) = numerator.div_rem(denom);
     ReciprocalWithRemainder {

@@ -147,7 +147,9 @@ const _: () = assert!(size_of::<usize>() >= size_of::<U>());
 /// The const assertion above guarantees this is lossless on any supported platform.
 pub fn u_as_usize(v: U) -> usize {
     #[allow(clippy::as_conversions)]
-    { v as usize }
+    {
+        v as usize
+    }
 }
 
 pub fn bits_as_u(bits: u64) -> U {

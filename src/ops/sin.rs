@@ -650,11 +650,7 @@ fn compute_reduction_factor(x: &Binary, period: &Binary) -> BigInt {
 ///
 /// The implementation works on the mantissa magnitude to avoid any ambiguity
 /// in how BigInt right-shift handles negative values.
-fn truncate_precision_directed(
-    x: &Binary,
-    precision_bits: U,
-    dir: RoundingDirection,
-) -> Binary {
+fn truncate_precision_directed(x: &Binary, precision_bits: U, dir: RoundingDirection) -> Binary {
     let mantissa = x.mantissa();
     let exponent = x.exponent();
     let bit_length = crate::sane::bits_as_u(mantissa.magnitude().bits());

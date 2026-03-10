@@ -94,8 +94,8 @@ enum RefinerMessage {
 /// Snapshot of the node graph used to coordinate parallel refinement.
 pub struct RefinementGraph {
     pub root: Arc<Node>,
-    pub nodes: HashMap<U, Arc<Node>>,    // node id -> node
-    pub parents: HashMap<U, Vec<U>>, // child id -> parent ids
+    pub nodes: HashMap<U, Arc<Node>>, // node id -> node
+    pub parents: HashMap<U, Vec<U>>,  // child id -> parent ids
     pub refiners: Vec<Arc<Node>>,
 }
 
@@ -279,11 +279,10 @@ impl RefinementGraph {
                 let mut dispatch_queue: VecDeque<usize> = (0..num_refiners).collect();
                 let mut in_queue = vec![true; num_refiners];
 
-                let precision_met =
-                    |root: &Arc<Node>, tol: &XU| -> Result<bool, ComputableError> {
-                        let prefix = root.get_prefix()?;
-                        Ok(prefix_width_leq(&prefix, tol))
-                    };
+                let precision_met = |root: &Arc<Node>, tol: &XU| -> Result<bool, ComputableError> {
+                    let prefix = root.get_prefix()?;
+                    Ok(prefix_width_leq(&prefix, tol))
+                };
 
                 let mut refiner_budgets: Vec<Option<UXBinary>> = {
                     let map = self.compute_propagated_budgets(tolerance_exp);
@@ -671,9 +670,7 @@ impl RefinementGraph {
 fn tolerance_to_uxbinary(tolerance_exp: &XU) -> UXBinary {
     match tolerance_exp {
         XU::Inf => UXBinary::zero(),
-        XU::Finite(exp) => {
-            UXBinary::Finite(UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)))
-        }
+        XU::Finite(exp) => UXBinary::Finite(UBinary::new(BigUint::from(1u32), -BigInt::from(*exp))),
     }
 }
 
