@@ -3,7 +3,7 @@
 #[cfg(all(feature = "time-bench", feature = "criterion-bench"))]
 compile_error!("features `time-bench` and `criterion-bench` cannot be enabled simultaneously");
 
-use computable::{Binary, Computable, XUsize};
+use computable::{Binary, Computable, XU};
 
 /// Standard precision sweep: epsilon = 2^(-bits) for each value.
 const STANDARD_BITS: &[usize] = &[1, 4, 16, 64, 256];
@@ -27,8 +27,9 @@ pub fn high_precision() -> bool {
 }
 
 /// Create a tolerance exponent for 2^(-bits) precision.
-pub fn epsilon(bits: usize) -> XUsize {
-    XUsize::Finite(bits)
+#[allow(clippy::as_conversions)] // bench infrastructure: values are small constants
+pub fn epsilon(bits: usize) -> XU {
+    XU::Finite(bits as u32)
 }
 
 /// Whether to print diagnostic info (enabled by `BENCH_VERBOSE=1`).

@@ -25,10 +25,10 @@ use crate::binary_utils::bisection::normalize_finite_to_bounds;
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{Sane, XIsize, XUsize};
+use crate::sane::{Sane, U, XI, XU};
 
 /// Initial number of Taylor series terms for pi computation.
-pub(crate) const INITIAL_PI_TERMS: usize = 10;
+pub(crate) const INITIAL_PI_TERMS: U = 10;
 
 /// Returns the number of bits in the binary representation of `x`.
 ///
@@ -39,10 +39,10 @@ pub(crate) const INITIAL_PI_TERMS: usize = 10;
 fn bit_length(x: Sane) -> Sane {
     // leading_zeros() is always <= BITS, so this subtraction cannot underflow.
     // TODO: investigate whether the type system could prevent this case.
-    let bits = usize::BITS
+    let bits = U::BITS
         .checked_sub(x.0.leading_zeros())
-        .unwrap_or_else(|| unreachable!("leading_zeros() is always <= usize::BITS"));
-    Sane(crate::sane::bits_as_usize(u64::from(bits)))
+        .unwrap_or_else(|| unreachable!("leading_zeros() is always <= U::BITS"));
+    Sane(bits)
 }
 
 /// Computes the intermediate reciprocal precision needed for `num_terms` Taylor series terms.
@@ -66,7 +66,7 @@ fn bit_length(x: Sane) -> Sane {
 ///
 /// The margin `bit_length(n+2) + bit_length(2n+1)` covers `log2((n+2)*(2n+1))` because
 /// `bit_length(x) = floor(log2(x)) + 1 >= log2(x)`.
-fn precision_bits_for_num_terms(num_terms: usize) -> usize {
+fn precision_bits_for_num_terms(num_terms: U) -> U {
     crate::sane_arithmetic!(num_terms; {
         let n = num_terms;
         let two_n_plus_1 = 2 * n + 1;
@@ -83,10 +83,10 @@ fn precision_bits_for_num_terms(num_terms: usize) -> usize {
 /// # Example
 ///
 /// ```
-/// use computable::{pi, XUsize};
+/// use computable::{pi, XU};
 ///
 /// let pi_val = pi();
-/// let bounds = pi_val.refine_to_default(XUsize::Finite(50))?;
+/// let bounds = pi_val.refine_to_default(XU::Finite(50))?;
 /// // bounds now contains pi to ~50 bits of precision
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
@@ -105,7 +105,7 @@ pub fn pi() -> Computable {
 /// The returned bounds (pi_lo, pi_hi) satisfy:
 /// - pi_lo <= true_pi <= pi_hi
 /// - (pi_hi - pi_lo) <= 2^(-precision_bits) approximately
-pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
+pub fn pi_bounds_at_precision(precision_bits: U) -> (Binary, Binary) {
     // Compute enough terms to achieve the desired precision.
     // For arctan(1/5), error after n terms is bounded by (1/5)^(2n+1)/(2n+1).
     // We need (2n+1)*log2(5) > precision_bits + 4, i.e. n > (precision_bits + 4) / (2*log2(5)) - 0.5.
@@ -121,7 +121,7 @@ pub fn pi_bounds_at_precision(precision_bits: usize) -> (Binary, Binary) {
 
 /// Pi computation operation using Machin's formula.
 pub struct PiOp {
-    pub num_terms: RwLock<usize>,
+    pub num_terms: RwLock<U>,
 }
 
 impl NodeOp for PiOp {
@@ -134,13 +134,11 @@ impl NodeOp for PiOp {
         normalize_finite_to_bounds(&finite)
     }
 
-    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
         let mut num_terms = self.num_terms.write();
 
         // Leap to the needed term count based on precision target.
-        if let XUsize::Finite(precision_bits) = target_width_exp.to_precision_bits()
-            && precision_bits <= crate::MAX_COMPUTATION_BITS
-        {
+        if let XU::Finite(precision_bits) = target_width_exp.to_precision_bits() {
             let needed = crate::sane_arithmetic!(precision_bits; (precision_bits + 10) / 4).max(1);
             if needed > *num_terms {
                 *num_terms = needed;
@@ -164,7 +162,7 @@ impl NodeOp for PiOp {
         true
     }
 
-    fn child_demand_budget(&self, _target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, _target_width: &UXBinary, _child_index: U) -> UXBinary {
         unreachable!("PiOp has no children")
     }
 }
@@ -184,7 +182,7 @@ enum RoundDir {
 /// Therefore: pi = 16*arctan(1/5) - 4*arctan(1/239)
 ///
 /// Returns (lower_bound, upper_bound) where lower_bound <= pi <= upper_bound.
-fn compute_pi_bounds(num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
+fn compute_pi_bounds(num_terms: U, precision_bits: U) -> (Binary, Binary) {
     // Compute arctan(1/5) bounds
     let (atan_5_lo, atan_5_hi) = arctan_recip_bounds(5, num_terms, precision_bits);
 
@@ -226,7 +224,7 @@ fn compute_pi_bounds(num_terms: usize, precision_bits: usize) -> (Binary, Binary
 /// |error| <= |x|^(2n+1) / (2n+1) = 1 / ((2n+1) * k^(2n+1))
 ///
 /// Returns (lower_bound, upper_bound) for arctan(1/k).
-fn arctan_recip_bounds(k: u64, num_terms: usize, precision_bits: usize) -> (Binary, Binary) {
+fn arctan_recip_bounds(k: u64, num_terms: U, precision_bits: U) -> (Binary, Binary) {
     let k_big = BigInt::from(k);
 
     if num_terms == 0 {
@@ -292,7 +290,7 @@ fn divide_one_by_bigint(
     denominator: &BigInt,
     rounding: RoundDir,
     is_positive_term: bool,
-    precision_bits: usize,
+    precision_bits: U,
 ) -> Binary {
     let recip_rounding = match (rounding, is_positive_term) {
         (RoundDir::Down, true) => ReciprocalRounding::Floor,
@@ -312,13 +310,13 @@ fn divide_one_by_bigint(
 }
 
 /// Returns pi as a FiniteBounds interval with specified precision.
-pub fn pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
+pub fn pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
     let (lo, hi) = pi_bounds_at_precision(precision_bits);
     FiniteBounds::new(lo, hi)
 }
 
 /// Returns 2*pi as a FiniteBounds interval with specified precision.
-pub fn two_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
+pub fn two_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
     use num_bigint::BigUint;
 
     let pi_interval = pi_interval_at_precision(precision_bits);
@@ -328,7 +326,7 @@ pub fn two_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
 }
 
 /// Returns pi/2 as a FiniteBounds interval with specified precision.
-pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
+pub fn half_pi_interval_at_precision(precision_bits: U) -> FiniteBounds {
     let (pi_lo, pi_hi) = pi_bounds_at_precision(precision_bits);
     // pi/2: divide by 2 (decrement exponent by 1)
     let half_pi_lo = Binary::new(pi_lo.mantissa().clone(), pi_lo.exponent() - BigInt::one());
@@ -340,14 +338,14 @@ pub fn half_pi_interval_at_precision(precision_bits: usize) -> FiniteBounds {
 mod tests {
     use super::*;
     use crate::binary::XBinary;
-    use crate::sane::XUsize;
+    use crate::sane::XU;
 
     fn bin(mantissa: i64, exponent: i64) -> Binary {
         Binary::new(BigInt::from(mantissa), BigInt::from(exponent))
     }
 
-    fn epsilon_as_binary(n: usize) -> Binary {
-        let n_i64 = i64::try_from(n).expect("precision fits in i64");
+    fn epsilon_as_binary(n: U) -> Binary {
+        let n_i64 = i64::from(n);
         Binary::new(
             BigInt::from(1_i32),
             BigInt::from(n_i64.checked_neg().expect("negation does not overflow")),
@@ -419,7 +417,7 @@ mod tests {
     #[test]
     fn pi_computable_refines() {
         let pi_comp = pi();
-        let tolerance_exp = XUsize::Finite(20); // 2^-20 precision
+        let tolerance_exp = XU::Finite(20); // 2^-20 precision
         let bounds = pi_comp
             .refine_to_default(tolerance_exp)
             .expect("refine should succeed");
@@ -450,11 +448,11 @@ mod tests {
 
     #[test]
     fn pi_bounds_at_precision_helper() {
-        const PRECISION_BITS: usize = 50;
+        const PRECISION_BITS: U = 50;
         let (lo, hi) = pi_bounds_at_precision(PRECISION_BITS);
         let width = hi.sub(&lo);
 
-        let precision_i64 = i64::try_from(PRECISION_BITS).expect("precision fits in i64");
+        let precision_i64 = i64::from(PRECISION_BITS);
         let exp = precision_i64
             .checked_sub(1_i64)
             .expect("subtraction does not overflow")
@@ -489,7 +487,7 @@ mod tests {
     #[test]
     fn pi_computable_refines_beyond_128_bits() {
         let pi_comp = pi();
-        let tolerance_exp = XUsize::Finite(128); // 2^-128 precision
+        let tolerance_exp = XU::Finite(128); // 2^-128 precision
         let bounds = pi_comp
             .refine_to_default(tolerance_exp)
             .expect("refine to 2^-128 should succeed");

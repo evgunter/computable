@@ -6,6 +6,7 @@
 use std::ops::ShlAssign;
 
 use num_bigint::{BigInt, BigUint};
+use num_traits::ToPrimitive;
 
 /// Marker trait for arbitrary-precision integer types whose arithmetic
 /// (including `<<=`) cannot overflow. Implemented only for `BigInt` and
@@ -31,10 +32,10 @@ pub(crate) fn shift_mantissa_chunked<M>(mantissa: &M, shift: &BigUint, chunk_lim
 where
     M: ArbitraryPrecision,
 {
-    let shift_usize: usize = shift.try_into().unwrap_or_else(|_| {
+    let shift_u: crate::sane::U = shift.to_u32().unwrap_or_else(|| {
         crate::detected_computable_would_exhaust_memory!("shift by extreme exponent")
     });
-    crate::assert_sane_computation_size!(shift_usize);
+    let shift_usize = crate::sane::u_as_usize(shift_u);
     let mut shifted = mantissa.clone();
     let mut remaining = shift_usize;
     while remaining > 0 {

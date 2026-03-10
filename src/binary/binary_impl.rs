@@ -125,7 +125,7 @@ impl Binary {
         }
 
         if let Some(tz_u64) = mantissa.magnitude().trailing_zeros() {
-            let tz = crate::sane::bits_as_usize(tz_u64);
+            let tz = crate::sane::bits_as_u(tz_u64);
             mantissa >>= tz;
             exponent += BigInt::from(tz);
         }
@@ -298,6 +298,7 @@ impl crate::ordered_pair::AddWidth<Binary, super::UBinary> for Binary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sane::U;
     use crate::test_utils::bin;
 
     #[test]
@@ -325,7 +326,7 @@ mod tests {
     fn binary_ordering_handles_large_exponent_gaps() {
         use num_traits::One;
 
-        let huge_exp = BigInt::from(usize::MAX) + BigInt::one();
+        let huge_exp = BigInt::from(U::MAX) + BigInt::one();
         let tiny_exp = -huge_exp.clone();
         let huge_pos = Binary::new(BigInt::from(1_i32), huge_exp.clone());
         let tiny_pos = Binary::new(BigInt::from(1_i32), tiny_exp.clone());
@@ -339,7 +340,7 @@ mod tests {
     fn binary_ordering_overflow_path_uses_sign() {
         use num_traits::One;
 
-        let huge_exp = BigInt::from(usize::MAX) + BigInt::one();
+        let huge_exp = BigInt::from(U::MAX) + BigInt::one();
         let tiny_exp = -huge_exp.clone();
         let huge_pos = Binary::new(BigInt::from(1_i32), huge_exp.clone());
         let tiny_neg = Binary::new(BigInt::from(-1_i32), tiny_exp.clone());
