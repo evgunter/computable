@@ -35,7 +35,7 @@ use crate::binary_utils::bisection::midpoint;
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{self, U, XI, XU};
+use crate::sane::{self, I, U, XI, XU};
 
 /// Minimum seed precision bits for Newton-Raphson initialization.
 ///
@@ -175,7 +175,7 @@ impl NodeOp for NthRootOp {
     /// We approximate a^((n-1)/n) ~ a, which is conservative (budget too
     /// loose) for a >= 1 and slightly tight for a < 1. This avoids needing
     /// to compute an nth root inside the budget function.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         use crate::binary::UBinary;
 
         let n = self.degree.get();
@@ -189,7 +189,7 @@ impl NodeOp for NthRootOp {
             }
             None => return target_width.clone(),
         };
-        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), 0_i64));
+        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), 0));
         target_width.mul(&n_ux).mul(&min_abs)
     }
 
@@ -280,7 +280,7 @@ fn initialize_nth_root_newton_state(
     }
 
     // Initial bounds: [1, target] for target >= 1, [target, 1] for target < 1
-    let one = Binary::new(BigInt::from(1_i32), 0_i64);
+    let one = Binary::new(BigInt::from(1_i32), 0);
     let (init_lower, init_upper) = if actual_target < one {
         (actual_target.clone(), one)
     } else {
@@ -448,13 +448,13 @@ fn binary_div_floor(a: &Binary, b: &Binary, precision: usize) -> Binary {
     };
 
     // Exponent: a_exp - b_exp - shift
-    let shift_i64 = i64::try_from(shift).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in binary_div_floor")
+    let shift_i = I::try_from(shift).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("shift exceeds I in binary_div_floor")
     });
     let exp = a
         .exponent()
         .checked_sub(b.exponent())
-        .and_then(|e| e.checked_sub(shift_i64))
+        .and_then(|e| e.checked_sub(shift_i))
         .unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!(
                 "exponent overflow in binary_div_floor"
@@ -505,13 +505,13 @@ fn binary_div_ceil(a: &Binary, b: &Binary, precision: usize) -> Binary {
         BigInt::from(final_quotient)
     };
 
-    let shift_i64 = i64::try_from(shift).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in binary_div_ceil")
+    let shift_i = I::try_from(shift).unwrap_or_else(|_| {
+        crate::detected_computable_would_exhaust_memory!("shift exceeds I in binary_div_ceil")
     });
     let exp = a
         .exponent()
         .checked_sub(b.exponent())
-        .and_then(|e| e.checked_sub(shift_i64))
+        .and_then(|e| e.checked_sub(shift_i))
         .unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!("exponent overflow in binary_div_ceil")
         });
@@ -542,12 +542,12 @@ fn binary_div_ceil_by_u32(a: &Binary, divisor: u32, precision: usize) -> Binary 
         quotient
     };
 
-    let precision_i64 = i64::try_from(precision).unwrap_or_else(|_| {
+    let precision_i = I::try_from(precision).unwrap_or_else(|_| {
         crate::detected_computable_would_exhaust_memory!(
-            "precision exceeds i64 in binary_div_ceil_by_u32"
+            "precision exceeds I in binary_div_ceil_by_u32"
         )
     });
-    let exp = a.exponent().checked_sub(precision_i64).unwrap_or_else(|| {
+    let exp = a.exponent().checked_sub(precision_i).unwrap_or_else(|| {
         crate::detected_computable_would_exhaust_memory!(
             "exponent overflow in binary_div_ceil_by_u32"
         )
@@ -582,8 +582,8 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
     Binary::new(
         signed,
         x.exponent()
-            .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in truncate")
+            .checked_add(I::try_from(shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("shift exceeds I in truncate")
             }))
             .unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
@@ -616,8 +616,8 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
     Binary::new(
         signed,
         x.exponent()
-            .checked_add(i64::try_from(shift).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("shift exceeds i64 in truncate")
+            .checked_add(I::try_from(shift).unwrap_or_else(|_| {
+                crate::detected_computable_would_exhaust_memory!("shift exceeds I in truncate")
             }))
             .unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")

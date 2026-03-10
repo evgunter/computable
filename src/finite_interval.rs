@@ -107,7 +107,7 @@ impl FiniteInterval {
     pub fn scale_bigint(&self, k: &BigInt) -> Self {
         use num_traits::Signed;
 
-        let abs_k = UBinary::new(k.magnitude().clone(), 0_i64);
+        let abs_k = UBinary::new(k.magnitude().clone(), 0);
 
         if k.is_negative() {
             self.interval_neg().scale_positive(&abs_k)
@@ -124,7 +124,7 @@ impl FiniteInterval {
         }
         Binary::new_normalized(
             sum.mantissa().clone(),
-            sum.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+            sum.exponent().checked_sub(1).unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")
             }),
         )

@@ -49,7 +49,7 @@ use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
 use crate::prefix::Prefix;
-use crate::sane::{self, U, XI, XU};
+use crate::sane::{self, I, U, XI, XU};
 
 /// Converts a node ID (`U` = u32) to `usize` for Vec indexing.
 /// Guaranteed lossless because `usize` is at least 32 bits on all supported platforms.
@@ -898,9 +898,7 @@ impl RefinementGraph {
 
             let children = node.children();
             for (child_idx, child) in children.iter().enumerate() {
-                // Operations have at most 2 children, so child_idx always fits in U.
-                #[allow(clippy::as_conversions)]
-                let child_budget = node.op.child_demand_budget(&budget, child_idx as U);
+                let child_budget = node.op.child_demand_budget(&budget, child_idx != 0);
                 let child_local = self.local_index(id(child.id));
                 let entry = budgets[child_local].get_or_insert(UXBinary::Inf);
                 if child_budget < *entry {
@@ -922,9 +920,12 @@ fn tolerance_to_uxbinary(tolerance_exp: &XU) -> UXBinary {
         XU::Inf => UXBinary::zero(),
         XU::Finite(exp) => UXBinary::Finite(UBinary::new(
             BigUint::from(1u32),
-            i64::from(*exp).checked_neg().unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("tolerance negation overflow")
-            }),
+            I::try_from(*exp)
+                .ok()
+                .and_then(|v| v.checked_neg())
+                .unwrap_or_else(|| {
+                    crate::detected_computable_would_exhaust_memory!("tolerance negation overflow")
+                }),
         )),
     }
 }
@@ -1066,13 +1067,9 @@ pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XU) -> bool {
                 *width
                     <= UBinary::new(
                         BigUint::from(1u32),
-                        i64::try_from(*exp)
-                            .unwrap_or_else(|_err| {
-                                crate::detected_computable_would_exhaust_memory!(
-                                    "tolerance exceeds i64"
-                                )
-                            })
-                            .checked_neg()
+                        I::try_from(*exp)
+                            .ok()
+                            .and_then(|v| v.checked_neg())
                             .unwrap_or_else(|| {
                                 crate::detected_computable_would_exhaust_memory!(
                                     "tolerance negation overflow"
@@ -1090,8 +1087,7 @@ pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XU) -> bool {
 /// Returns true if width_exponent <= -tolerance_exp.
 pub fn prefix_width_leq(prefix: &Prefix, tolerance_exp: &XU) -> bool {
     let we = prefix.width_exponent();
-    #[allow(clippy::arithmetic_side_effects)] // XU::neg() is total (no panics)
-    let target = -(*tolerance_exp);
+    let target = -XI::from(*tolerance_exp);
     we <= target
 }
 
@@ -1105,41 +1101,23 @@ fn uxbinary_to_exp(ux: &UXBinary) -> XI {
             if ub.mantissa().is_zero() {
                 return XI::NegInf;
             }
-            let bits = ub.mantissa().bits();
-            let Ok(bits_i32) = i32::try_from(bits) else {
-                // mantissa has more bits than i32 can represent: width is astronomically large
-                return XI::PosInf;
-            };
-            let Ok(exp_i32) = i32::try_from(ub.exponent()) else {
-                // exponent doesn't fit in i32: width is astronomically large (or small)
-                // Positive exponent → PosInf; negative exponent with huge mantissa → still large
-                return if ub.exponent() < 0 {
-                    // Huge negative exponent: width ≈ 0, exponent is extremely negative
-                    XI::NegInf
-                } else {
-                    XI::PosInf
-                };
-            };
             // width = mantissa * 2^exponent, mantissa has `bits` bits
             // so width < 2^(bits + exponent), ceil = bits + exponent if mantissa != power of 2
             // For a simple upper bound: bits + exponent (may overcount by 1, conservative)
-            match bits_i32.checked_add(exp_i32) {
-                Some(v) => XI::Finite(v),
-                // Overflow in positive direction: astronomically large width
-                None if exp_i32 > 0 => XI::PosInf,
-                // Overflow in negative direction: astronomically small width
-                None => XI::NegInf,
-            }
+            let bits_i = crate::sane::bits_as_i(ub.mantissa().bits());
+            let result = bits_i.checked_add(ub.exponent()).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in uxbinary_to_exp"
+                )
+            });
+            XI::from_i32(result)
         }
     }
 }
 
 /// Converts a tolerance exponent to an `XI` target for refiners.
 fn tolerance_to_exp(tolerance_exp: &XU) -> XI {
-    #[allow(clippy::arithmetic_side_effects)] // XU::neg() is total (no panics)
-    {
-        -(*tolerance_exp)
-    }
+    -XI::from(*tolerance_exp)
 }
 
 #[cfg(test)]

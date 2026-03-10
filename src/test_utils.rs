@@ -6,7 +6,7 @@
 use num_bigint::{BigInt, BigUint};
 
 use crate::binary::{Binary, UBinary, UXBinary, XBinary};
-use crate::sane::U;
+use crate::sane::{I, U};
 
 /// Creates a Binary from mantissa and exponent as i64 values.
 ///
@@ -16,7 +16,7 @@ use crate::sane::U;
 /// let half = bin(1, -1);    // 1 * 2^(-1) = 0.5
 /// let eight = bin(1, 3);    // 1 * 2^3 = 8
 /// ```
-pub fn bin(mantissa: i64, exponent: i64) -> Binary {
+pub fn bin(mantissa: i64, exponent: I) -> Binary {
     Binary::new(BigInt::from(mantissa), exponent)
 }
 
@@ -27,7 +27,7 @@ pub fn bin(mantissa: i64, exponent: i64) -> Binary {
 /// let two = ubin(2, 0);     // 2 * 2^0 = 2
 /// let epsilon = ubin(1, -8); // 1 * 2^(-8) ≈ 0.004
 /// ```
-pub fn ubin(mantissa: u64, exponent: i64) -> UBinary {
+pub fn ubin(mantissa: u64, exponent: I) -> UBinary {
     UBinary::new(BigUint::from(mantissa), exponent)
 }
 
@@ -39,7 +39,7 @@ pub fn ubin(mantissa: u64, exponent: i64) -> UBinary {
 /// ```ignore
 /// let two = xbin(2, 0);     // Finite(2 * 2^0) = 2
 /// ```
-pub fn xbin(mantissa: i64, exponent: i64) -> XBinary {
+pub fn xbin(mantissa: i64, exponent: I) -> XBinary {
     XBinary::Finite(bin(mantissa, exponent))
 }
 
@@ -75,10 +75,10 @@ use crate::computable::Computable;
 /// Creates a Binary representing 2^(-n), for test assertions that need
 /// epsilon as a Binary value for arithmetic.
 pub fn epsilon_as_binary(n: U) -> Binary {
-    let n_i64 = i64::from(n);
+    let n_i = I::try_from(n).expect("precision fits in I");
     Binary::new(
         BigInt::from(1_i32),
-        n_i64.checked_neg().expect("negation does not overflow"),
+        n_i.checked_neg().expect("negation does not overflow"),
     )
 }
 

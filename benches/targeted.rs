@@ -18,7 +18,7 @@ use num_bigint::BigInt;
 bench_group! {
     name: sqrt_convergence,
     fn bench_sqrt2_64() -> Bounds {
-        let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i64));
+        let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32));
         black_box(
             two.nth_root(NonZeroU32::new(2).unwrap())
                 .refine_to_default(epsilon(64))
@@ -26,7 +26,7 @@ bench_group! {
         )
     }
     fn bench_sqrt2_256() -> Bounds {
-        let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i64));
+        let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32));
         black_box(
             two.nth_root(NonZeroU32::new(2).unwrap())
                 .refine_to_default(epsilon(256))
@@ -125,9 +125,9 @@ bench_group! {
 bench_group! {
     name: cancellation,
     fn bench_near_cancel_64() -> Bounds {
-        let one = Computable::constant(Binary::new(BigInt::from(1_i64), 0_i64));
+        let one = Computable::constant(Binary::new(BigInt::from(1_i64), 0_i32));
         // epsilon = 2^-50 = 1 * 2^(-50)
-        let eps = Computable::constant(Binary::new(BigInt::from(1_i64), -50_i64));
+        let eps = Computable::constant(Binary::new(BigInt::from(1_i64), -50_i32));
         let expr = (one.clone() + eps) - one;
         black_box(
             expr.refine_to_default(epsilon(64))
@@ -165,9 +165,9 @@ bench_group! {
 bench_group! {
     name: shared_subexpr,
     fn bench_shared_sqrt2_64() -> Bounds {
-        let a = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i64))
+        let a = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32))
             .nth_root(NonZeroU32::new(2).unwrap());
-        let b = Computable::constant(Binary::new(BigInt::from(1_i64), 0_i64));
+        let b = Computable::constant(Binary::new(BigInt::from(1_i64), 0_i32));
         // (a+b) + (a-b) = 2*a, but exercises shared node handling
         let sum = a.clone() + b.clone();
         let diff = a - b;
@@ -211,7 +211,7 @@ bench_group! {
 bench_group! {
     name: inv_sum,
     fn bench_inv_sum_64() -> Bounds {
-        let c = |v: i64| Computable::constant(Binary::new(BigInt::from(v), 0_i64));
+        let c = |v: i64| Computable::constant(Binary::new(BigInt::from(v), 0_i32));
         let expr = c(2).inv() + c(3).inv() + c(5).inv() + c(7).inv();
         black_box(
             expr.refine_to_default(epsilon(64))
@@ -227,7 +227,7 @@ bench_group! {
 bench_group! {
     name: mixed_expr,
     fn bench_mixed_64() -> Bounds {
-        let sqrt2 = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i64))
+        let sqrt2 = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32))
             .nth_root(NonZeroU32::new(2).unwrap());
         let expr = sqrt2 + pi();
         black_box(

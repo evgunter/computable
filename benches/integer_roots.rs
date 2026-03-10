@@ -28,7 +28,7 @@ bench_group! {
                     .expect("root degree 2-6 is non-zero");
                 let value_binary = Binary::new(
                     num_bigint::BigInt::from(value),
-                    0_i64,
+                    0_i32,
                 );
                 Computable::constant(value_binary).nth_root(n)
             })

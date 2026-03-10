@@ -14,7 +14,7 @@ use num_traits::{Signed, Zero};
 pub(super) fn format_binary_display(
     f: &mut fmt::Formatter<'_>,
     mantissa: &BigInt,
-    exponent: i64,
+    exponent: crate::sane::I,
 ) -> fmt::Result {
     if mantissa.is_zero() {
         return write!(f, "0.0");
@@ -39,7 +39,7 @@ pub(super) fn format_binary_display(
 pub(super) fn format_ubinary_display(
     f: &mut fmt::Formatter<'_>,
     mantissa: &BigUint,
-    exponent: i64,
+    exponent: crate::sane::I,
 ) -> fmt::Result {
     if mantissa.is_zero() {
         return write!(f, "0.0");
@@ -52,7 +52,10 @@ pub(super) fn format_ubinary_display(
 
 /// Helper function to format a mantissa with a binary point.
 /// Returns the formatted mantissa string and the adjusted exponent.
-fn format_mantissa_with_point(mantissa: &BigUint, exponent: i64) -> (String, i64) {
+fn format_mantissa_with_point(
+    mantissa: &BigUint,
+    exponent: crate::sane::I,
+) -> (String, crate::sane::I) {
     // Get binary representation of the mantissa
     let binary_str = format!("{:b}", mantissa);
     let num_bits = binary_str.len();
@@ -65,13 +68,13 @@ fn format_mantissa_with_point(mantissa: &BigUint, exponent: i64) -> (String, i64
     };
 
     // Adjust exponent: new_exp = old_exp + (num_bits - 1)
-    let bits_minus_one = i64::try_from(num_bits)
+    let bits_minus_one = crate::sane::I::try_from(num_bits)
         .unwrap_or_else(|_| {
             crate::detected_computable_would_exhaust_memory!(
                 "mantissa too large in format_mantissa_with_point"
             )
         })
-        .checked_sub(1_i64)
+        .checked_sub(1)
         .unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!(
                 "exponent overflow in format_mantissa_with_point"
@@ -93,26 +96,26 @@ mod tests {
     #[test]
     fn format_single_bit_mantissa() {
         let mantissa = BigUint::from(1u32);
-        let exponent = 0_i64;
+        let exponent = 0_i32;
         let (formatted, adjusted_exp) = format_mantissa_with_point(&mantissa, exponent);
         assert_eq!(formatted, "1.0");
-        assert_eq!(adjusted_exp, 0_i64);
+        assert_eq!(adjusted_exp, 0_i32);
     }
 
     #[test]
     fn format_multi_bit_mantissa() {
         // 123 decimal = 1111011 binary (7 bits)
         let mantissa = BigUint::from(123u32);
-        let exponent = 5_i64;
+        let exponent = 5_i32;
         let (formatted, adjusted_exp) = format_mantissa_with_point(&mantissa, exponent);
         assert_eq!(formatted, "1.111011");
-        assert_eq!(adjusted_exp, 11_i64); // 5 + 6
+        assert_eq!(adjusted_exp, 11_i32); // 5 + 6
     }
 
     #[test]
     fn format_binary_display_zero() {
         let mantissa = BigInt::from(0_i32);
-        let exponent = 42_i64;
+        let exponent = 42_i32;
         let result = format!(
             "{}",
             FormatWrapper(&mantissa, exponent, format_binary_display)
@@ -123,7 +126,7 @@ mod tests {
     #[test]
     fn format_binary_display_negative() {
         let mantissa = BigInt::from(-15_i32); // -1111 in binary
-        let exponent = 3_i64;
+        let exponent = 3_i32;
         let result = format!(
             "{}",
             FormatWrapper(&mantissa, exponent, format_binary_display)
@@ -137,18 +140,18 @@ mod tests {
         // Old format would be: 123 * 2^5
         // New format is: 1.111011 * 2^11 (exponent adjusted by 6)
         let mantissa = BigUint::from(123u32);
-        let exponent = 5_i64;
+        let exponent = 5_i32;
         let (formatted, adjusted_exp) = format_mantissa_with_point(&mantissa, exponent);
 
         assert_eq!(formatted, "1.111011");
-        assert_eq!(adjusted_exp, 11_i64);
+        assert_eq!(adjusted_exp, 11_i32);
     }
 
     // Helper struct for testing Display implementations
     struct FormatWrapper<'a, T>(
         &'a T,
-        i64,
-        fn(&mut fmt::Formatter<'_>, &T, i64) -> fmt::Result,
+        crate::sane::I,
+        fn(&mut fmt::Formatter<'_>, &T, crate::sane::I) -> fmt::Result,
     );
 
     impl<'a, T> fmt::Display for FormatWrapper<'a, T> {

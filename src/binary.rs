@@ -157,7 +157,7 @@ impl FiniteBounds {
     pub fn scale_bigint(&self, k: &BigInt) -> Self {
         use num_traits::Signed;
 
-        let abs_k = UBinary::new(k.magnitude().clone(), 0_i64);
+        let abs_k = UBinary::new(k.magnitude().clone(), 0);
 
         if k.is_negative() {
             // k * [a,b] = -|k| * [a,b] = |k| * (-[a,b]) = |k| * [-b, -a]
@@ -175,7 +175,7 @@ impl FiniteBounds {
         }
         let half_width = Binary::new_normalized(
             width.mantissa().clone(),
-            width.exponent().checked_sub(1_i64).unwrap_or_else(|| {
+            width.exponent().checked_sub(1).unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")
             }),
         );
@@ -233,13 +233,13 @@ mod integration_tests {
     fn uxbinary_xbinary_conversion() {
         use num_bigint::BigUint;
 
-        let ub = UBinary::new(BigUint::from(5u32), 2_i64);
+        let ub = UBinary::new(BigUint::from(5u32), 2);
         let uxb = UXBinary::Finite(ub);
         let xb = XBinary::from(uxb);
 
         if let XBinary::Finite(binary) = xb {
             assert_eq!(binary.mantissa(), &BigInt::from(5_i32));
-            assert_eq!(binary.exponent(), 2_i64);
+            assert_eq!(binary.exponent(), 2_i32);
         } else {
             panic!("expected finite value");
         }
@@ -248,7 +248,7 @@ mod integration_tests {
     #[test]
     fn bounds_from_lower_and_width_constructs_correctly() {
         let lower = xbin(5, 0);
-        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(3u32), 0_i64));
+        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(3u32), 0));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width.clone());
 
@@ -272,7 +272,7 @@ mod integration_tests {
     #[test]
     fn bounds_from_lower_and_width_zero_width() {
         let lower = xbin(42, 0);
-        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(0u32), 0_i64));
+        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(0u32), 0));
 
         let bounds = Bounds::from_lower_and_width(lower.clone(), width);
 

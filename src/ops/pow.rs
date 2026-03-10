@@ -14,7 +14,7 @@ use crate::binary::{Bounds, UBinary, UXBinary, XBinary};
 use crate::binary_utils::power::{is_negative, is_positive, xbinary_max, xbinary_pow};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{U, XI};
+use crate::sane::XI;
 
 /// Integer power operation.
 ///
@@ -72,7 +72,7 @@ impl NodeOp for PowOp {
 
     /// Max derivative of x^n over [lower, upper] is n · max_abs^(n-1).
     /// Child budget = target / (n · max_abs^(n-1)).
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         let n = self.exponent.get();
         if n == 1 {
             return target_width.clone();
@@ -86,7 +86,7 @@ impl NodeOp for PowOp {
         };
         // Compute max_abs^(n-1) via exponentiation by squaring.
         let power = uxbinary_pow(&max_abs, n - 1);
-        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), 0_i64));
+        let n_ux = UXBinary::Finite(UBinary::new(BigUint::from(n), 0));
         let denominator = n_ux.mul(&power);
         target_width.div_floor(&denominator)
     }
@@ -99,7 +99,7 @@ impl NodeOp for PowOp {
 /// Computes base^exp for UXBinary via exponentiation by squaring.
 pub(crate) fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
     if exp == 0 {
-        return UXBinary::Finite(UBinary::new(BigUint::from(1u32), 0_i64));
+        return UXBinary::Finite(UBinary::new(BigUint::from(1u32), 0));
     }
     match base {
         UXBinary::Inf => UXBinary::Inf,
@@ -107,7 +107,7 @@ pub(crate) fn uxbinary_pow(base: &UXBinary, exp: u32) -> UXBinary {
             if b.mantissa().is_zero() {
                 return UXBinary::zero();
             }
-            let mut result = UBinary::new(BigUint::from(1u32), 0_i64);
+            let mut result = UBinary::new(BigUint::from(1u32), 0);
             let mut base_val = b.clone();
             let mut e = exp;
             while e > 0 {

@@ -140,13 +140,13 @@ fn bounds_from_division(div: &PrefixDivision) -> (Binary, Binary) {
         }
     };
 
-    let result_exp_i64 = result_exponent.to_i64().unwrap_or_else(|| {
+    let result_exp_i = result_exponent.to_i32().unwrap_or_else(|| {
         crate::detected_computable_would_exhaust_memory!(
-            "result exponent exceeds i64 in bounds_from_division"
+            "result exponent exceeds I in bounds_from_division"
         )
     });
-    let upper = Binary::new(BigInt::from(upper_mantissa), result_exp_i64);
-    let lower = Binary::new(BigInt::from(lower_mantissa), result_exp_i64);
+    let upper = Binary::new(BigInt::from(upper_mantissa), result_exp_i);
+    let lower = Binary::new(BigInt::from(lower_mantissa), result_exp_i);
 
     (lower, upper)
 }
@@ -325,7 +325,7 @@ impl NodeOp for InvOp {
         true
     }
 
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
         let min_abs = match self.inner.cached_bounds() {
             Some(b) => {
                 let (lo, hi) = b.abs();
