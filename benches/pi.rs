@@ -32,7 +32,7 @@ bench_group! {
 bench_group! {
     name: pi_arithmetic,
     fn bench_two_pi(bits) -> Bounds {
-        let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i64));
+        let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32));
         black_box(
             (two * pi())
                 .refine_to_default(epsilon(bits))
@@ -40,7 +40,7 @@ bench_group! {
         )
     }
     fn bench_pi_half(bits) -> Bounds {
-        let half = Computable::constant(Binary::new(BigInt::from(1_i64), -1_i64));
+        let half = Computable::constant(Binary::new(BigInt::from(1_i64), -1_i32));
         black_box(
             (half * pi())
                 .refine_to_default(epsilon(bits))
@@ -73,7 +73,7 @@ bench_group! {
         )
     }
     fn bench_sin_2pi(bits) -> Bounds {
-        let n_pi = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i64)) * pi();
+        let n_pi = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32)) * pi();
         black_box(
             n_pi.sin()
                 .refine_to_default(epsilon(bits))
@@ -81,7 +81,7 @@ bench_group! {
         )
     }
     fn bench_sin_10pi(bits) -> Bounds {
-        let n_pi = Computable::constant(Binary::new(BigInt::from(10_i64), 0_i64)) * pi();
+        let n_pi = Computable::constant(Binary::new(BigInt::from(10_i64), 0_i32)) * pi();
         black_box(
             n_pi.sin()
                 .refine_to_default(epsilon(bits))
@@ -89,7 +89,7 @@ bench_group! {
         )
     }
     fn bench_sin_100pi(bits) -> Bounds {
-        let n_pi = Computable::constant(Binary::new(BigInt::from(100_i64), 0_i64)) * pi();
+        let n_pi = Computable::constant(Binary::new(BigInt::from(100_i64), 0_i32)) * pi();
         black_box(
             n_pi.sin()
                 .refine_to_default(epsilon(bits))
