@@ -8,9 +8,7 @@
 //!
 //! Run with: cargo run --example analysis --release
 
-// Share bench utilities (balanced_sum, etc.) without putting them in the library.
-// We only use #[path] here because this is support code for benchmarks and examples,
-// not first-class library code, and we want to keep it out of the public API.
+// Share bench utilities (balanced_sum) without putting them in the library.
 #[path = "../benches/common.rs"]
 mod common;
 
