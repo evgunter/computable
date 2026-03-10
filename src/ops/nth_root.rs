@@ -35,7 +35,7 @@ use crate::binary_utils::bisection::midpoint;
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::{self, XIsize, XUsize};
+use crate::sane::{self, U, XI, XU};
 
 /// Minimum seed precision bits for Newton-Raphson initialization.
 ///
@@ -115,7 +115,7 @@ impl NodeOp for NthRootOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
         // Ensure state is initialized (compute_bounds is always called
         // before refine_step by the coordinator, but be defensive).
         {
@@ -133,14 +133,14 @@ impl NodeOp for NthRootOp {
         // each step. Without a cap, 16 steps would escalate from 64 to
         // 64 * 2^16 = 4M bits, making binary_pow astronomically expensive.
         let precision_cap = match target_width_exp.to_precision_bits() {
-            XUsize::Finite(bits) => {
+            XU::Finite(bits) => {
                 // Allow 2x headroom beyond target so Newton has room to converge
                 // past the target, but don't let it grow unboundedly.
                 // Also ensure at least MIN_SEED_PRECISION_BITS.
-                bits.saturating_mul(2)
-                    .clamp(MIN_SEED_PRECISION_BITS, crate::MAX_COMPUTATION_BITS)
+                sane::u_as_usize(bits.saturating_mul(2))
+                    .clamp(MIN_SEED_PRECISION_BITS, sane::u_as_usize(U::MAX))
             }
-            XUsize::Inf => crate::MAX_COMPUTATION_BITS,
+            XU::Inf => sane::u_as_usize(U::MAX),
         };
 
         // Perform one Newton step
@@ -175,7 +175,7 @@ impl NodeOp for NthRootOp {
     /// We approximate a^((n-1)/n) ~ a, which is conservative (budget too
     /// loose) for a >= 1 and slightly tight for a < 1. This avoids needing
     /// to compute an nth root inside the budget function.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
         use crate::binary::UBinary;
 
         let n = self.degree.get();
@@ -301,7 +301,7 @@ fn initialize_nth_root_newton_state(
     // well; the refine_step cap will control subsequent growth.
     let init_cap = seed_precision
         .saturating_mul(8)
-        .min(crate::MAX_COMPUTATION_BITS);
+        .min(sane::u_as_usize(U::MAX));
     for _ in 0_u32..2_u32 {
         newton_step_nth_root(&mut state, degree, init_cap);
     }
@@ -379,7 +379,7 @@ fn newton_step_nth_root(state: &mut NthRootNewtonState, degree: u32, precision_c
     state.precision = precision
         .saturating_mul(2)
         .min(precision_cap)
-        .min(crate::MAX_COMPUTATION_BITS);
+        .min(sane::u_as_usize(U::MAX));
 
     if upper_improved || lower_improved {
         if upper_improved {
@@ -421,8 +421,10 @@ fn binary_div_floor(a: &Binary, b: &Binary, precision: usize) -> Binary {
     let a_abs = a.mantissa().magnitude().clone();
     let b_abs = b.mantissa().magnitude().clone();
 
-    let b_bits = sane::bits_as_usize(b_abs.bits());
-    let shift = crate::sane_arithmetic!(precision, b_bits; precision + b_bits);
+    let b_bits = sane::u_as_usize(sane::bits_as_u(b_abs.bits()));
+    let shift = precision.checked_add(b_bits).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!("precision + b_bits overflow in binary_div_floor")
+    });
 
     // Shift a left by `shift` bits, then divide by b
     let a_shifted = &a_abs << shift;
@@ -476,8 +478,10 @@ fn binary_div_ceil(a: &Binary, b: &Binary, precision: usize) -> Binary {
     let a_abs = a.mantissa().magnitude().clone();
     let b_abs = b.mantissa().magnitude().clone();
 
-    let b_bits = sane::bits_as_usize(b_abs.bits());
-    let shift = crate::sane_arithmetic!(precision, b_bits; precision + b_bits);
+    let b_bits = sane::u_as_usize(sane::bits_as_u(b_abs.bits()));
+    let shift = precision.checked_add(b_bits).unwrap_or_else(|| {
+        crate::detected_computable_would_exhaust_memory!("precision + b_bits overflow in binary_div_ceil")
+    });
 
     let a_shifted = &a_abs << shift;
     let (quotient, remainder) = num_integer::Integer::div_rem(&a_shifted, &b_abs);
@@ -552,7 +556,7 @@ fn binary_div_ceil_by_u32(a: &Binary, divisor: u32, precision: usize) -> Binary 
 /// Truncate a Binary to at most `precision_bits` mantissa bits,
 /// rounding toward -infinity (floor). The result is always <= the input.
 fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
-    let bit_length = sane::bits_as_usize(x.mantissa().magnitude().bits());
+    let bit_length = sane::u_as_usize(sane::bits_as_u(x.mantissa().magnitude().bits()));
     let Some(shift) = bit_length
         .checked_sub(precision_bits)
         .filter(|&s| s > 0_usize)
@@ -586,7 +590,7 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
 /// Truncate a Binary to at most `precision_bits` mantissa bits,
 /// rounding toward +infinity (ceil). The result is always >= the input.
 fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
-    let bit_length = sane::bits_as_usize(x.mantissa().magnitude().bits());
+    let bit_length = sane::u_as_usize(sane::bits_as_u(x.mantissa().magnitude().bits()));
     let Some(shift) = bit_length
         .checked_sub(precision_bits)
         .filter(|&s| s > 0_usize)
@@ -622,7 +626,7 @@ mod tests {
     use super::*;
     use crate::computable::Computable;
     use crate::refinement::bounds_width_leq;
-    use crate::sane::XUsize;
+    use crate::sane::XU;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
     /// Helper to create NonZeroU32 from a literal in tests.
@@ -633,7 +637,7 @@ mod tests {
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        tolerance_exp: &XUsize,
+        tolerance_exp: &XU,
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(bounds.large());
@@ -656,7 +660,7 @@ mod tests {
         // sqrt(4) = 2
         let four = Computable::constant(bin(4, 0));
         let sqrt_four = four.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sqrt_four
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -670,7 +674,7 @@ mod tests {
         // sqrt(2) ~= 1.414...
         let two = Computable::constant(bin(2, 0));
         let sqrt_two = two.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sqrt_two
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -688,7 +692,7 @@ mod tests {
         // cbrt(8) = 2
         let eight = Computable::constant(bin(8, 0));
         let cbrt_eight = eight.nth_root(nz(3));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = cbrt_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -702,7 +706,7 @@ mod tests {
         // cbrt(-8) = -2
         let neg_eight = Computable::constant(bin(-8, 0));
         let cbrt_neg_eight = neg_eight.nth_root(nz(3));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = cbrt_neg_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -716,7 +720,7 @@ mod tests {
         // 16^(1/4) = 2
         let sixteen = Computable::constant(bin(16, 0));
         let fourth_root = sixteen.nth_root(nz(4));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = fourth_root
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -730,7 +734,7 @@ mod tests {
         // sqrt(0.5) ~= 0.707...
         let half = Computable::constant(bin(1, -1));
         let sqrt_half = half.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sqrt_half
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -750,7 +754,7 @@ mod tests {
         let cbrt_8 = Computable::constant(bin(8, 0)).nth_root(nz(3));
         let sum = sqrt_2 + cbrt_8;
 
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sum
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");

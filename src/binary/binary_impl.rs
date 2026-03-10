@@ -174,14 +174,10 @@ impl Binary {
         }
 
         if let Some(tz_u64) = mantissa.magnitude().trailing_zeros() {
-            let tz = crate::sane::bits_as_usize(tz_u64);
+            let tz = crate::sane::bits_as_u(tz_u64);
             mantissa >>= tz;
             exponent = exponent
-                .checked_add(i64::try_from(tz).unwrap_or_else(|_| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "trailing zeros exceeds i64 in Binary::normalize"
-                    )
-                }))
+                .checked_add(i64::from(tz))
                 .unwrap_or_else(|| {
                     crate::detected_computable_would_exhaust_memory!(
                         "exponent overflow in Binary::normalize"
@@ -207,7 +203,6 @@ impl Binary {
                     "shift exceeds usize in Binary::align_mantissas"
                 )
             });
-            crate::assert_sane_computation_size!(shift_usize);
             &lhs.mantissa << shift_usize
         };
         let rhs_mantissa = if rhs_shift == 0 {
@@ -218,7 +213,6 @@ impl Binary {
                     "shift exceeds usize in Binary::align_mantissas"
                 )
             });
-            crate::assert_sane_computation_size!(shift_usize);
             &rhs.mantissa << shift_usize
         };
         (lhs_mantissa, rhs_mantissa, exponent)
@@ -275,14 +269,13 @@ impl Binary {
             small_mantissa: &BigInt,
             shift_amount: u64,
         ) -> Ordering {
-            // If shift_amount exceeds MAX_COMPUTATION_BITS, the shifted value
+            // If shift_amount exceeds u32::MAX, the shifted value
             // would be astronomically large. Compare by sign instead.
-            #[allow(clippy::as_conversions)] // usize -> u64: always widens or is no-op
-            let max_shift = crate::MAX_COMPUTATION_BITS as u64;
+            let max_shift = u64::from(u32::MAX);
             if shift_amount <= max_shift {
-                // SAFETY: shift_amount <= MAX_COMPUTATION_BITS <= usize::MAX on 64-bit
+                // shift_amount fits in u32, and u32 fits in usize on all supported platforms
                 let shift_usize = usize::try_from(shift_amount).unwrap_or_else(|_| {
-                    unreachable!("shift_amount <= MAX_COMPUTATION_BITS <= usize::MAX")
+                    unreachable!("shift_amount <= u32::MAX <= usize::MAX")
                 });
                 let shifted: BigInt = large_mantissa << shift_usize;
                 shifted.cmp(small_mantissa)

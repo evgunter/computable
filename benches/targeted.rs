@@ -1,3 +1,4 @@
+mod bench_macros;
 mod common;
 
 #[cfg(not(feature = "criterion-bench"))]
@@ -5,7 +6,7 @@ use gungraun::*;
 use std::hint::black_box;
 use std::num::NonZeroU32;
 
-use common::{bench_group, epsilon};
+use bench_macros::{bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
 use computable::Bounds;
 use computable::{Binary, Computable, pi};
@@ -236,60 +237,15 @@ bench_group! {
     }
 }
 
-// Custom main to configure criterion for fast execution (< 30s total).
-#[cfg(not(any(feature = "criterion-bench", feature = "time-bench")))]
-main!(
-    config = LibraryBenchmarkConfig::default()
-        .valgrind_args(["--fair-sched=yes"]);
-    library_benchmark_groups =
-        sqrt_convergence,
-        inv_small,
-        sin_small,
-        pi_targeted,
-        cancellation,
-        deep_chain,
-        shared_subexpr,
-        sequential_refine,
-        inv_sum,
-        mixed_expr
+bench_main!(
+    sqrt_convergence,
+    inv_small,
+    sin_small,
+    pi_targeted,
+    cancellation,
+    deep_chain,
+    shared_subexpr,
+    sequential_refine,
+    inv_sum,
+    mixed_expr
 );
-
-#[cfg(feature = "criterion-bench")]
-::criterion::criterion_group! {
-    name = benches;
-    config = ::criterion::Criterion::default()
-        .warm_up_time(std::time::Duration::from_millis(200))
-        .measurement_time(std::time::Duration::from_millis(500))
-        .sample_size(10);
-    targets =
-        sqrt_convergence,
-        inv_small,
-        sin_small,
-        pi_targeted,
-        cancellation,
-        deep_chain,
-        shared_subexpr,
-        sequential_refine,
-        inv_sum,
-        mixed_expr
-}
-#[cfg(feature = "criterion-bench")]
-::criterion::criterion_main!(benches);
-
-#[cfg(feature = "time-bench")]
-fn main() {
-    let bits = ::std::env::args().nth(1).map(|s| {
-        s.parse::<usize>()
-            .expect("bits argument must be a valid usize")
-    });
-    sqrt_convergence(bits);
-    inv_small(bits);
-    sin_small(bits);
-    pi_targeted(bits);
-    cancellation(bits);
-    deep_chain(bits);
-    shared_subexpr(bits);
-    sequential_refine(bits);
-    inv_sum(bits);
-    mixed_expr(bits);
-}

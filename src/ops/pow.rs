@@ -14,7 +14,7 @@ use crate::binary::{Bounds, UBinary, UXBinary, XBinary};
 use crate::binary_utils::power::{is_negative, is_positive, xbinary_max, xbinary_pow};
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::XIsize;
+use crate::sane::{U, XI};
 
 /// Integer power operation.
 ///
@@ -57,7 +57,7 @@ impl NodeOp for PowOp {
         Ok(bounds)
     }
 
-    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XI) -> Result<bool, ComputableError> {
         // This is a passive combinator - it doesn't refine, just propagates bounds
         Ok(false)
     }
@@ -72,7 +72,7 @@ impl NodeOp for PowOp {
 
     /// Max derivative of x^n over [lower, upper] is n · max_abs^(n-1).
     /// Child budget = target / (n · max_abs^(n-1)).
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
         let n = self.exponent.get();
         if n == 1 {
             return target_width.clone();
@@ -168,10 +168,10 @@ fn compute_even_power_bounds(lower: &XBinary, upper: &XBinary, n: NonZeroU32) ->
 mod tests {
     use crate::binary::{Binary, Bounds};
     use crate::computable::Computable;
-    use crate::sane::XUsize;
+    use crate::sane::XU;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
-    fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XUsize) {
+    fn assert_bounds_contain_expected(bounds: &Bounds, expected: &Binary, _tolerance_exp: &XU) {
         let lower = unwrap_finite(bounds.small());
         let upper = unwrap_finite(bounds.large());
 
@@ -330,7 +330,7 @@ mod tests {
         let three_sq = Computable::constant(bin(3, 0)).pow(2);
         let sum = two_sq + three_sq;
 
-        let tolerance_exp = XUsize::Finite(8);
+        let tolerance_exp = XU::Finite(8);
         let bounds = sum
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
@@ -346,7 +346,7 @@ mod tests {
         let sqrt_two = two.nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"));
         let squared = sqrt_two.pow(2);
 
-        let tolerance_exp = XUsize::Finite(8);
+        let tolerance_exp = XU::Finite(8);
         let bounds = squared
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
