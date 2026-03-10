@@ -38,7 +38,7 @@ use crate::binary_utils::bisection::{
 use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
-use crate::sane::XIsize;
+use crate::sane::{U, XI};
 
 /// N-th root operation with binary search refinement.
 ///
@@ -104,7 +104,7 @@ impl NodeOp for NthRootOp {
     }
 
     // TODO: investigate using target_width_exp to leap bisection toward the target precision
-    fn refine_step(&self, _target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    fn refine_step(&self, _target_width_exp: XI) -> Result<bool, ComputableError> {
         // Ensure bisection state is initialized (compute_bounds is always called
         // before refine_step by the coordinator, but be defensive).
         {
@@ -161,7 +161,7 @@ impl NodeOp for NthRootOp {
     /// We approximate a^((n-1)/n) ≈ a, which is conservative (budget too
     /// loose) for a ≥ 1 and slightly tight for a < 1. This avoids needing
     /// to compute an nth root inside the budget function.
-    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: usize) -> UXBinary {
+    fn child_demand_budget(&self, target_width: &UXBinary, _child_index: U) -> UXBinary {
         use crate::binary::UBinary;
         use num_bigint::BigUint;
 
@@ -292,7 +292,7 @@ mod tests {
     use super::*;
     use crate::computable::Computable;
     use crate::refinement::bounds_width_leq;
-    use crate::sane::XUsize;
+    use crate::sane::XU;
     use crate::test_utils::{bin, interval_noop_computable, unwrap_finite};
 
     /// Helper to create NonZeroU32 from a literal in tests.
@@ -303,7 +303,7 @@ mod tests {
     fn assert_bounds_compatible_with_expected(
         bounds: &Bounds,
         expected: &Binary,
-        tolerance_exp: &XUsize,
+        tolerance_exp: &XU,
     ) {
         let lower = unwrap_finite(bounds.small());
         let upper_xb = bounds.large();
@@ -327,7 +327,7 @@ mod tests {
         // sqrt(4) = 2
         let four = Computable::constant(bin(4, 0));
         let sqrt_four = four.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sqrt_four
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -341,7 +341,7 @@ mod tests {
         // sqrt(2) ~= 1.414...
         let two = Computable::constant(bin(2, 0));
         let sqrt_two = two.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sqrt_two
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -359,7 +359,7 @@ mod tests {
         // cbrt(8) = 2
         let eight = Computable::constant(bin(8, 0));
         let cbrt_eight = eight.nth_root(nz(3));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = cbrt_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -373,7 +373,7 @@ mod tests {
         // cbrt(-8) = -2
         let neg_eight = Computable::constant(bin(-8, 0));
         let cbrt_neg_eight = neg_eight.nth_root(nz(3));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = cbrt_neg_eight
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -387,7 +387,7 @@ mod tests {
         // 16^(1/4) = 2
         let sixteen = Computable::constant(bin(16, 0));
         let fourth_root = sixteen.nth_root(nz(4));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = fourth_root
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -401,7 +401,7 @@ mod tests {
         // sqrt(0.5) ~= 0.707...
         let half = Computable::constant(bin(1, -1));
         let sqrt_half = half.nth_root(nz(2));
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sqrt_half
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");
@@ -421,7 +421,7 @@ mod tests {
         let cbrt_8 = Computable::constant(bin(8, 0)).nth_root(nz(3));
         let sum = sqrt_2 + cbrt_8;
 
-        let epsilon = XUsize::Finite(8);
+        let epsilon = XU::Finite(8);
         let bounds = sum
             .refine_to_default(epsilon)
             .expect("refine_to should succeed");

@@ -49,12 +49,12 @@ use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
 use crate::node::Node;
 use crate::prefix::Prefix;
-use crate::sane::{XIsize, XUsize};
+use crate::sane::{U, XI, XU};
 
 /// Command sent to a refiner thread.
 #[derive(Clone, Copy)]
 pub enum RefineCommand {
-    Step { target_width_exp: XIsize },
+    Step { target_width_exp: XI },
     Stop,
 }
 
@@ -66,7 +66,7 @@ pub struct RefinerHandle {
 /// Update message from a refiner thread.
 #[derive(Clone)]
 pub struct NodeUpdate {
-    pub node_id: usize,
+    pub node_id: U,
     pub prefix: Prefix,
 }
 
@@ -94,15 +94,15 @@ enum RefinerMessage {
 /// Snapshot of the node graph used to coordinate parallel refinement.
 pub struct RefinementGraph {
     pub root: Arc<Node>,
-    pub nodes: HashMap<usize, Arc<Node>>,    // node id -> node
-    pub parents: HashMap<usize, Vec<usize>>, // child id -> parent ids
+    pub nodes: HashMap<U, Arc<Node>>, // node id -> node
+    pub parents: HashMap<U, Vec<U>>,  // child id -> parent ids
     pub refiners: Vec<Arc<Node>>,
 }
 
 impl RefinementGraph {
     pub fn new(root: Arc<Node>) -> Result<Self, ComputableError> {
         let mut nodes = HashMap::new();
-        let mut parents: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut parents: HashMap<U, Vec<U>> = HashMap::new();
         let mut refiners = Vec::new();
 
         let mut stack = vec![Arc::clone(&root)];
@@ -132,9 +132,9 @@ impl RefinementGraph {
         Ok(graph)
     }
 
-    pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: usize>(
+    pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: U>(
         &self,
-        tolerance_exp: &XUsize,
+        tolerance_exp: &XU,
     ) -> Result<Bounds, ComputableError> {
         // Eagerly populate all prefix caches so we can identify exact-bounds refiners.
         let root_prefix = self.root.get_prefix()?;
@@ -153,7 +153,7 @@ impl RefinementGraph {
             for node in &self.refiners {
                 let exact = node
                     .cached_prefix()
-                    .is_some_and(|p| p.width_exponent() == XIsize::NegInf);
+                    .is_some_and(|p| p.width_exponent() == XI::NegInf);
                 if !exact {
                     refiner_handles.push(spawn_refiner(
                         scope,
@@ -179,12 +179,12 @@ impl RefinementGraph {
                 let num_refiners = refiner_handles.len();
                 let mut active = vec![true; num_refiners];
                 let mut all_state_unchanged = true;
-                let mut steps = vec![0usize; num_refiners];
+                let mut steps = vec![0_u32; num_refiners];
                 let mut outstanding = vec![false; num_refiners];
                 let mut eligible_count = num_refiners;
 
                 // Build node_id → refiner index mapping for routing responses.
-                let mut refiner_index: HashMap<usize, usize> = HashMap::new();
+                let mut refiner_index: HashMap<U, usize> = HashMap::new();
                 for (i, node) in refiner_nodes.iter().enumerate() {
                     refiner_index.insert(node.id, i);
                 }
@@ -201,7 +201,7 @@ impl RefinementGraph {
                 //   passes only through ops with static budgets (AddOp,
                 //   NegOp). Static budgets don't change as bounds tighten,
                 //   so they never need refreshing at wave boundaries.
-                let refiner_id_set: HashSet<usize> = refiner_nodes.iter().map(|n| n.id).collect();
+                let refiner_id_set: HashSet<U> = refiner_nodes.iter().map(|n| n.id).collect();
                 // For each refiner, collect the indices of sub-refiners in
                 // its subtree. Leaf refiners have no sub-refiners.
                 let sub_refiner_indices: Vec<Vec<usize>> = refiner_nodes
@@ -231,7 +231,7 @@ impl RefinementGraph {
                 // the BFS used for budget propagation and tracking whether
                 // any ancestor had budget_depends_on_bounds.
                 let budget_is_static: Vec<bool> = {
-                    let mut node_is_static: HashMap<usize, bool> = HashMap::new();
+                    let mut node_is_static: HashMap<U, bool> = HashMap::new();
                     node_is_static.insert(self.root.id, true);
                     let mut queue = VecDeque::new();
                     queue.push_back(self.root.id);
@@ -279,11 +279,10 @@ impl RefinementGraph {
                 let mut dispatch_queue: VecDeque<usize> = (0..num_refiners).collect();
                 let mut in_queue = vec![true; num_refiners];
 
-                let precision_met =
-                    |root: &Arc<Node>, tol: &XUsize| -> Result<bool, ComputableError> {
-                        let prefix = root.get_prefix()?;
-                        Ok(prefix_width_leq(&prefix, tol))
-                    };
+                let precision_met = |root: &Arc<Node>, tol: &XU| -> Result<bool, ComputableError> {
+                    let prefix = root.get_prefix()?;
+                    Ok(prefix_width_leq(&prefix, tol))
+                };
 
                 let mut refiner_budgets: Vec<Option<UXBinary>> = {
                     let map = self.compute_propagated_budgets(tolerance_exp);
@@ -352,7 +351,7 @@ impl RefinementGraph {
                             }
                         }
                     }
-                    let mut dispatched = 0usize;
+                    let mut dispatched = 0u32;
 
                     while let Some(i) = dispatch_queue.pop_front() {
                         in_queue[i] = false;
@@ -462,7 +461,7 @@ impl RefinementGraph {
                     // index + exhaustion info so the caller can update bookkeeping
                     // arrays without borrow conflicts with the `outstanding` loop.
                     let apply_response = |message: RefinerMessage| -> Result<
-                        (usize, Option<ExhaustionReason>, Vec<usize>),
+                        (usize, Option<ExhaustionReason>, Vec<U>),
                         ComputableError,
                     > {
                         match message {
@@ -486,7 +485,7 @@ impl RefinementGraph {
                     macro_rules! record_completion {
                         ($idx:expr, $exhaustion:expr, $changed:expr) => {{
                             let idx = $idx;
-                            let changed_nodes: &[usize] = &$changed;
+                            let changed_nodes: &[U] = &$changed;
                             outstanding[idx] = false;
                             steps[idx] = steps[idx].checked_add(1).unwrap_or_else(|| {
                                 unreachable!("steps <= MAX_REFINEMENT_ITERATIONS, cannot overflow")
@@ -593,7 +592,7 @@ impl RefinementGraph {
     /// Applies a node update and propagates prefix changes upward.
     /// Returns the set of node IDs that were changed by propagation
     /// (excluding the directly-updated node).
-    fn apply_update(&self, update: NodeUpdate) -> Result<Vec<usize>, ComputableError> {
+    fn apply_update(&self, update: NodeUpdate) -> Result<Vec<U>, ComputableError> {
         let mut changed_by_propagation = Vec::new();
         let mut queue = VecDeque::new();
         if let Some(node) = self.nodes.get(&update.node_id) {
@@ -631,9 +630,9 @@ impl RefinementGraph {
     ///
     /// Refiners that are not reachable through passive combinators (e.g. children
     /// of other refiners) will not appear in the returned map.
-    fn compute_propagated_budgets(&self, tolerance_exp: &XUsize) -> HashMap<usize, UXBinary> {
+    fn compute_propagated_budgets(&self, tolerance_exp: &XU) -> HashMap<U, UXBinary> {
         let target_width = tolerance_to_uxbinary(tolerance_exp);
-        let mut budgets: HashMap<usize, UXBinary> = HashMap::new();
+        let mut budgets: HashMap<U, UXBinary> = HashMap::new();
         budgets.insert(self.root.id, target_width);
 
         let mut queue = VecDeque::new();
@@ -650,7 +649,9 @@ impl RefinementGraph {
 
             let children = node.children();
             for (child_idx, child) in children.iter().enumerate() {
-                let child_budget = node.op.child_demand_budget(&budget, child_idx);
+                // Operations have at most 2 children, so child_idx always fits in U.
+                #[allow(clippy::as_conversions)]
+                let child_budget = node.op.child_demand_budget(&budget, child_idx as U);
                 let entry = budgets.entry(child.id).or_insert(UXBinary::Inf);
                 if child_budget < *entry {
                     *entry = child_budget;
@@ -666,12 +667,10 @@ impl RefinementGraph {
 /// Converts a tolerance exponent to a UXBinary width value.
 ///
 /// `Finite(n)` → width 2^(-n), `Inf` → width 0 (exact convergence).
-fn tolerance_to_uxbinary(tolerance_exp: &XUsize) -> UXBinary {
+fn tolerance_to_uxbinary(tolerance_exp: &XU) -> UXBinary {
     match tolerance_exp {
-        XUsize::Inf => UXBinary::zero(),
-        XUsize::Finite(exp) => {
-            UXBinary::Finite(UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)))
-        }
+        XU::Inf => UXBinary::zero(),
+        XU::Finite(exp) => UXBinary::Finite(UBinary::new(BigUint::from(1u32), -BigInt::from(*exp))),
     }
 }
 
@@ -702,7 +701,7 @@ fn refiner_loop(
                 // This prevents infinite loops where the underlying bounds improve
                 // but the Prefix (power-of-2 rounded width) stays the same.
                 let old_prefix = node.cached_prefix();
-                let mut extra_steps = 0usize;
+                let mut extra_steps = 0u32;
 
                 loop {
                     match node.refine_step(target_width_exp) {
@@ -782,12 +781,12 @@ fn refiner_loop(
 /// `Finite(n)` means epsilon = 2^(-n); `Inf` means epsilon = 0.
 /// Returns true if width <= epsilon.
 #[cfg(test)]
-pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
+pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XU) -> bool {
     match bounds.width() {
         UXBinary::Inf => false,
         UXBinary::Finite(width) => match tolerance_exp {
-            XUsize::Inf => width.mantissa().is_zero(),
-            XUsize::Finite(exp) => *width <= UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)),
+            XU::Inf => width.mantissa().is_zero(),
+            XU::Finite(exp) => *width <= UBinary::new(BigUint::from(1u32), -BigInt::from(*exp)),
         },
     }
 }
@@ -796,55 +795,55 @@ pub fn bounds_width_leq(bounds: &Bounds, tolerance_exp: &XUsize) -> bool {
 ///
 /// `Finite(n)` means epsilon = 2^(-n); `Inf` means epsilon = 0.
 /// Returns true if width_exponent <= -tolerance_exp.
-pub fn prefix_width_leq(prefix: &Prefix, tolerance_exp: &XUsize) -> bool {
+pub fn prefix_width_leq(prefix: &Prefix, tolerance_exp: &XU) -> bool {
     let we = prefix.width_exponent();
-    #[allow(clippy::arithmetic_side_effects)] // XUsize::neg() is total (no panics)
+    #[allow(clippy::arithmetic_side_effects)] // XU::neg() is total (no panics)
     let target = -(*tolerance_exp);
     we <= target
 }
 
-/// Converts a UXBinary width to an `XIsize` exponent.
+/// Converts a UXBinary width to an `XI` exponent.
 ///
 /// Returns the smallest e such that 2^e >= width, or `PosInf` for infinity.
-fn uxbinary_to_exp(ux: &UXBinary) -> XIsize {
+fn uxbinary_to_exp(ux: &UXBinary) -> XI {
     match ux {
-        UXBinary::Inf => XIsize::PosInf,
+        UXBinary::Inf => XI::PosInf,
         UXBinary::Finite(ub) => {
             if ub.mantissa().is_zero() {
-                return XIsize::NegInf;
+                return XI::NegInf;
             }
             let bits = ub.mantissa().bits();
-            let Ok(bits_isize) = isize::try_from(bits) else {
-                // mantissa has more bits than isize can represent: width is astronomically large
-                return XIsize::PosInf;
+            let Ok(bits_i32) = i32::try_from(bits) else {
+                // mantissa has more bits than i32 can represent: width is astronomically large
+                return XI::PosInf;
             };
-            let Some(exp_isize) = ub.exponent().to_isize() else {
-                // exponent doesn't fit in isize: width is astronomically large (or small)
+            let Some(exp_i32) = ub.exponent().to_i32() else {
+                // exponent doesn't fit in i32: width is astronomically large (or small)
                 // Positive exponent → PosInf; negative exponent with huge mantissa → still large
                 return if ub.exponent().sign() == num_bigint::Sign::Minus {
                     // Huge negative exponent: width ≈ 0, exponent is extremely negative
-                    XIsize::NegInf
+                    XI::NegInf
                 } else {
-                    XIsize::PosInf
+                    XI::PosInf
                 };
             };
             // width = mantissa * 2^exponent, mantissa has `bits` bits
             // so width < 2^(bits + exponent), ceil = bits + exponent if mantissa != power of 2
             // For a simple upper bound: bits + exponent (may overcount by 1, conservative)
-            match bits_isize.checked_add(exp_isize) {
-                Some(v) => XIsize::Finite(v),
+            match bits_i32.checked_add(exp_i32) {
+                Some(v) => XI::Finite(v),
                 // Overflow in positive direction: astronomically large width
-                None if exp_isize > 0 => XIsize::PosInf,
+                None if exp_i32 > 0 => XI::PosInf,
                 // Overflow in negative direction: astronomically small width
-                None => XIsize::NegInf,
+                None => XI::NegInf,
             }
         }
     }
 }
 
-/// Converts a tolerance exponent to an `XIsize` target for refiners.
-fn tolerance_to_exp(tolerance_exp: &XUsize) -> XIsize {
-    #[allow(clippy::arithmetic_side_effects)] // XUsize::neg() is total (no panics)
+/// Converts a tolerance exponent to an `XI` target for refiners.
+fn tolerance_to_exp(tolerance_exp: &XU) -> XI {
+    #[allow(clippy::arithmetic_side_effects)] // XU::neg() is total (no panics)
     {
         -(*tolerance_exp)
     }
@@ -893,7 +892,7 @@ mod tests {
     fn refine_to_accepts_zero_epsilon_for_exact_values() {
         // A computable that collapses to a single point (width = 0) after refinement
         let computable = interval_midpoint_computable(0, 2);
-        let tolerance_exp = XUsize::Inf;
+        let tolerance_exp = XU::Inf;
         let bounds = computable
             .refine_to_default(tolerance_exp)
             .expect("refine_to with epsilon=0 should succeed when bounds converge exactly");
@@ -910,7 +909,7 @@ mod tests {
     fn refine_to_with_zero_epsilon_on_constant_succeeds_immediately() {
         // A constant computable already has exact bounds (width = 0)
         let computable = Computable::constant(bin(42, 0));
-        let tolerance_exp = XUsize::Inf;
+        let tolerance_exp = XU::Inf;
         let bounds = computable
             .refine_to_default(tolerance_exp)
             .expect("refine_to with epsilon=0 should succeed for constants");
@@ -928,7 +927,7 @@ mod tests {
         let three = Computable::constant(bin(3, 0));
         let one_third = one / three;
 
-        let tolerance_exp = XUsize::Inf;
+        let tolerance_exp = XU::Inf;
         // Use a small max iterations count to keep the test fast
         let result = one_third.refine_to::<10>(tolerance_exp);
 
@@ -945,7 +944,7 @@ mod tests {
     #[test]
     fn refine_to_returns_refined_state() {
         let computable = interval_midpoint_computable(0, 2);
-        let tolerance_exp = XUsize::Finite(1);
+        let tolerance_exp = XU::Finite(1);
         let bounds = computable
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
@@ -962,7 +961,7 @@ mod tests {
     #[test]
     fn refine_to_rejects_unchanged_state() {
         let computable = interval_noop_computable(0, 2);
-        let tolerance_exp = XUsize::Finite(2);
+        let tolerance_exp = XU::Finite(2);
         let result = computable.refine_to_default(tolerance_exp);
         assert!(matches!(result, Err(ComputableError::StateUnchanged)));
     }
@@ -970,11 +969,11 @@ mod tests {
     #[test]
     fn refine_to_enforces_max_iterations() {
         let computable = Computable::new(
-            0usize,
+            0u32,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| Ok(state + 1),
         );
-        let tolerance_exp = XUsize::Finite(1);
+        let tolerance_exp = XU::Finite(1);
         let result = computable.refine_to::<5>(tolerance_exp);
         assert!(matches!(
             result,
@@ -991,7 +990,7 @@ mod tests {
             |inner_state| Ok(interval_bounds(inner_state)),
             interval_refine_strict,
         );
-        let tolerance_exp = XUsize::Finite(1);
+        let tolerance_exp = XU::Finite(1);
         let bounds = computable
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
@@ -1016,7 +1015,7 @@ mod tests {
                 ))
             },
         );
-        let tolerance_exp = XUsize::Finite(2);
+        let tolerance_exp = XU::Finite(2);
         let result = computable.refine_to_default(tolerance_exp);
         assert!(matches!(result, Err(ComputableError::BoundsWorsened)));
     }
@@ -1027,7 +1026,7 @@ mod tests {
     fn refine_shared_clone_updates_original() {
         let original = sqrt_computable(2);
         let cloned = original.clone();
-        let tolerance_exp = XUsize::Finite(12);
+        let tolerance_exp = XU::Finite(12);
 
         let _bounds = cloned
             .refine_to_default(tolerance_exp)
@@ -1040,12 +1039,12 @@ mod tests {
     #[test]
     fn refine_to_propagates_refiner_error() {
         let computable = Computable::new(
-            0usize,
+            0u32,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |_| Err(ComputableError::DomainError),
         );
 
-        let tolerance_exp = XUsize::Finite(4);
+        let tolerance_exp = XU::Finite(4);
         let result = computable.refine_to::<2>(tolerance_exp);
         assert!(matches!(result, Err(ComputableError::DomainError)));
     }
@@ -1053,17 +1052,17 @@ mod tests {
     #[test]
     fn refine_to_max_iterations_multiple_refiners() {
         let left = Computable::new(
-            0usize,
+            0u32,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| Ok(state + 1),
         );
         let right = Computable::new(
-            0usize,
+            0u32,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| Ok(state + 1),
         );
         let expr = left + right;
-        let tolerance_exp = XUsize::Finite(4);
+        let tolerance_exp = XU::Finite(4);
         let result = expr.refine_to::<2>(tolerance_exp);
         assert!(matches!(
             result,
@@ -1080,7 +1079,7 @@ mod tests {
             |state| Ok(Bounds::new(state.small().clone(), xbin(2, 0))),
         );
         let expr = stable + faulty;
-        let tolerance_exp = XUsize::Finite(4);
+        let tolerance_exp = XU::Finite(4);
         let result = expr.refine_to::<3>(tolerance_exp);
         assert!(matches!(result, Err(ComputableError::BoundsWorsened)));
     }
@@ -1088,11 +1087,11 @@ mod tests {
     #[test]
     fn concurrent_bounds_reads_during_failed_refinement() {
         let computable = Arc::new(Computable::new(
-            0usize,
+            0u32,
             |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
             |state| Ok(state + 1),
         ));
-        let tolerance_exp = XUsize::Finite(6);
+        let tolerance_exp = XU::Finite(6);
         let reader = Arc::clone(&computable);
         let handle = thread::spawn(move || {
             for _ in 0_i32..8_i32 {
@@ -1118,7 +1117,7 @@ mod tests {
 
         let slow_refiner = |concurrent: Arc<AtomicUsize>, max_conc: Arc<AtomicUsize>| {
             Computable::new(
-                0usize,
+                0u32,
                 |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
                 move |state| {
                     let prev = concurrent.fetch_add(1, Ordering::SeqCst);
@@ -1134,7 +1133,7 @@ mod tests {
             + slow_refiner(Arc::clone(&concurrent_count), Arc::clone(&max_concurrent))
             + slow_refiner(Arc::clone(&concurrent_count), Arc::clone(&max_concurrent))
             + slow_refiner(Arc::clone(&concurrent_count), Arc::clone(&max_concurrent));
-        let tolerance_exp = XUsize::Finite(6);
+        let tolerance_exp = XU::Finite(6);
 
         let result = expr.refine_to::<1>(tolerance_exp);
 
@@ -1155,7 +1154,7 @@ mod tests {
         let base_expression =
             (sqrt2.clone() + sqrt2.clone()) * (Computable::constant(bin(1, 0)) + sqrt2.clone());
         let expression = Arc::new(base_expression);
-        let tolerance_exp = XUsize::Finite(10);
+        let tolerance_exp = XU::Finite(10);
         // Coordinate multiple threads calling refine_to on the same computable.
         let barrier = Arc::new(Barrier::new(4));
 
@@ -1214,7 +1213,7 @@ mod tests {
         );
 
         let shared = Arc::new(computable);
-        let tolerance_exp = XUsize::Finite(6);
+        let tolerance_exp = XU::Finite(6);
         let barrier = Arc::new(Barrier::new(3));
 
         let mut handles = Vec::new();
@@ -1247,7 +1246,7 @@ mod tests {
     fn concurrent_bounds_reads_during_refinement() {
         let base_value = interval_midpoint_computable(0, 4);
         let shared_value = Arc::new(base_value);
-        let tolerance_exp = XUsize::Finite(8);
+        let tolerance_exp = XU::Finite(8);
         // Reader thread repeatedly calls bounds while refinement is running.
         let barrier = Arc::new(Barrier::new(2));
 
@@ -1307,7 +1306,7 @@ mod tests {
         );
 
         let sum = x + y;
-        let tolerance_exp = XUsize::Finite(1); // target width ≤ 0.5
+        let tolerance_exp = XU::Finite(1); // target width ≤ 0.5
 
         let start = Instant::now();
         let bounds = sum
@@ -1364,7 +1363,7 @@ mod tests {
         );
 
         let sum = x + y;
-        let tolerance_exp = XUsize::Finite(0); // target width ≤ 1
+        let tolerance_exp = XU::Finite(0); // target width ≤ 1
 
         let start = Instant::now();
         let bounds = sum

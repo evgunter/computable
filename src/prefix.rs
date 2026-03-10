@@ -6,7 +6,7 @@
 //!
 //! # Types
 //!
-//! - [`XIsize`]: Exponent extended with ±infinity for width/magnitude bounds (from `sane`)
+//! - [`XI`]: Exponent extended with ±infinity for width/magnitude bounds (from `sane`)
 //! - [`Prefix`]: Known precision as either a single-sign interval or a zero-crossing interval
 
 use num_bigint::BigInt;
@@ -14,10 +14,10 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::binary::{Binary, UBinary, UXBinary, XBinary};
 use crate::binary_utils::bisection::PrefixBounds;
-use crate::sane::XIsize;
+use crate::sane::{I, XI};
 
 /// Type alias preserving the old name during transition.
-pub type XExponent = XIsize;
+pub type XExponent = XI;
 
 /// Known precision of a computable number as a binary prefix.
 ///
@@ -270,12 +270,12 @@ impl Prefix {
     }
 }
 
-/// Converts an `XIsize` to `UXBinary` (2^exponent).
-fn xexponent_to_uxbinary(exp: &XIsize) -> UXBinary {
+/// Converts an `XI` to `UXBinary` (2^exponent).
+fn xexponent_to_uxbinary(exp: &XI) -> UXBinary {
     match exp {
-        XIsize::NegInf => UXBinary::Finite(UBinary::zero()),
-        XIsize::PosInf => UXBinary::Inf,
-        XIsize::Finite(e) => UXBinary::Finite(UBinary::new(1u32.into(), BigInt::from(*e))),
+        XI::NegInf => UXBinary::Finite(UBinary::zero()),
+        XI::PosInf => UXBinary::Inf,
+        XI::Finite(e) => UXBinary::Finite(UBinary::new(1u32.into(), BigInt::from(*e))),
     }
 }
 
@@ -353,7 +353,7 @@ fn finite_bounds_to_prefix(lower: &Binary, upper: &Binary) -> Prefix {
 /// Returns the smallest exponent e such that `|value| <= 2^e`.
 /// This is `ceil(log2(|value|))` when value is not a power of 2,
 /// and `log2(|value|)` when it is.
-fn magnitude_exponent(value: &Binary) -> XIsize {
+fn magnitude_exponent(value: &Binary) -> XI {
     // value = mantissa * 2^exponent (mantissa is odd after normalization)
     // |value| = |mantissa| * 2^exponent
     // bits(|mantissa|) = floor(log2(|mantissa|)) + 1
@@ -366,70 +366,68 @@ fn magnitude_exponent(value: &Binary) -> XIsize {
     // But Binary normalizes mantissa to be odd, so |mantissa| is a power of 2
     // only when |mantissa| = 1 (since 1 is the only odd power of 2).
     let mantissa_bits = match std::num::NonZeroU64::new(value.mantissa().magnitude().bits()) {
-        None => return XIsize::NegInf,
+        None => return XI::NegInf,
         Some(nz) => nz,
     };
     let is_power_of_two = *value.mantissa().magnitude() == num_bigint::BigUint::one();
 
-    let mantissa_bits_isize = isize::try_from(mantissa_bits.get())
+    let mantissa_bits_i = I::try_from(mantissa_bits.get())
         .unwrap_or_else(|_| crate::detected_computable_would_exhaust_memory!("mantissa too large"));
-    let exponent_isize = value
+    let exponent_i = value
         .exponent()
-        .to_isize()
+        .to_i32()
         .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent too large"));
 
     let effective_bits = if is_power_of_two {
-        isize::try_from(crate::sane::sub_one_u64(mantissa_bits)).unwrap_or_else(|_| {
+        I::try_from(crate::sane::sub_one_u64(mantissa_bits)).unwrap_or_else(|_| {
             crate::detected_computable_would_exhaust_memory!("mantissa too large")
         })
     } else {
-        mantissa_bits_isize
+        mantissa_bits_i
     };
     let result = effective_bits
-        .checked_add(exponent_isize)
+        .checked_add(exponent_i)
         .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent overflow"));
-    XIsize::Finite(result)
+    XI::Finite(result)
 }
 
 /// Computes the XExponent for a width (positive Binary value).
 ///
 /// Returns the smallest e such that 2^e >= width.
-fn width_to_xexponent(width: &Binary) -> XIsize {
+fn width_to_xexponent(width: &Binary) -> XI {
     // width = mantissa * 2^exponent, mantissa is odd and positive
     // If mantissa == 1, then width = 2^exponent exactly
     // Otherwise width > 2^(bits-1+exponent), so we need ceil(log2(width)) = bits + exponent
     let mantissa_bits = match std::num::NonZeroU64::new(width.mantissa().magnitude().bits()) {
-        None => return XIsize::NegInf,
+        None => return XI::NegInf,
         Some(nz) => nz,
     };
     let bits_minus_1 = crate::sane::sub_one_u64(mantissa_bits);
     let is_power_of_two =
         *width.mantissa().magnitude() == (num_bigint::BigUint::one() << bits_minus_1);
-    let exponent_isize = width
+    let exponent_i = width
         .exponent()
-        .to_isize()
+        .to_i32()
         .unwrap_or_else(|| crate::detected_computable_would_exhaust_memory!("exponent too large"));
 
     if is_power_of_two {
         // width = 2^(bits-1) * 2^exponent = 2^(bits-1+exponent)
-        let bits_minus_1_isize = isize::try_from(bits_minus_1).unwrap_or_else(|_| {
+        let bits_minus_1_i = I::try_from(bits_minus_1).unwrap_or_else(|_| {
             crate::detected_computable_would_exhaust_memory!("mantissa too large")
         });
-        let result = bits_minus_1_isize
-            .checked_add(exponent_isize)
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow")
-            });
-        XIsize::Finite(result)
-    } else {
-        // Need ceil: bits + exponent
-        let bits_isize = isize::try_from(mantissa_bits.get()).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("mantissa too large")
-        });
-        let result = bits_isize.checked_add(exponent_isize).unwrap_or_else(|| {
+        let result = bits_minus_1_i.checked_add(exponent_i).unwrap_or_else(|| {
             crate::detected_computable_would_exhaust_memory!("exponent overflow")
         });
-        XIsize::Finite(result)
+        XI::Finite(result)
+    } else {
+        // Need ceil: bits + exponent
+        let bits_i = I::try_from(mantissa_bits.get()).unwrap_or_else(|_| {
+            crate::detected_computable_would_exhaust_memory!("mantissa too large")
+        });
+        let result = bits_i.checked_add(exponent_i).unwrap_or_else(|| {
+            crate::detected_computable_would_exhaust_memory!("exponent overflow")
+        });
+        XI::Finite(result)
     }
 }
 
@@ -456,7 +454,7 @@ impl From<&PrefixBounds> for Prefix {
             finite_bounds_to_prefix(&lower, &upper)
         } else {
             // Single-sign: convert exponent
-            let we = pb.exponent.to_isize().unwrap_or_else(|| {
+            let we = pb.exponent.to_i32().unwrap_or_else(|| {
                 crate::detected_computable_would_exhaust_memory!("exponent too large")
             });
             if lower.mantissa().is_negative() {

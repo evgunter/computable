@@ -1,4 +1,4 @@
-mod common;
+mod bench_macros;
 
 #[cfg(not(feature = "criterion-bench"))]
 use gungraun::*;
@@ -6,7 +6,7 @@ use std::hint::black_box;
 
 use num_bigint::BigInt;
 
-use common::{bench_group, bench_main, epsilon};
+use bench_macros::{bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
 use computable::Bounds;
 use computable::{Binary, Computable, pi, pi_bounds_at_precision};
@@ -24,7 +24,8 @@ bench_group! {
 bench_group! {
     name: pi_bounds,
     fn bench_pi_bounds(bits) -> (Binary, Binary) {
-        black_box(pi_bounds_at_precision(bits))
+        #[allow(clippy::as_conversions)] // bench infrastructure: values are small constants
+        black_box(pi_bounds_at_precision(bits as u32))
     }
 }
 

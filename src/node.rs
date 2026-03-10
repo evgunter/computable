@@ -7,14 +7,14 @@
 //! - `NodeOp` trait for composable operations (arithmetic, transcendental, etc.)
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::binary::{Bounds, UXBinary};
 use crate::error::ComputableError;
 use crate::prefix::Prefix;
-use crate::sane::XIsize;
+use crate::sane::{U, XI};
 
 /// Shared API for retrieving bounds with lazy computation.
 pub trait BoundsAccess {
@@ -143,7 +143,7 @@ pub trait NodeOp: Send + Sync {
     /// Contract: after returning `Ok(true)`, `compute_prefix()` should return
     /// a Prefix with `width_exponent < current` (at least 1 bit improvement).
     /// Ideally `width_exponent ≤ target_width_exp`.
-    fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError>;
+    fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError>;
 
     fn children(&self) -> Vec<Arc<Node>>;
     fn is_refiner(&self) -> bool;
@@ -155,7 +155,7 @@ pub trait NodeOp: Send + Sync {
     /// still allowing this node to meet the target. Every non-leaf NodeOp
     /// must implement this — there is no default, so forgetting to implement
     /// it for a new operation is a compile error.
-    fn child_demand_budget(&self, target_width: &UXBinary, child_index: usize) -> UXBinary;
+    fn child_demand_budget(&self, target_width: &UXBinary, child_index: U) -> UXBinary;
 
     /// Whether this op's `child_demand_budget` depends on cached bounds.
     ///
@@ -212,7 +212,7 @@ impl Default for RefinementSync {
 /// is called between refinement steps (outside of refine_to), it may return stale cached
 /// values. Consider whether this is acceptable for your use case.
 pub struct Node {
-    pub id: usize,
+    pub id: U,
     pub op: Arc<dyn NodeOp>,
     /// Prefix cache for the refinement system (power-of-2 width).
     pub prefix_cache: RwLock<Option<Prefix>>,
@@ -223,7 +223,7 @@ pub struct Node {
 
 impl Node {
     pub fn new(op: Arc<dyn NodeOp>) -> Arc<Self> {
-        static NODE_IDS: AtomicUsize = AtomicUsize::new(0);
+        static NODE_IDS: AtomicU32 = AtomicU32::new(0);
         Arc::new(Self {
             id: NODE_IDS.fetch_add(1, Ordering::Relaxed),
             op,
@@ -296,7 +296,7 @@ impl Node {
     }
 
     /// Performs one refinement step targeting the given width exponent.
-    pub fn refine_step(&self, target_width_exp: XIsize) -> Result<bool, ComputableError> {
+    pub fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
         self.op.refine_step(target_width_exp)
     }
 
