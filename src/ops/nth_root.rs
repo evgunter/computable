@@ -182,11 +182,11 @@ impl NodeOp for NthRootOp {
                     }
                     None => 0_i64,
                 };
-                // Add minimal headroom (+1 bit) to ensure truncation errors
-                // don't prevent convergence to the target width. Newton's
-                // quadratic convergence means larger headroom would overshoot.
+                // Allow 2x headroom beyond what's needed so Newton has room
+                // to converge past the target (truncation in division/power
+                // loses precision). Also ensure at least MIN_SEED_PRECISION_BITS.
                 precision_for_target(result_magnitude_exp, e_i64)
-                    .saturating_add(1)
+                    .saturating_mul(2)
                     .max(MIN_SEED_PRECISION_BITS)
             }
             XI::PosInf => {
