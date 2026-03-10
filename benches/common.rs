@@ -11,10 +11,15 @@ const STANDARD_BITS: &[usize] = &[1, 4, 16, 64, 256];
 /// Extended sweep, enabled by `BENCH_HIGH_PRECISION=1`.
 const EXTENDED_BITS: &[usize] = &[1, 4, 16, 64, 256, 1024, 2048, 4096, 8192];
 
-/// Returns the precision sweep to use. Set `BENCH_HIGH_PRECISION=1` to include
-/// higher precisions (1024+).
+/// Lite sweep: skip intermediate precisions for fast local iteration.
+const LITE_BITS: &[usize] = &[1, 64, 256];
+
+/// Returns the precision sweep to use. `bench-lite` feature uses a reduced set;
+/// `BENCH_HIGH_PRECISION=1` includes higher precisions (1024+).
 pub fn precision_bits() -> &'static [usize] {
-    if high_precision() {
+    if cfg!(feature = "bench-lite") {
+        LITE_BITS
+    } else if high_precision() {
         EXTENDED_BITS
     } else {
         STANDARD_BITS
@@ -94,6 +99,12 @@ macro_rules! bench_group {
         #[cfg(feature = "criterion-bench")]
         fn $group(c: &mut ::criterion::Criterion) {
             let mut group = c.benchmark_group(stringify!($group));
+            #[cfg(feature = "bench-lite")]
+            {
+                group.sample_size(10);
+                group.warm_up_time(::std::time::Duration::from_secs(1));
+                group.measurement_time(::std::time::Duration::from_secs(1));
+            }
             $(
                 group.bench_function(
                     stringify!($fn_name),
@@ -121,7 +132,10 @@ macro_rules! bench_group {
         $(
             #[cfg(not(any(feature = "criterion-bench", feature = "time-bench")))]
             #[gungraun::library_benchmark]
-            #[benches::precision(args = [1_usize, 4, 16, 64, 256])]
+            #[cfg_attr(feature = "bench-lite",
+                benches::precision(args = [1_usize, 64, 256]))]
+            #[cfg_attr(not(feature = "bench-lite"),
+                benches::precision(args = [1_usize, 4, 16, 64, 256]))]
             fn $fn_name($bits: usize) $(-> $ret)? $body
         )+
 
@@ -134,6 +148,12 @@ macro_rules! bench_group {
         #[cfg(feature = "criterion-bench")]
         fn $group(c: &mut ::criterion::Criterion) {
             let mut group = c.benchmark_group(stringify!($group));
+            #[cfg(feature = "bench-lite")]
+            {
+                group.sample_size(10);
+                group.warm_up_time(::std::time::Duration::from_secs(1));
+                group.measurement_time(::std::time::Duration::from_secs(1));
+            }
             $(
                 for &$bits in common::precision_bits() {
                     group.bench_function(
