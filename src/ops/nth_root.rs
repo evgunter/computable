@@ -423,7 +423,9 @@ fn binary_div_floor(a: &Binary, b: &Binary, precision: usize) -> Binary {
 
     let b_bits = sane::u_as_usize(sane::bits_as_u(b_abs.bits()));
     let shift = precision.checked_add(b_bits).unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!("precision + b_bits overflow in binary_div_floor")
+        crate::detected_computable_would_exhaust_memory!(
+            "precision + b_bits overflow in binary_div_floor"
+        )
     });
 
     // Shift a left by `shift` bits, then divide by b
@@ -480,7 +482,9 @@ fn binary_div_ceil(a: &Binary, b: &Binary, precision: usize) -> Binary {
 
     let b_bits = sane::u_as_usize(sane::bits_as_u(b_abs.bits()));
     let shift = precision.checked_add(b_bits).unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!("precision + b_bits overflow in binary_div_ceil")
+        crate::detected_computable_would_exhaust_memory!(
+            "precision + b_bits overflow in binary_div_ceil"
+        )
     });
 
     let a_shifted = &a_abs << shift;

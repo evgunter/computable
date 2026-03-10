@@ -176,13 +176,11 @@ impl Binary {
         if let Some(tz_u64) = mantissa.magnitude().trailing_zeros() {
             let tz = crate::sane::bits_as_u(tz_u64);
             mantissa >>= tz;
-            exponent = exponent
-                .checked_add(i64::from(tz))
-                .unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent overflow in Binary::normalize"
-                    )
-                });
+            exponent = exponent.checked_add(i64::from(tz)).unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!(
+                    "exponent overflow in Binary::normalize"
+                )
+            });
         }
 
         Self { mantissa, exponent }
@@ -274,9 +272,8 @@ impl Binary {
             let max_shift = u64::from(u32::MAX);
             if shift_amount <= max_shift {
                 // shift_amount fits in u32, and u32 fits in usize on all supported platforms
-                let shift_usize = usize::try_from(shift_amount).unwrap_or_else(|_| {
-                    unreachable!("shift_amount <= u32::MAX <= usize::MAX")
-                });
+                let shift_usize = usize::try_from(shift_amount)
+                    .unwrap_or_else(|_| unreachable!("shift_amount <= u32::MAX <= usize::MAX"));
                 let shifted: BigInt = large_mantissa << shift_usize;
                 shifted.cmp(small_mantissa)
             } else if large_mantissa.is_zero() {

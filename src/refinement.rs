@@ -675,7 +675,8 @@ impl RefinementGraph {
                             Err(_) => return Err(ComputableError::RefinementChannelClosed),
                         };
                         let (idx, exhaustion, changed) = apply_response(first)?;
-                        let root_changed = self.local_index(id(refiner_nodes[idx].id)) == root_local
+                        let root_changed = self.local_index(id(refiner_nodes[idx].id))
+                            == root_local
                             || changed.contains(&root_local);
                         record_completion!(idx, exhaustion, changed);
                         if root_changed && precision_met(&self.root, tolerance_exp)? {
@@ -686,7 +687,8 @@ impl RefinementGraph {
                     // Drain any immediately available responses.
                     while let Ok(msg) = update_rx.try_recv() {
                         let (idx, exhaustion, changed) = apply_response(msg)?;
-                        let root_changed = self.local_index(id(refiner_nodes[idx].id)) == root_local
+                        let root_changed = self.local_index(id(refiner_nodes[idx].id))
+                            == root_local
                             || changed.contains(&root_local);
                         record_completion!(idx, exhaustion, changed);
                         if root_changed && precision_met(&self.root, tolerance_exp)? {
@@ -920,11 +922,9 @@ fn tolerance_to_uxbinary(tolerance_exp: &XU) -> UXBinary {
         XU::Inf => UXBinary::zero(),
         XU::Finite(exp) => UXBinary::Finite(UBinary::new(
             BigUint::from(1u32),
-            i64::from(*exp)
-                .checked_neg()
-                .unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!("tolerance negation overflow")
-                }),
+            i64::from(*exp).checked_neg().unwrap_or_else(|| {
+                crate::detected_computable_would_exhaust_memory!("tolerance negation overflow")
+            }),
         )),
     }
 }
@@ -976,11 +976,7 @@ fn worker_loop(
 /// Keeps refining until the prefix visibly changes or we exhaust.
 /// This prevents infinite loops where the underlying bounds improve
 /// but the Prefix (power-of-2 rounded width) stays the same.
-fn execute_refine_step(
-    node: &Arc<Node>,
-    target_width_exp: XI,
-    updates: &Sender<RefinerMessage>,
-) {
+fn execute_refine_step(node: &Arc<Node>, target_width_exp: XI, updates: &Sender<RefinerMessage>) {
     let old_prefix = node.cached_prefix();
     let mut extra_steps = 0usize;
 

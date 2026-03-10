@@ -76,10 +76,7 @@ impl Prefix {
                         XExponent::NegInf => XBinary::Finite(inner.clone()),
                         XExponent::PosInf => XBinary::NegInf,
                         XExponent::Finite(e) => {
-                            let width = Binary::new_normalized(
-                                BigInt::from(1_i32),
-                                i64::from(*e),
-                            );
+                            let width = Binary::new_normalized(BigInt::from(1_i32), i64::from(*e));
                             XBinary::Finite(inner.sub(&width))
                         }
                     }
@@ -96,10 +93,7 @@ impl Prefix {
                 XExponent::NegInf => XBinary::Finite(Binary::zero()),
                 XExponent::Finite(e) => {
                     // lower = -2^e
-                    XBinary::Finite(Binary::new_normalized(
-                        BigInt::from(-1_i32),
-                        i64::from(*e),
-                    ))
+                    XBinary::Finite(Binary::new_normalized(BigInt::from(-1_i32), i64::from(*e)))
                 }
             },
         }
@@ -122,10 +116,7 @@ impl Prefix {
                         XExponent::NegInf => XBinary::Finite(inner.clone()),
                         XExponent::PosInf => XBinary::PosInf,
                         XExponent::Finite(e) => {
-                            let width = Binary::new_normalized(
-                                BigInt::from(1_i32),
-                                i64::from(*e),
-                            );
+                            let width = Binary::new_normalized(BigInt::from(1_i32), i64::from(*e));
                             XBinary::Finite(inner.add(&width))
                         }
                     }
@@ -139,10 +130,7 @@ impl Prefix {
                 XExponent::NegInf => XBinary::Finite(Binary::zero()),
                 XExponent::Finite(e) => {
                     // upper = 2^e
-                    XBinary::Finite(Binary::new_normalized(
-                        BigInt::from(1_i32),
-                        i64::from(*e),
-                    ))
+                    XBinary::Finite(Binary::new_normalized(BigInt::from(1_i32), i64::from(*e)))
                 }
             },
         }
@@ -157,10 +145,7 @@ impl Prefix {
             } => match width_exponent {
                 XExponent::NegInf => UXBinary::Finite(UBinary::zero()),
                 XExponent::PosInf => UXBinary::Inf,
-                XExponent::Finite(e) => UXBinary::Finite(UBinary::new(
-                    1u32.into(),
-                    i64::from(*e),
-                )),
+                XExponent::Finite(e) => UXBinary::Finite(UBinary::new(1u32.into(), i64::from(*e))),
             },
             Self::ZeroCrossing {
                 neg_exponent,
@@ -288,10 +273,7 @@ fn xexponent_to_uxbinary(exp: &XI) -> UXBinary {
     match exp {
         XI::NegInf => UXBinary::Finite(UBinary::zero()),
         XI::PosInf => UXBinary::Inf,
-        XI::Finite(e) => UXBinary::Finite(UBinary::new(
-            1u32.into(),
-            i64::from(*e),
-        )),
+        XI::Finite(e) => UXBinary::Finite(UBinary::new(1u32.into(), i64::from(*e))),
     }
 }
 
