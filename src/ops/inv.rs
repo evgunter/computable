@@ -8,11 +8,12 @@
 use std::sync::Arc;
 
 use crate::binary::{
-    Binary, Bounds, ReciprocalWithRemainder, UXBinary, XBinary, extend_reciprocal,
+    Binary, ReciprocalWithRemainder, UXBinary, XBinary, extend_reciprocal,
     reciprocal_with_remainder,
 };
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 use crate::sane::{self, U, XI};
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
@@ -152,21 +153,21 @@ fn bounds_from_division(div: &PrefixDivision) -> (Binary, Binary) {
 }
 
 impl NodeOp for InvOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
         let state = self.division_state.read();
 
         match &*state {
             None => {
-                let existing = self.inner.get_bounds()?;
-                let lower = existing.small();
-                let upper = existing.large();
+                let existing = self.inner.get_prefix()?;
+                let lower = existing.lower();
+                let upper = existing.upper();
                 let zero = XBinary::zero();
-                if lower <= &zero && *upper >= zero {
-                    Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf))
-                } else if *upper < zero {
-                    Ok(Bounds::new(XBinary::NegInf, XBinary::zero()))
+                if lower <= zero && upper >= zero {
+                    Ok(Prefix::unbounded())
+                } else if upper < zero {
+                    Ok(Prefix::from_lower_upper(XBinary::NegInf, XBinary::zero()))
                 } else {
-                    Ok(Bounds::new(XBinary::zero(), XBinary::PosInf))
+                    Ok(Prefix::from_lower_upper(XBinary::zero(), XBinary::PosInf))
                 }
             }
             Some(s) => {
@@ -176,27 +177,27 @@ impl NodeOp for InvOp {
                 } else {
                     (XBinary::Finite(lo), XBinary::Finite(hi))
                 };
-                Ok(Bounds::new(out_lo, out_hi))
+                Ok(Prefix::from_lower_upper(out_lo, out_hi))
             }
         }
     }
 
     fn refine_step(&self, target_width_exp: XI) -> Result<bool, ComputableError> {
-        let input_bounds = self.inner.get_bounds()?;
+        let input_prefix = self.inner.get_prefix()?;
         let mut state = self.division_state.write();
 
         // Determine sign and absolute endpoints
-        let lower = input_bounds.small();
-        let upper = input_bounds.large();
+        let lower = input_prefix.lower();
+        let upper = input_prefix.upper();
         let zero = XBinary::zero();
 
-        if lower <= &zero && upper >= &zero {
+        if lower <= zero && upper >= zero {
             // Interval spans zero — can't compute reciprocal yet
             *state = None;
             return Ok(true);
         }
 
-        let (lower_finite, upper_finite) = match (lower, &upper) {
+        let (lower_finite, upper_finite) = match (&lower, &upper) {
             (XBinary::Finite(lo), XBinary::Finite(hi)) => (lo.clone(), hi.clone()),
             _ => {
                 *state = None;
@@ -343,9 +344,9 @@ impl NodeOp for InvOp {
     }
 
     fn child_demand_budget(&self, target_width: &UXBinary, _child_idx: bool) -> UXBinary {
-        let min_abs = match self.inner.cached_bounds() {
-            Some(b) => {
-                let (lo, hi) = b.abs();
+        let min_abs = match self.inner.cached_prefix() {
+            Some(p) => {
+                let (lo, hi) = p.abs();
                 std::cmp::min(lo, hi)
             }
             None => return target_width.clone(),
@@ -381,8 +382,8 @@ fn sane_mul_or_max(a: U, b: U) -> U {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{Bounds, XBinary};
-    use crate::refinement::bounds_width_leq;
+    use crate::binary::XBinary;
+    use crate::refinement::prefix_width_leq;
     use crate::sane::XI;
     use crate::test_utils::{bin, interval_midpoint_computable, unwrap_finite};
 
@@ -390,27 +391,28 @@ mod tests {
     fn inv_allows_infinite_bounds() {
         let value = interval_midpoint_computable(-1, 1);
         let inv = value.inv();
-        let bounds = inv.bounds().expect("bounds should succeed");
-        assert_eq!(bounds, Bounds::new(XBinary::NegInf, XBinary::PosInf));
+        let prefix = inv.prefix().expect("prefix should succeed");
+        assert_eq!(prefix.lower(), XBinary::NegInf);
+        assert_eq!(prefix.upper(), XBinary::PosInf);
     }
 
     #[test]
     fn inv_bounds_for_positive_interval() {
         // interval_midpoint_computable(2, 4) refines to midpoint 3, so inv()
-        // should produce bounds that bracket 1/3.
+        // should produce prefix that brackets 1/3.
         let value = interval_midpoint_computable(2, 4);
         let inv = value.inv();
         let tolerance_exp = XI::from_i32(-8);
-        let bounds = inv
+        let prefix = inv
             .refine_to_default(tolerance_exp)
             .expect("refine_to should succeed");
 
-        let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(bounds.large());
+        let lower = unwrap_finite(&prefix.lower());
+        let upper = unwrap_finite(&prefix.upper());
         let three = bin(3, 0);
         let one = bin(1, 0);
 
-        // Verify bounds bracket 1/3 using exact arithmetic: lower * 3 <= 1 <= upper * 3.
+        // Verify prefix brackets 1/3 using exact arithmetic: lower * 3 <= 1 <= upper * 3.
         assert!(
             lower.mul(&three) <= one,
             "lower bound {lower} exceeds 1/3: lower * 3 = {}",
@@ -422,8 +424,8 @@ mod tests {
             upper.mul(&three)
         );
         assert!(
-            bounds_width_leq(&bounds, &tolerance_exp),
-            "bounds width exceeds tolerance"
+            prefix_width_leq(&prefix, &tolerance_exp),
+            "prefix width exceeds tolerance"
         );
     }
 }

@@ -9,7 +9,7 @@
 //! The crate is organized into the following modules:
 //!
 //! - [`binary`]: Arbitrary-precision binary numbers (mantissa + exponent representation)
-//! - [`ordered_pair`]: Interval types with bounds checking (Bounds, Interval)
+//! - [`ordered_pair`]: Interval types with bounds checking (FiniteBounds, Interval)
 //! - [`error`]: Error types for computable operations
 //! - [`node`]: Computation graph infrastructure (Node, NodeOp traits)
 //! - [`ops`]: Arithmetic and transcendental operations (add, mul, inv, sin, etc.)
@@ -29,8 +29,8 @@
 //! let y = x.clone() + x.clone();
 //! let z = y * x;
 //!
-//! // Get current bounds
-//! let bounds = z.bounds().unwrap();
+//! // Get current prefix
+//! let prefix = z.prefix().unwrap();
 //! ```
 
 // Forbid panic-related lints in non-test code (tests can still use expect/panic/unwrap)
@@ -74,7 +74,6 @@ mod error;
 mod finite_interval;
 mod node;
 mod ops;
-#[allow(dead_code)]
 mod prefix;
 mod refinement;
 mod sane;
@@ -84,10 +83,10 @@ mod sane;
 pub mod test_utils;
 
 // Re-export public API
-pub use binary::Bounds;
 pub use binary::{Binary, BinaryError, FiniteBounds, UBinary, UXBinary, XBinary, XBinaryError};
 pub use computable::{Computable, DEFAULT_INV_MAX_REFINES, DEFAULT_MAX_REFINEMENT_ITERATIONS};
 pub use error::ComputableError;
 pub use ops::{pi, pi_bounds_at_precision};
 pub use ordered_pair::{Interval, IntervalError};
+pub use prefix::Prefix;
 pub use sane::{I, Sane, Sign, U, XI, XU};
