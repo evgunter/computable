@@ -192,7 +192,11 @@ impl RefinementGraph {
         let refiner_nodes: Vec<Arc<Node>> = self
             .refiners
             .iter()
-            .filter(|node| !node.cached_prefix().is_some_and(|p| p.width_exponent() == XI::NegInf))
+            .filter(|node| {
+                !node
+                    .cached_prefix()
+                    .is_some_and(|p| p.width_exponent() == XI::NegInf)
+            })
             .map(Arc::clone)
             .collect();
 
@@ -1020,7 +1024,6 @@ fn execute_refine_step(node: &Arc<Node>, target_width_exp: XI, updates: &Sender<
     }
 }
 
-
 /// Compares prefix width against a target width exponent.
 ///
 /// `NegInf` means width must be 0; `Finite(e)` means width ≤ 2^e; `PosInf` always true.
@@ -1169,11 +1172,7 @@ mod tests {
 
     #[test]
     fn refine_to_enforces_max_iterations() {
-        let computable = Computable::new(
-            0u32,
-            |_| Ok(Prefix::unbounded()),
-            |state| Ok(state + 1),
-        );
+        let computable = Computable::new(0u32, |_| Ok(Prefix::unbounded()), |state| Ok(state + 1));
         let target_width_exp = XI::from_i32(-1);
         let result = computable.refine_to::<5>(target_width_exp);
         assert!(matches!(
@@ -1250,16 +1249,8 @@ mod tests {
 
     #[test]
     fn refine_to_max_iterations_multiple_refiners() {
-        let left = Computable::new(
-            0u32,
-            |_| Ok(Prefix::unbounded()),
-            |state| Ok(state + 1),
-        );
-        let right = Computable::new(
-            0u32,
-            |_| Ok(Prefix::unbounded()),
-            |state| Ok(state + 1),
-        );
+        let left = Computable::new(0u32, |_| Ok(Prefix::unbounded()), |state| Ok(state + 1));
+        let right = Computable::new(0u32, |_| Ok(Prefix::unbounded()), |state| Ok(state + 1));
         let expr = left + right;
         let target_width_exp = XI::from_i32(-4);
         let result = expr.refine_to::<2>(target_width_exp);

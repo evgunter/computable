@@ -56,8 +56,7 @@ impl NodeOp for AddOp {
         let right_lower = right_prefix.lower();
         let right_upper = right_prefix.upper();
         // Fast path: when both inputs are exact (zero width), the sum is exact.
-        if left_prefix.width_exponent() == XI::NegInf
-            && right_prefix.width_exponent() == XI::NegInf
+        if left_prefix.width_exponent() == XI::NegInf && right_prefix.width_exponent() == XI::NegInf
         {
             let sum = left_lower.add_lower(&right_lower);
             return Ok(Prefix::from_lower_upper(sum.clone(), sum));
@@ -100,8 +99,7 @@ impl NodeOp for MulOp {
         let right_lower = right_prefix.lower();
         let right_upper = right_prefix.upper();
         // Fast path: when both inputs are exact, only one multiplication is needed.
-        if left_prefix.width_exponent() == XI::NegInf
-            && right_prefix.width_exponent() == XI::NegInf
+        if left_prefix.width_exponent() == XI::NegInf && right_prefix.width_exponent() == XI::NegInf
         {
             let product = left_lower.mul(&right_lower);
             return Ok(Prefix::from_lower_upper(product.clone(), product));
@@ -230,10 +228,7 @@ mod tests {
 
         let product = left * right;
         let prefix = product.prefix().expect("prefix should succeed");
-        assert_eq!(
-            prefix,
-            Prefix::from_lower_upper(xbin(-12, 0), xbin(-2, 0))
-        );
+        assert_eq!(prefix, Prefix::from_lower_upper(xbin(-12, 0), xbin(-2, 0)));
     }
 
     #[test]

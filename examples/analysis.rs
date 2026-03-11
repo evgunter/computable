@@ -31,9 +31,7 @@ use common::balanced_sum;
 
 fn try_finite_prefix(prefix: &Prefix) -> Option<FiniteBounds> {
     match (prefix.lower(), prefix.upper()) {
-        (XBinary::Finite(lower), XBinary::Finite(upper)) => {
-            Some(FiniteBounds::new(lower, upper))
-        }
+        (XBinary::Finite(lower), XBinary::Finite(upper)) => Some(FiniteBounds::new(lower, upper)),
         _ => None,
     }
 }

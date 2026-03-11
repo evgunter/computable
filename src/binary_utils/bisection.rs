@@ -420,5 +420,4 @@ mod tests {
             PrefixBisectionResult::Exact(_) => panic!("expected Narrowed"),
         }
     }
-
 }

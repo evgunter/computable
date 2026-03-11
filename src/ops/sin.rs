@@ -29,9 +29,9 @@ use crate::binary::UXBinary;
 use crate::binary::{
     Binary, FiniteBounds, ReciprocalRounding, UBinary, XBinary, reciprocal_of_biguint,
 };
-use crate::prefix::Prefix;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 use crate::sane::{I, U, XI};
 
 /// Cached inputs and result for `sin_prefix`, avoiding redundant Taylor series
@@ -228,7 +228,10 @@ fn sin_prefix(
         let sin_result = compute_sin_on_monotonic_interval(&input_interval, n);
         let clamped_lo = std::cmp::max(sin_result.lo().clone(), neg_one);
         let clamped_hi = std::cmp::min(sin_result.hi().clone(), pos_one);
-        return Ok(Prefix::from_lower_upper(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi)));
+        return Ok(Prefix::from_lower_upper(
+            XBinary::Finite(clamped_lo),
+            XBinary::Finite(clamped_hi),
+        ));
     }
 
     // Pi's precision affects the result — extract finite bounds or bail.
@@ -359,7 +362,10 @@ fn sin_prefix(
     };
 
     // Normalize to prefix form to prevent precision accumulation
-    Ok(Prefix::from_lower_upper(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi)))
+    Ok(Prefix::from_lower_upper(
+        XBinary::Finite(clamped_lo),
+        XBinary::Finite(clamped_hi),
+    ))
 }
 
 //=============================================================================
