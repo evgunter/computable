@@ -146,14 +146,14 @@ impl NodeOp for SinOp {
     /// child 1 (pi): range reduction subtracts k ≈ |input|/(2π) copies of
     /// 2π. Each copy has width 2·pi_width, so the total pi-related error
     /// is k·2·pi_width = |input|·pi_width/π. For this to be ≤ target we
-    /// need pi_width ≤ target·π/|input|. Using 3 as a safe lower bound
-    /// for π: budget = 3·target/|input|.
+    /// need pi_width ≤ target·π/|input|. We use pi's own cached lower
+    /// bound as a conservative estimate of π.
     fn child_demand_budget(&self, target_width: &UXBinary, child_idx: bool) -> UXBinary {
         if !child_idx {
             // Input child: sin has derivative bounded by 1.
             return target_width.clone();
         }
-        // Pi child: budget = 3 · target_width / max_abs(input).
+        // Pi child: budget = target_width · pi_lower / max_abs(input).
         let input_max_abs = match self.inner.cached_prefix() {
             Some(p) => {
                 let (lo, hi) = p.abs();
@@ -161,9 +161,14 @@ impl NodeOp for SinOp {
             }
             None => return UXBinary::zero(),
         };
-        // 3x = x + 2x = x + (x << 1)
-        let three_target = target_width.clone() + (target_width.clone() << 1);
-        three_target.div_floor(&input_max_abs)
+        let pi_lower = match self.pi_node.cached_prefix() {
+            Some(p) => {
+                let (lo, _hi) = p.abs();
+                lo
+            }
+            None => return UXBinary::zero(),
+        };
+        target_width.mul(&pi_lower).div_floor(&input_max_abs)
     }
 
     fn budget_depends_on_bounds(&self) -> bool {
