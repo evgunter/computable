@@ -28,7 +28,7 @@ use crate::prefix::Prefix;
 use crate::sane::{Sane, U, XI};
 
 /// Initial number of Taylor series terms for pi computation.
-pub(crate) const INITIAL_PI_TERMS: U = 1;
+pub(crate) const INITIAL_PI_TERMS: U = 16;
 
 /// Returns the number of bits in the binary representation of `x`.
 ///
@@ -91,8 +91,16 @@ fn precision_bits_for_num_terms(num_terms: U) -> U {
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
 pub fn pi() -> Computable {
+    pi_with_initial_terms(INITIAL_PI_TERMS)
+}
+
+/// Like [`pi()`], but overrides the initial Taylor series term count.
+///
+/// Useful for testing coarse-target behavior without paying for the
+/// default 16-term initialization.
+pub(crate) fn pi_with_initial_terms(initial_terms: U) -> Computable {
     let node = Node::new(Arc::new(PiOp {
-        num_terms: RwLock::new(INITIAL_PI_TERMS),
+        num_terms: RwLock::new(initial_terms),
         bounds_cache: RwLock::new(None),
     }));
     Computable::from_node(node)
@@ -189,7 +197,7 @@ impl NodeOp for PiOp {
             }
             XI::Finite { .. } | XI::PosInf => {
                 // Coarse target (e >= 0) or unbounded: no precision needed.
-                // needed=1 matches INITIAL_PI_TERMS, so no refinement occurs.
+                // needed=1 <= INITIAL_PI_TERMS, so no refinement occurs.
                 1
             }
         };
@@ -489,18 +497,13 @@ mod tests {
         let upper = unwrap_finite(bounds.large());
         let pi_f64 = pi_f64_binary();
 
-        // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
+        // With INITIAL_PI_TERMS=16 the initial computation gives ~77 bits of
+        // precision, so the bounds are much tighter than the 2^-20 target.
+        // The lower bound is between f64 pi and true pi, so we can only check
+        // upper >= f64 pi (since f64 pi < true pi < upper).
         assert!(
             upper >= pi_f64,
             "upper bound should be >= f64 pi approximation"
-        );
-
-        // The lower bound should be very close to f64 pi. With 2^-20 epsilon precision,
-        // the bounds are much looser than f64 precision, so lower should be <= f64 pi.
-        // (The refined bounds are simplified/loosened from the raw computation.)
-        assert!(
-            lower <= pi_f64,
-            "lower bound should be <= f64 pi approximation (after simplification)"
         );
 
         // Check width is within epsilon

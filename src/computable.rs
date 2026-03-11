@@ -465,10 +465,12 @@ mod tests {
 
     #[test]
     fn coarse_epsilon_does_not_over_refine_pi() {
-        // pi * 2^6. With INITIAL_PI_TERMS=1 the initial prefix width is
-        // ~2^(-3.5), so result width ≈ 2^(6-3.5) = 2^2.5 ≈ 5.7.
-        // Target width 2^4 = 16 is satisfied without any refinement.
-        let expr = crate::ops::pi::pi() * Computable::constant(bin(1, 6));
+        // Use 1 initial term so we can test coarse-target behavior.
+        // With 1 term, pi width is ~2^(-3.5), so pi * 2^6 has width
+        // ≈ 2^(6-3.5) = 2^2.5 ≈ 5.7. Target 2^4 = 16 is satisfied
+        // without any refinement.
+        let expr =
+            crate::ops::pi::pi_with_initial_terms(1) * Computable::constant(bin(1, 6));
         let target = XI::from_i32(4);
         let bounds = expr
             .refine_to_default(target)
