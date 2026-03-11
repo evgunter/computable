@@ -69,8 +69,9 @@ pub fn unwrap_finite_uxbinary(input: &UXBinary) -> UBinary {
     }
 }
 
-use crate::binary::{Bounds, FiniteBounds};
+use crate::binary::FiniteBounds;
 use crate::computable::Computable;
+use crate::prefix::Prefix;
 
 /// Creates a Binary representing 2^(-n), for test assertions that need
 /// epsilon as a Binary value for arithmetic.
@@ -92,27 +93,24 @@ pub fn midpoint_between(lower: &XBinary, upper: &XBinary) -> Binary {
     FiniteBounds::new(lower_finite, upper_finite).midpoint()
 }
 
-/// Refines bounds by collapsing them to their midpoint.
-pub fn interval_refine(state: Bounds) -> Result<Bounds, crate::error::ComputableError> {
-    let midpoint = midpoint_between(state.small(), state.large());
-    Ok(Bounds::new(
-        XBinary::Finite(midpoint.clone()),
-        XBinary::Finite(midpoint),
-    ))
+/// Refines a prefix by collapsing it to its midpoint.
+pub fn interval_refine(state: Prefix) -> Result<Prefix, crate::error::ComputableError> {
+    let midpoint = midpoint_between(&state.lower(), &state.upper());
+    Ok(Prefix::exact(midpoint))
 }
 
 /// Creates a Computable that represents an interval [lower, upper] and refines to its midpoint.
 ///
 /// This is useful for testing operations on Computables with interval arithmetic,
-/// where we want to verify how operations combine and propagate bounds.
+/// where we want to verify how operations combine and propagate prefixes.
 ///
 /// # Examples
 /// ```ignore
 /// let interval = interval_midpoint_computable(1, 3); // [1, 3], refines to midpoint 2
-/// let bounds = interval.bounds().expect("bounds should succeed");
+/// let prefix = interval.prefix().expect("prefix should succeed");
 /// ```
 pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
-    let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
+    let interval_state = Prefix::from_lower_upper(xbin(lower, 0), xbin(upper, 0));
     Computable::new(
         interval_state,
         |inner_state| Ok(inner_state.clone()),
@@ -122,18 +120,18 @@ pub fn interval_midpoint_computable(lower: i64, upper: i64) -> Computable {
 
 /// Creates a Computable that represents an interval [lower, upper] without refinement.
 ///
-/// Unlike `interval_midpoint_computable`, this helper does not refine the bounds at all.
-/// It simply returns the interval unchanged. Therefore, it's actually an invalid computable number;
+/// Unlike `interval_midpoint_computable`, this helper does not refine the prefix at all.
+/// It simply returns the prefix unchanged. Therefore, it's actually an invalid computable number;
 /// it will never converge, and should get caught by refine_to's check that the state changes.
 /// Nevertheless, it is useful for testing interval arithmetic
-/// operations where you want to observe how bounds propagate without any refinement.
+/// operations where you want to observe how prefixes propagate without any refinement.
 ///
 /// # Examples
 /// ```ignore
 /// let interval = interval_noop_computable(1, 3); // [1, 3], never refines
-/// let bounds = interval.bounds().expect("bounds should succeed");
+/// let prefix = interval.prefix().expect("prefix should succeed");
 /// ```
 pub fn interval_noop_computable(lower: i64, upper: i64) -> Computable {
-    let interval_state = Bounds::new(xbin(lower, 0), xbin(upper, 0));
+    let interval_state = Prefix::from_lower_upper(xbin(lower, 0), xbin(upper, 0));
     Computable::new(interval_state, |state| Ok(state.clone()), Ok)
 }

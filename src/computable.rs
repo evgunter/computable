@@ -7,11 +7,11 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use crate::binary::Bounds;
 use crate::binary::{Binary, XBinary};
 use crate::error::ComputableError;
 use crate::node::{BaseNode, Node, TypedBaseNode};
 use crate::ops::{AddOp, BaseOp, InvOp, MulOp, NegOp, NthRootOp, PiOp, PowOp, SinOp};
+use crate::prefix::Prefix;
 use crate::refinement::{RefinementGraph, prefix_width_leq};
 use crate::sane::{U, XI};
 
@@ -38,15 +38,15 @@ impl Computable {
     ///
     /// # Arguments
     /// * `state` - Initial state for this computable
-    /// * `bounds` - Function to compute bounds from the current state
+    /// * `compute_prefix` - Function to compute prefix from the current state
     /// * `refine` - Function to refine the state to a more precise version
-    pub fn new<X, B, F>(state: X, bounds: B, refine: F) -> Self
+    pub fn new<X, B, F>(state: X, compute_prefix: B, refine: F) -> Self
     where
         X: Eq + Clone + Send + Sync + 'static,
-        B: Fn(&X) -> Result<Bounds, ComputableError> + Send + Sync + 'static,
+        B: Fn(&X) -> Result<Prefix, ComputableError> + Send + Sync + 'static,
         F: Fn(X) -> Result<X, ComputableError> + Send + Sync + 'static,
     {
-        let base_node_struct = TypedBaseNode::new(state, bounds, refine);
+        let base_node_struct = TypedBaseNode::new(state, compute_prefix, refine);
         let base_node: Arc<dyn BaseNode> = Arc::new(base_node_struct);
         let node = Node::new(Arc::new(BaseOp { base: base_node }));
         Self { node }
@@ -57,16 +57,16 @@ impl Computable {
         Self { node }
     }
 
-    /// Returns the current bounds for this computable.
-    pub fn bounds(&self) -> Result<Bounds, ComputableError> {
-        self.node.get_bounds()
+    /// Returns the current prefix for this computable.
+    pub fn prefix(&self) -> Result<Prefix, ComputableError> {
+        self.node.get_prefix()
     }
 
-    /// Refines this computable until the bounds width exponent is at most `target_width_exp`.
+    /// Refines this computable until the prefix width exponent is at most `target_width_exp`.
     ///
     /// # Arguments
     /// * `target_width_exp` - Target width exponent. `Finite(e)` requests width ≤ 2^e.
-    ///   `NegInf` requests exact bounds (width = 0).
+    ///   `NegInf` requests exact prefix (width = 0).
     ///
     /// # Type Parameters
     /// * `MAX_REFINEMENT_ITERATIONS` - Maximum number of refinement iterations
@@ -80,11 +80,11 @@ impl Computable {
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: U>(
         &self,
         target_width_exp: XI,
-    ) -> Result<Bounds, ComputableError> {
+    ) -> Result<Prefix, ComputableError> {
         loop {
             let prefix = self.node.get_prefix()?;
             if prefix_width_leq(&prefix, &target_width_exp) {
-                return Ok(prefix.to_bounds());
+                return Ok(prefix);
             }
 
             let mut state_guard = self.node.refinement.state.lock();
@@ -112,7 +112,7 @@ impl Computable {
     }
 
     /// Refines this computable using the default maximum iterations.
-    pub fn refine_to_default(&self, target_width_exp: XI) -> Result<Bounds, ComputableError> {
+    pub fn refine_to_default(&self, target_width_exp: XI) -> Result<Prefix, ComputableError> {
         self.refine_to::<DEFAULT_MAX_REFINEMENT_ITERATIONS>(target_width_exp)
     }
 
@@ -135,13 +135,13 @@ impl Computable {
     pub fn sin(self) -> Self {
         let pi_node = Node::new(Arc::new(PiOp {
             num_terms: RwLock::new(crate::ops::pi::INITIAL_PI_TERMS),
-            bounds_cache: RwLock::new(None),
+            prefix_cache: RwLock::new(None),
         }));
         let node = Node::new(Arc::new(SinOp {
             inner: Arc::clone(&self.node),
             pi_node,
             num_terms: RwLock::new(1),
-            bounds_cache: RwLock::new(None),
+            prefix_cache: RwLock::new(None),
         }));
         Self { node }
     }
@@ -198,9 +198,11 @@ impl Computable {
             None => {
                 // x^0 = 1 for all x, including 0^0 = 1 by convention
                 // Check for infinite bounds - infinity^0 is an indeterminate form.
-                if let Ok(bounds) = self.node.get_bounds() {
-                    let has_infinite = matches!(bounds.small(), XBinary::NegInf | XBinary::PosInf)
-                        || matches!(&bounds.large(), XBinary::NegInf | XBinary::PosInf);
+                if let Ok(prefix) = self.node.get_prefix() {
+                    let lower = prefix.lower();
+                    let upper = prefix.upper();
+                    let has_infinite = matches!(lower, XBinary::NegInf | XBinary::PosInf)
+                        || matches!(&upper, XBinary::NegInf | XBinary::PosInf);
                     if has_infinite {
                         crate::detected_computable_with_infinite_value!(
                             "input has infinite bounds for x^0 (infinity^0 is an indeterminate form)"
@@ -219,20 +221,17 @@ impl Computable {
         }
     }
 
-    /// Creates a constant computable with exact bounds.
+    /// Creates a constant computable with exact prefix.
     pub fn constant(value: Binary) -> Self {
-        fn bounds(value: &Binary) -> Result<Bounds, ComputableError> {
-            Ok(Bounds::new(
-                XBinary::Finite(value.clone()),
-                XBinary::Finite(value.clone()),
-            ))
+        fn compute_prefix(value: &Binary) -> Result<Prefix, ComputableError> {
+            Ok(Prefix::exact(value.clone()))
         }
 
         fn refine(value: Binary) -> Result<Binary, ComputableError> {
             Ok(value)
         }
 
-        Computable::new(value, bounds, refine)
+        Computable::new(value, compute_prefix, refine)
     }
 }
 
@@ -306,14 +305,14 @@ mod tests {
     }
 
     #[test]
-    fn from_binary_matches_constant_bounds() {
+    fn from_binary_matches_constant_prefix() {
         let value = bin(3, 0);
         let computable: Computable = value.clone().into();
 
-        let bounds = computable.bounds().expect("bounds should succeed");
+        let prefix = computable.prefix().expect("prefix should succeed");
         assert_eq!(
-            bounds,
-            Bounds::new(XBinary::Finite(value.clone()), XBinary::Finite(value))
+            prefix,
+            Prefix::from_lower_upper(XBinary::Finite(value.clone()), XBinary::Finite(value))
         );
     }
 
@@ -324,12 +323,12 @@ mod tests {
         let expr = (sqrt2.clone() + one.clone()) * (sqrt2.clone() - one) + sqrt2.inv();
 
         let target_width_exp = XI::from_i32(-12);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
 
-        let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(bounds.large());
+        let lower = unwrap_finite(&prefix.lower());
+        let upper = unwrap_finite(&prefix.upper());
         let expected = 1.0_f64 + 2.0_f64.sqrt().recip();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");
@@ -343,21 +342,21 @@ mod tests {
         assert!(upper_minus <= expected_value && expected_value <= lower_plus);
     }
 
-    /// Helper: assert bounds meet the target but are not over-refined past `over_refined_exp`.
+    /// Helper: assert prefix meets the target but is not over-refined past `over_refined_exp`.
     fn assert_coarse_not_over_refined(
-        bounds: &Bounds,
+        prefix: &Prefix,
         target_width_exp: XI,
         over_refined_exp: XI,
         label: &str,
     ) {
-        use crate::refinement::bounds_width_leq;
+        use crate::refinement::prefix_width_leq;
         assert!(
-            bounds_width_leq(bounds, &target_width_exp),
-            "{label}: bounds should meet target width"
+            prefix_width_leq(prefix, &target_width_exp),
+            "{label}: prefix should meet target width"
         );
         assert!(
-            !bounds_width_leq(bounds, &over_refined_exp),
-            "{label}: bounds should not be over-refined (width should be > 2^{})",
+            !prefix_width_leq(prefix, &over_refined_exp),
+            "{label}: prefix should not be over-refined (width should be > 2^{})",
             over_refined_exp.finite_i64()
         );
     }
@@ -365,29 +364,29 @@ mod tests {
     // --- Coarse-tolerance tests: verify each op doesn't over-refine ---
     //
     // Nth_root, mul, and add have refiners backed by Newton-Raphson, which
-    // initializes a 64-bit seed in compute_bounds() before any target is
-    // known. This inherently produces tight initial bounds, so we can only
+    // initializes a 64-bit seed in compute_prefix() before any target is
+    // known. This inherently produces tight initial prefixes, so we can only
     // verify that refine_to succeeds and meets the target — the precision
-    // cap in refine_step prevents further escalation but compute_bounds()
+    // cap in refine_step prevents further escalation but compute_prefix()
     // already provides ~64-bit-wide results.
     //
-    // For ops whose initial bounds are genuinely coarse (sin, inv, pi, pow),
-    // we additionally verify that bounds aren't over-refined past a
+    // For ops whose initial prefixes are genuinely coarse (sin, inv, pi, pow),
+    // we additionally verify that prefixes aren't over-refined past a
     // given boundary.
 
     #[test]
     fn coarse_epsilon_does_not_over_refine_nth_root() {
         // sqrt(10^18) ≈ 10^9. Coarse target: width ≤ 2^4 = 16.
-        // compute_bounds already produces ~64-bit precision (width ≈ 2^(-34)),
+        // compute_prefix already produces ~64-bit precision (width ≈ 2^(-34)),
         // so this just verifies refine_to accepts a coarse XI target.
         let large = sqrt_computable(1_000_000_000_000_000_000);
         let target = XI::from_i32(4);
-        let bounds = large
+        let prefix = large
             .refine_to_default(target)
             .expect("refine should succeed");
-        use crate::refinement::bounds_width_leq;
+        use crate::refinement::prefix_width_leq;
         assert!(
-            bounds_width_leq(&bounds, &target),
+            prefix_width_leq(&prefix, &target),
             "nth_root: should meet target"
         );
     }
@@ -399,12 +398,12 @@ mod tests {
         let b = sqrt_computable(2);
         let expr = a * b;
         let target = XI::from_i32(4);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(target)
             .expect("refine should succeed");
-        use crate::refinement::bounds_width_leq;
+        use crate::refinement::prefix_width_leq;
         assert!(
-            bounds_width_leq(&bounds, &target),
+            prefix_width_leq(&prefix, &target),
             "mul: should meet target"
         );
     }
@@ -416,12 +415,12 @@ mod tests {
         let b = Computable::constant(bin(0, 0));
         let expr = a + b;
         let target = XI::from_i32(4);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(target)
             .expect("refine should succeed");
-        use crate::refinement::bounds_width_leq;
+        use crate::refinement::prefix_width_leq;
         assert!(
-            bounds_width_leq(&bounds, &target),
+            prefix_width_leq(&prefix, &target),
             "add: should meet target"
         );
     }
@@ -432,10 +431,10 @@ mod tests {
         // Target width 2^12 = 4096, child demand ≈ 4096/200 ≈ 20 (coarse).
         let expr = sqrt_computable(9999).pow(2);
         let target = XI::from_i32(12);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(target)
             .expect("refine should succeed");
-        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(6), "pow");
+        assert_coarse_not_over_refined(&prefix, target, XI::from_i32(6), "pow");
     }
 
     #[test]
@@ -445,10 +444,10 @@ mod tests {
         // enough that no refinement is needed.
         let expr = Computable::constant(bin(1, 0)).sin() * Computable::constant(bin(1, 30));
         let target = XI::from_i32(34);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(target)
             .expect("refine should succeed");
-        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(24), "sin");
+        assert_coarse_not_over_refined(&prefix, target, XI::from_i32(24), "sin");
     }
 
     #[test]
@@ -457,10 +456,10 @@ mod tests {
         // on inv child is 2^34 / 2^30 = 2^4, coarse.
         let expr = sqrt_computable(2).inv() * Computable::constant(bin(1, 30));
         let target = XI::from_i32(34);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(target)
             .expect("refine should succeed");
-        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(18), "inv");
+        assert_coarse_not_over_refined(&prefix, target, XI::from_i32(18), "inv");
     }
 
     #[test]
@@ -472,10 +471,10 @@ mod tests {
         let expr =
             crate::ops::pi::pi_with_initial_terms(1) * Computable::constant(bin(1, 6));
         let target = XI::from_i32(4);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(target)
             .expect("refine should succeed");
-        assert_coarse_not_over_refined(&bounds, target, XI::from_i32(0), "pi");
+        assert_coarse_not_over_refined(&prefix, target, XI::from_i32(0), "pi");
     }
 
     #[test]
@@ -484,12 +483,12 @@ mod tests {
         let expr = shared.clone() + shared * Computable::constant(bin(1, 0));
 
         let target_width_exp = XI::from_i32(-12);
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
 
-        let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(bounds.large());
+        let lower = unwrap_finite(&prefix.lower());
+        let upper = unwrap_finite(&prefix.upper());
         let expected = 2.0_f64 * 2.0_f64.sqrt();
         let expected_binary =
             XBinary::from_f64(expected).expect("expected value should convert to extended binary");

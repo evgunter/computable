@@ -60,19 +60,11 @@ use num_traits::Zero;
 
 use crate::ordered_pair::{AbsDistance, AddWidth, Interval, Unsigned};
 
-/// Bounds on a computable number: lower and upper bounds as XBinary values.
-/// The width is stored as UXBinary to guarantee non-negativity through the type system.
-///
-/// This type enforces the invariant from the formalism that bounds widths are
-/// always nonnegative (elements of D_inf where the value is >= 0).
-pub type Bounds = Interval<XBinary, UXBinary>;
-
 /// Finite bounds on a value: lower and upper bounds as Binary values.
 ///
-/// Unlike [`Bounds`], this type guarantees that both bounds are finite
-/// (no infinities). This is useful for algorithms like bisection that
-/// require finite intervals, and for interval arithmetic in computations
-/// like pi and sin.
+/// Both bounds are guaranteed to be finite (no infinities). This is useful
+/// for algorithms like bisection that require finite intervals, and for
+/// interval arithmetic in computations like pi and sin.
 ///
 // Arithmetic methods (interval_add, interval_sub, interval_neg, scale_positive,
 // scale_bigint, midpoint) are defined on FiniteBounds rather than generically because
@@ -183,15 +175,6 @@ impl FiniteBounds {
     }
 }
 
-impl Bounds {
-    /// Returns the absolute value (magnitude) of each bound as a pair.
-    ///
-    /// For bounds [lower, upper], returns (|lower|, |upper|).
-    pub fn abs(&self) -> (UXBinary, UXBinary) {
-        (self.small().magnitude(), self.large().magnitude())
-    }
-}
-
 impl Unsigned for BigUint {}
 
 impl AbsDistance<BigInt, BigUint> for BigInt {
@@ -211,15 +194,7 @@ mod integration_tests {
     //! Integration tests that verify cross-module functionality.
 
     use super::*;
-    use crate::test_utils::{bin, xbin};
-
-    #[test]
-    fn bounds_reject_invalid_order() {
-        let lower = xbin(1, 0);
-        let upper = xbin(-1, 0);
-        let result = Bounds::new_checked(lower, upper);
-        assert!(result.is_err());
-    }
+    use crate::test_utils::bin;
 
     #[test]
     fn binary_to_ubinary_to_xbinary_roundtrip() {
@@ -243,41 +218,6 @@ mod integration_tests {
         } else {
             panic!("expected finite value");
         }
-    }
-
-    #[test]
-    fn bounds_from_lower_and_width_constructs_correctly() {
-        let lower = xbin(5, 0);
-        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(3u32), 0));
-
-        let bounds = Bounds::from_lower_and_width(lower.clone(), width.clone());
-
-        assert_eq!(bounds.small(), &xbin(5, 0));
-        assert_eq!(bounds.width(), &width);
-        assert_eq!(bounds.large(), &xbin(8, 0));
-    }
-
-    #[test]
-    fn bounds_from_lower_and_width_matches_new() {
-        let lower = xbin(10, 0);
-        let upper = xbin(25, 0);
-
-        let via_new = Bounds::new(lower.clone(), upper.clone());
-        let via_from_lower_and_width =
-            Bounds::from_lower_and_width(lower.clone(), via_new.width().clone());
-
-        assert_eq!(via_new, via_from_lower_and_width);
-    }
-
-    #[test]
-    fn bounds_from_lower_and_width_zero_width() {
-        let lower = xbin(42, 0);
-        let width = UXBinary::Finite(UBinary::new(num_bigint::BigUint::from(0u32), 0));
-
-        let bounds = Bounds::from_lower_and_width(lower.clone(), width);
-
-        assert_eq!(bounds.small(), &xbin(42, 0));
-        assert_eq!(bounds.large(), &xbin(42, 0));
     }
 
     #[test]
