@@ -43,6 +43,12 @@ The dual cache (prefix_cache + bounds_cache) adds complexity and lock contention
 
 ---
 
+### <a id="sin-pi-budget-boundary"></a>sin-pi-budget-boundary: Investigate non-convergence when pi's initial width is near the budget threshold
+**File:** `src/ops/sin.rs` (`child_demand_budget`)
+The pi budget for SinOp is `target · π_lo / max_abs(input)`, derived from the range reduction error `|input| · pi_width / π`. When `INITIAL_PI_TERMS` is set high enough (e.g. 16, giving ~77 bits of initial precision), pi's initial width can land just below this budget threshold, so the coordinator skips pi refinement. Despite the math showing the error should be within the target, the 100-sin-sum benchmark at precision 64 fails to converge in this scenario. The root cause is unknown — it may be accumulated Prefix rounding through the addition tree, an interaction with the refinement coordinator's iteration budget, or something else. Reproducer: set `INITIAL_PI_TERMS=16` and run the `sin` time-bench at precision 64. With N=8 the issue is unreachable because pi always needs refinement from its coarse initial state.
+
+---
+
 ## Tier 2: Hard (Unblocked, but complex correctness issues)
 
 ### <a id="node-initiated-refinement"></a>node-initiated-refinement: Allow nodes to request refinement of their inputs
