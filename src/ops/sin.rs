@@ -29,7 +29,7 @@ use crate::binary::UXBinary;
 use crate::binary::{
     Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, XBinary, reciprocal_of_biguint,
 };
-use crate::binary_utils::bisection::normalize_finite_to_bounds;
+use crate::prefix::Prefix;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::sane::{I, U, XI};
@@ -228,8 +228,8 @@ fn sin_bounds(
         let sin_result = compute_sin_on_monotonic_interval(&input_interval, n);
         let clamped_lo = std::cmp::max(sin_result.lo().clone(), neg_one);
         let clamped_hi = std::cmp::min(sin_result.hi().clone(), pos_one);
-        let finite = FiniteBounds::new(clamped_lo, clamped_hi);
-        return normalize_finite_to_bounds(&finite);
+        let prefix = Prefix::from_lower_upper(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi));
+        return Ok(prefix.to_bounds());
     }
 
     // Pi's precision affects the result — extract finite bounds or bail.
@@ -360,8 +360,8 @@ fn sin_bounds(
     };
 
     // Normalize to prefix form to prevent precision accumulation
-    let finite = FiniteBounds::new(clamped_lo, clamped_hi);
-    normalize_finite_to_bounds(&finite)
+    let prefix = Prefix::from_lower_upper(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi));
+    Ok(prefix.to_bounds())
 }
 
 //=============================================================================
