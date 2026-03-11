@@ -8,12 +8,12 @@ use num_bigint::BigInt;
 
 use bench_macros::{bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
-use computable::Bounds;
+use computable::Prefix;
 use computable::{Binary, Computable, pi, pi_bounds_at_precision};
 
 bench_group! {
     name: pi_refinement,
-    fn bench_pi_refinement(bits) -> Bounds {
+    fn bench_pi_refinement(bits) -> Prefix {
         black_box(
             pi().refine_to_default(epsilon(bits))
                 .expect("pi refinement should succeed"),
@@ -31,7 +31,7 @@ bench_group! {
 
 bench_group! {
     name: pi_arithmetic,
-    fn bench_two_pi(bits) -> Bounds {
+    fn bench_two_pi(bits) -> Prefix {
         let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32));
         black_box(
             (two * pi())
@@ -39,7 +39,7 @@ bench_group! {
                 .expect("2pi should succeed"),
         )
     }
-    fn bench_pi_half(bits) -> Bounds {
+    fn bench_pi_half(bits) -> Prefix {
         let half = Computable::constant(Binary::new(BigInt::from(1_i64), -1_i32));
         black_box(
             (half * pi())
@@ -47,14 +47,14 @@ bench_group! {
                 .expect("pi/2 should succeed"),
         )
     }
-    fn bench_pi_squared(bits) -> Bounds {
+    fn bench_pi_squared(bits) -> Prefix {
         black_box(
             (pi() * pi())
                 .refine_to_default(epsilon(bits))
                 .expect("pi^2 should succeed"),
         )
     }
-    fn bench_inv_pi(bits) -> Bounds {
+    fn bench_inv_pi(bits) -> Prefix {
         black_box(
             pi().inv()
                 .refine_to_default(epsilon(bits))
@@ -65,14 +65,14 @@ bench_group! {
 
 bench_group! {
     name: sin_multiples,
-    fn bench_sin_1pi(bits) -> Bounds {
+    fn bench_sin_1pi(bits) -> Prefix {
         black_box(
             pi().sin()
                 .refine_to_default(epsilon(bits))
                 .expect("sin(pi) should succeed"),
         )
     }
-    fn bench_sin_2pi(bits) -> Bounds {
+    fn bench_sin_2pi(bits) -> Prefix {
         let n_pi = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32)) * pi();
         black_box(
             n_pi.sin()
@@ -80,7 +80,7 @@ bench_group! {
                 .expect("sin(2*pi) should succeed"),
         )
     }
-    fn bench_sin_10pi(bits) -> Bounds {
+    fn bench_sin_10pi(bits) -> Prefix {
         let n_pi = Computable::constant(Binary::new(BigInt::from(10_i64), 0_i32)) * pi();
         black_box(
             n_pi.sin()
@@ -88,7 +88,7 @@ bench_group! {
                 .expect("sin(10*pi) should succeed"),
         )
     }
-    fn bench_sin_100pi(bits) -> Bounds {
+    fn bench_sin_100pi(bits) -> Prefix {
         let n_pi = Computable::constant(Binary::new(BigInt::from(100_i64), 0_i32)) * pi();
         black_box(
             n_pi.sin()

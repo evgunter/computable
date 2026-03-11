@@ -196,11 +196,6 @@ impl Prefix {
         }
     }
 
-    /// Converts this prefix to a `Bounds` (Interval<XBinary, UXBinary>).
-    pub fn to_bounds(&self) -> crate::binary::Bounds {
-        crate::binary::Bounds::from_lower_and_width(self.lower(), self.width())
-    }
-
     /// Constructs a `Prefix` from lower and upper `XBinary` bounds.
     ///
     /// This normalizes the bounds to prefix representation, handling:

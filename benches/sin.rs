@@ -11,14 +11,14 @@ use rand::{Rng, SeedableRng};
 use bench_macros::{bench_group, bench_main, epsilon};
 use common::balanced_sum;
 #[cfg(not(feature = "criterion-bench"))]
-use computable::Bounds;
+use computable::Prefix;
 use computable::{Binary, Computable};
 
 const SAMPLE_COUNT: usize = 100;
 
 bench_group! {
     name: sin,
-    fn bench_sin(bits) -> Bounds {
+    fn bench_sin(bits) -> Prefix {
         let mut rng = StdRng::seed_from_u64(7);
         let terms: Vec<Computable> = (0..SAMPLE_COUNT)
             .map(|i| {

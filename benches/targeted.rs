@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 
 use bench_macros::{bench_group, bench_main, epsilon};
 #[cfg(not(feature = "criterion-bench"))]
-use computable::Bounds;
+use computable::Prefix;
 use computable::{Binary, Computable, pi};
 use num_bigint::BigInt;
 
@@ -17,7 +17,7 @@ use num_bigint::BigInt;
 // ---------------------------------------------------------------------------
 bench_group! {
     name: sqrt_convergence,
-    fn bench_sqrt2_64() -> Bounds {
+    fn bench_sqrt2_64() -> Prefix {
         let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32));
         black_box(
             two.nth_root(NonZeroU32::new(2).unwrap())
@@ -25,7 +25,7 @@ bench_group! {
                 .expect("sqrt(2) at 64 bits should succeed"),
         )
     }
-    fn bench_sqrt2_256() -> Bounds {
+    fn bench_sqrt2_256() -> Prefix {
         let two = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32));
         black_box(
             two.nth_root(NonZeroU32::new(2).unwrap())
@@ -40,7 +40,7 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: inv_small,
-    fn bench_inv_10_64() -> Bounds {
+    fn bench_inv_10_64() -> Prefix {
         let terms: Vec<Computable> = (1..=10)
             .map(|i| {
                 let x = 0.1_f64 * f64::from(i) + 0.5_f64;
@@ -53,7 +53,7 @@ bench_group! {
                 .expect("inv 10 at 64 bits should succeed"),
         )
     }
-    fn bench_inv_10_256() -> Bounds {
+    fn bench_inv_10_256() -> Prefix {
         let terms: Vec<Computable> = (1..=10)
             .map(|i| {
                 let x = 0.1_f64 * f64::from(i) + 0.5_f64;
@@ -73,7 +73,7 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: sin_small,
-    fn bench_sin_5_64() -> Bounds {
+    fn bench_sin_5_64() -> Prefix {
         let values = [0.5_f64, 1.0, 1.5, 2.0, 2.5];
         let terms: Vec<Computable> = values
             .iter()
@@ -85,7 +85,7 @@ bench_group! {
                 .expect("sin 5 at 64 bits should succeed"),
         )
     }
-    fn bench_sin_2_256() -> Bounds {
+    fn bench_sin_2_256() -> Prefix {
         let values = [0.5_f64, 1.5];
         let terms: Vec<Computable> = values
             .iter()
@@ -104,13 +104,13 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: pi_targeted,
-    fn bench_pi_64() -> Bounds {
+    fn bench_pi_64() -> Prefix {
         black_box(
             pi().refine_to_default(epsilon(64))
                 .expect("pi at 64 bits should succeed"),
         )
     }
-    fn bench_pi_256() -> Bounds {
+    fn bench_pi_256() -> Prefix {
         black_box(
             pi().refine_to_default(epsilon(256))
                 .expect("pi at 256 bits should succeed"),
@@ -124,7 +124,7 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: cancellation,
-    fn bench_near_cancel_64() -> Bounds {
+    fn bench_near_cancel_64() -> Prefix {
         let one = Computable::constant(Binary::new(BigInt::from(1_i64), 0_i32));
         // epsilon = 2^-50 = 1 * 2^(-50)
         let eps = Computable::constant(Binary::new(BigInt::from(1_i64), -50_i32));
@@ -142,7 +142,7 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: deep_chain,
-    fn bench_deep_add_chain_64() -> Bounds {
+    fn bench_deep_add_chain_64() -> Prefix {
         // Build a right-associative chain of 10 additions
         let values: Vec<Computable> = (1..=10)
             .map(|i| {
@@ -164,7 +164,7 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: shared_subexpr,
-    fn bench_shared_sqrt2_64() -> Bounds {
+    fn bench_shared_sqrt2_64() -> Prefix {
         let a = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32))
             .nth_root(NonZeroU32::new(2).unwrap());
         let b = Computable::constant(Binary::new(BigInt::from(1_i64), 0_i32));
@@ -185,7 +185,7 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: sequential_refine,
-    fn bench_seq_refine() -> Bounds {
+    fn bench_seq_refine() -> Prefix {
         let expr = pi();
 
         // Refine progressively: warm-start behavior
@@ -210,7 +210,7 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: inv_sum,
-    fn bench_inv_sum_64() -> Bounds {
+    fn bench_inv_sum_64() -> Prefix {
         let c = |v: i64| Computable::constant(Binary::new(BigInt::from(v), 0_i32));
         let expr = c(2).inv() + c(3).inv() + c(5).inv() + c(7).inv();
         black_box(
@@ -226,7 +226,7 @@ bench_group! {
 // ---------------------------------------------------------------------------
 bench_group! {
     name: mixed_expr,
-    fn bench_mixed_64() -> Bounds {
+    fn bench_mixed_64() -> Prefix {
         let sqrt2 = Computable::constant(Binary::new(BigInt::from(2_i64), 0_i32))
             .nth_root(NonZeroU32::new(2).unwrap());
         let expr = sqrt2 + pi();

@@ -43,7 +43,6 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use num_bigint::BigUint;
 use num_traits::Zero;
 
-use crate::binary::Bounds;
 use crate::binary::{UBinary, UXBinary};
 use crate::concurrency::StopFlag;
 use crate::error::ComputableError;
@@ -73,7 +72,6 @@ enum WorkerCommand {
 pub struct NodeUpdate {
     pub node_id: U,
     pub prefix: Prefix,
-    pub bounds: Bounds,
 }
 
 /// Reason a refiner has stopped producing further updates.
@@ -183,18 +181,18 @@ impl RefinementGraph {
     pub fn refine_to<const MAX_REFINEMENT_ITERATIONS: U>(
         &self,
         target_width_exp: &XI,
-    ) -> Result<Bounds, ComputableError> {
-        // Eagerly populate all prefix caches so we can identify exact-bounds refiners.
+    ) -> Result<Prefix, ComputableError> {
+        // Eagerly populate all prefix caches so we can identify exact refiners.
         let root_prefix = self.root.get_prefix()?;
         if prefix_width_leq(&root_prefix, target_width_exp) {
-            return Ok(root_prefix.to_bounds());
+            return Ok(root_prefix);
         }
 
-        // Only refine nodes whose bounds aren't already exact.
+        // Only refine nodes whose prefix isn't already exact.
         let refiner_nodes: Vec<Arc<Node>> = self
             .refiners
             .iter()
-            .filter(|node| !node.cached_bounds().is_some_and(|b| b.width().is_zero()))
+            .filter(|node| !node.cached_prefix().is_some_and(|p| p.width_exponent() == XI::NegInf))
             .map(Arc::clone)
             .collect();
 
@@ -339,7 +337,7 @@ impl RefinementGraph {
                 let mut needs_redispatch = vec![true; num_refiners];
                 // For non-leaf refiners: track how many sub-refiners have
                 // responded since the last dispatch. Only mark for redispatch
-                // when ALL sub-refiners have responded (so compute_bounds
+                // when ALL sub-refiners have responded (so compute_prefix
                 // reads fully-updated inputs, not partially-stale ones).
                 let mut sub_responded_count: Vec<usize> = sub_refiner_indices
                     .iter()
@@ -455,8 +453,8 @@ impl RefinementGraph {
                         }
                         let skip = refiner_budgets[i].as_ref().is_some_and(|budget| {
                             refiner_nodes[i]
-                                .cached_bounds()
-                                .is_some_and(|b| *b.width() <= *budget)
+                                .cached_prefix()
+                                .is_some_and(|p| p.width() <= *budget)
                         });
                         if !skip {
                             // Convert budget to refiner_target for the refiner.
@@ -519,8 +517,8 @@ impl RefinementGraph {
                                 let above_budget =
                                     !refiner_budgets[i].as_ref().is_some_and(|budget| {
                                         refiner_nodes[i]
-                                            .cached_bounds()
-                                            .is_some_and(|b| *b.width() <= *budget)
+                                            .cached_prefix()
+                                            .is_some_and(|p| p.width() <= *budget)
                                     });
                                 if above_budget {
                                     needs_redispatch[i] = true;
@@ -551,7 +549,7 @@ impl RefinementGraph {
                     //    re-dispatch (their inputs may have changed). The
                     //    responding refiner is only marked for re-dispatch if
                     //    its bounds actually improved — this prevents wasteful
-                    //    re-dispatches when compute_bounds reads stale inputs
+                    //    re-dispatches when compute_prefix reads stale inputs
                     //    from slow refiners that haven't responded yet.
 
                     // Process a response: apply the update and return the refiner
@@ -633,7 +631,7 @@ impl RefinementGraph {
                             // determine which non-leaf refiners had their
                             // inputs changed. If a non-leaf refiner's node
                             // was recomputed during propagation, its
-                            // compute_bounds read updated child bounds →
+                            // compute_prefix read updated child prefixes →
                             // it should count toward that refiner's
                             // sub-responded gate.
                             for &changed_id in changed_nodes {
@@ -680,7 +678,7 @@ impl RefinementGraph {
                             || changed.contains(&root_local);
                         record_completion!(idx, exhaustion, changed);
                         if root_changed && precision_met(&self.root, target_width_exp)? {
-                            return self.root.get_bounds();
+                            return self.root.get_prefix();
                         }
                     }
 
@@ -692,7 +690,7 @@ impl RefinementGraph {
                             || changed.contains(&root_local);
                         record_completion!(idx, exhaustion, changed);
                         if root_changed && precision_met(&self.root, target_width_exp)? {
-                            return self.root.get_bounds();
+                            return self.root.get_prefix();
                         }
                     }
                 }
@@ -722,7 +720,7 @@ impl RefinementGraph {
         &self,
         node: &Arc<Node>,
         target_width_exp: XI,
-    ) -> Result<Bounds, ComputableError> {
+    ) -> Result<Prefix, ComputableError> {
         for _step in 0..MAX_REFINEMENT_ITERATIONS {
             let old_prefix = node.cached_prefix();
             let mut extra_steps = 0usize;
@@ -732,20 +730,15 @@ impl RefinementGraph {
             loop {
                 match node.refine_step(target_width_exp) {
                     Ok(true) => {
-                        let bounds = node.op.compute_bounds()?;
-                        let prefix = Prefix::from_lower_upper(
-                            bounds.small().clone(),
-                            bounds.large().clone(),
-                        );
+                        let prefix = node.op.compute_prefix()?;
                         let changed = old_prefix.as_ref() != Some(&prefix);
-                        node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
+                        node.set_prefix(prefix.clone());
 
                         if changed || extra_steps >= 16 {
                             // Propagate upward to parents (handles root != refiner).
                             self.apply_update(NodeUpdate {
                                 node_id: node.id,
                                 prefix,
-                                bounds,
                             })?;
                             break;
                         }
@@ -755,18 +748,13 @@ impl RefinementGraph {
                     }
                     Ok(false) => {
                         // Converged: update, propagate, and return.
-                        let bounds = node.op.compute_bounds()?;
-                        let prefix = Prefix::from_lower_upper(
-                            bounds.small().clone(),
-                            bounds.large().clone(),
-                        );
-                        node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
+                        let prefix = node.op.compute_prefix()?;
+                        node.set_prefix(prefix.clone());
                         self.apply_update(NodeUpdate {
                             node_id: node.id,
                             prefix,
-                            bounds,
                         })?;
-                        return self.root.get_bounds();
+                        return self.root.get_prefix();
                     }
                     Err(ComputableError::StateUnchanged) => {
                         // Precision wasn't met (checked at loop top and at
@@ -780,7 +768,7 @@ impl RefinementGraph {
             // Check if root precision now meets the target.
             let root_prefix = self.root.get_prefix()?;
             if prefix_width_leq(&root_prefix, &target_width_exp) {
-                return Ok(root_prefix.to_bounds());
+                return Ok(root_prefix);
             }
         }
 
@@ -793,18 +781,12 @@ impl RefinementGraph {
     /// Returns the set of node IDs that were changed by propagation
     /// (excluding the directly-updated node).
     ///
-    /// **Bounds-cache preservation**: uses `set_prefix_and_bounds` instead
-    /// of `set_prefix` so that each recomputed parent's exact bounds stay
-    /// cached. When the next ancestor calls `child.get_bounds()` during
-    /// its own `compute_bounds()`, it hits the cache instead of
-    /// recomputing from scratch. (`set_prefix` invalidates bounds_cache,
-    /// forcing every level to redundantly re-derive bounds.)
     fn apply_update(&self, update: NodeUpdate) -> Result<Vec<usize>, ComputableError> {
         let mut changed_by_propagation = Vec::new();
         let mut queue = VecDeque::new();
         let update_local = self.local_index(id(update.node_id));
         if let Some(node) = self.nodes[update_local].as_ref() {
-            node.set_prefix_and_bounds(update.prefix, update.bounds);
+            node.set_prefix(update.prefix);
             queue.push_back(update_local);
         }
 
@@ -817,15 +799,9 @@ impl RefinementGraph {
                 let parent = self.nodes[parent_local]
                     .as_ref()
                     .ok_or(ComputableError::RefinementChannelClosed)?;
-                let next_bounds = parent.op.compute_bounds()?;
-                let next_prefix = Prefix::from_lower_upper(
-                    next_bounds.small().clone(),
-                    next_bounds.large().clone(),
-                );
+                let next_prefix = parent.op.compute_prefix()?;
                 if parent.cached_prefix().as_ref() != Some(&next_prefix) {
-                    // Cache both prefix AND exact bounds so ancestors'
-                    // compute_bounds() hits the bounds cache.
-                    parent.set_prefix_and_bounds(next_prefix, next_bounds);
+                    parent.set_prefix(next_prefix);
                     changed_by_propagation.push(parent_local);
                     queue.push_back(parent_local);
                 }
@@ -983,25 +959,22 @@ fn execute_refine_step(node: &Arc<Node>, target_width_exp: XI, updates: &Sender<
     loop {
         match node.refine_step(target_width_exp) {
             Ok(true) => {
-                let bounds = match node.op.compute_bounds() {
-                    Ok(b) => b,
+                let prefix = match node.op.compute_prefix() {
+                    Ok(p) => p,
                     Err(e) => {
                         let _send = updates.send(RefinerMessage::Error(e));
                         return;
                     }
                 };
-                let prefix =
-                    Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
 
                 // Check if prefix visibly changed
                 let changed = old_prefix.as_ref() != Some(&prefix);
-                node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
+                node.set_prefix(prefix.clone());
 
                 if changed || extra_steps >= 16 {
                     let _send = updates.send(RefinerMessage::Update(NodeUpdate {
                         node_id: node.id,
                         prefix,
-                        bounds,
                     }));
                     return;
                 }
@@ -1011,21 +984,18 @@ fn execute_refine_step(node: &Arc<Node>, target_width_exp: XI, updates: &Sender<
                     .unwrap_or_else(|| unreachable!("extra_steps bounded by loop break at 16"));
             }
             Ok(false) => {
-                let bounds = match node.op.compute_bounds() {
-                    Ok(b) => b,
+                let prefix = match node.op.compute_prefix() {
+                    Ok(p) => p,
                     Err(e) => {
                         let _send = updates.send(RefinerMessage::Error(e));
                         return;
                     }
                 };
-                let prefix =
-                    Prefix::from_lower_upper(bounds.small().clone(), bounds.large().clone());
-                node.set_prefix_and_bounds(prefix.clone(), bounds.clone());
+                node.set_prefix(prefix.clone());
                 let _send = updates.send(RefinerMessage::Exhausted {
                     update: NodeUpdate {
                         node_id: node.id,
                         prefix,
-                        bounds,
                     },
                     reason: ExhaustionReason::Converged,
                 });
@@ -1033,12 +1003,10 @@ fn execute_refine_step(node: &Arc<Node>, target_width_exp: XI, updates: &Sender<
             }
             Err(ComputableError::StateUnchanged) => {
                 let prefix = node.cached_prefix().unwrap_or_else(Prefix::unbounded);
-                let bounds = node.cached_bounds().unwrap_or_else(|| prefix.to_bounds());
                 let _send = updates.send(RefinerMessage::Exhausted {
                     update: NodeUpdate {
                         node_id: node.id,
                         prefix,
-                        bounds,
                     },
                     reason: ExhaustionReason::StateUnchanged,
                 });
@@ -1052,29 +1020,6 @@ fn execute_refine_step(node: &Arc<Node>, target_width_exp: XI, updates: &Sender<
     }
 }
 
-/// Compares bounds width against a target width exponent.
-///
-/// `NegInf` means width must be 0; `Finite(e)` means width ≤ 2^e; `PosInf` always true.
-/// Returns true if width ≤ 2^target.
-#[cfg(test)]
-pub fn bounds_width_leq(bounds: &Bounds, target_width_exp: &XI) -> bool {
-    match bounds.width() {
-        UXBinary::Inf => matches!(target_width_exp, XI::PosInf),
-        UXBinary::Finite(width) => match target_width_exp {
-            XI::NegInf => width.mantissa().is_zero(),
-            XI::Finite { .. } => {
-                let exp_i64 = target_width_exp.finite_i64();
-                let exp = I::try_from(exp_i64).unwrap_or_else(|_| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent exceeds I in bounds_width_leq"
-                    )
-                });
-                *width <= UBinary::new(BigUint::from(1u32), exp)
-            }
-            XI::PosInf => true,
-        },
-    }
-}
 
 /// Compares prefix width against a target width exponent.
 ///
@@ -1123,16 +1068,16 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    type IntervalState = Bounds;
+    type IntervalState = Prefix;
 
-    fn interval_bounds(state: &IntervalState) -> Bounds {
+    fn interval_prefix(state: &IntervalState) -> Prefix {
         state.clone()
     }
 
     fn interval_refine_strict(state: IntervalState) -> Result<IntervalState, ComputableError> {
-        let midpoint = midpoint_between(state.small(), state.large());
-        Ok(Bounds::new(
-            state.small().clone(),
+        let midpoint = midpoint_between(&state.lower(), &state.upper());
+        Ok(Prefix::from_lower_upper(
+            state.lower(),
             XBinary::Finite(midpoint),
         ))
     }
@@ -1142,10 +1087,6 @@ mod tests {
             .nth_root(std::num::NonZeroU32::new(2).expect("2 is non-zero"))
     }
 
-    fn assert_width_nonnegative(bounds: &Bounds) {
-        assert!(*bounds.width() >= UXBinary::zero());
-    }
-
     // --- tests for different results of refinement (mostly errors) ---
 
     #[test]
@@ -1153,30 +1094,30 @@ mod tests {
         // A computable that collapses to a single point (width = 0) after refinement
         let computable = interval_midpoint_computable(0, 2);
         let target_width_exp = XI::NegInf;
-        let bounds = computable
+        let prefix = computable
             .refine_to_default(target_width_exp)
             .expect("refine_to with epsilon=0 should succeed when bounds converge exactly");
 
-        // After refinement, bounds should be exactly [1, 1]
-        assert_eq!(bounds.small(), &xbin(1, 0));
-        assert_eq!(bounds.large(), &xbin(1, 0));
+        // After refinement, prefix should be exactly [1, 1]
+        assert_eq!(prefix.lower(), xbin(1, 0));
+        assert_eq!(prefix.upper(), xbin(1, 0));
 
-        // Width should be exactly zero
-        assert!(matches!(bounds.width(), UXBinary::Finite(w) if w.mantissa().is_zero()));
+        // Width exponent should be NegInf (exact)
+        assert_eq!(prefix.width_exponent(), XI::NegInf);
     }
 
     #[test]
     fn refine_to_with_zero_epsilon_on_constant_succeeds_immediately() {
-        // A constant computable already has exact bounds (width = 0)
+        // A constant computable already has exact prefix (width = 0)
         let computable = Computable::constant(bin(42, 0));
         let target_width_exp = XI::NegInf;
-        let bounds = computable
+        let prefix = computable
             .refine_to_default(target_width_exp)
             .expect("refine_to with epsilon=0 should succeed for constants");
 
-        // Bounds should be exactly [42, 42]
-        assert_eq!(bounds.small(), &xbin(42, 0));
-        assert_eq!(bounds.large(), &xbin(42, 0));
+        // Prefix should be exactly [42, 42]
+        assert_eq!(prefix.lower(), xbin(42, 0));
+        assert_eq!(prefix.upper(), xbin(42, 0));
     }
 
     #[test]
@@ -1205,17 +1146,17 @@ mod tests {
     fn refine_to_returns_refined_state() {
         let computable = interval_midpoint_computable(0, 2);
         let target_width_exp = XI::from_i32(-1);
-        let bounds = computable
+        let prefix = computable
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
         let expected = xbin(1, 0);
-        let upper = bounds.large();
+        let upper = prefix.upper();
 
-        assert!(bounds.small() <= &expected && expected <= *upper);
-        assert!(bounds_width_leq(&bounds, &target_width_exp));
-        let refined_bounds = computable.bounds().expect("bounds should succeed");
-        let refined_upper = refined_bounds.large();
-        assert!(refined_bounds.small() <= &expected && expected <= *refined_upper);
+        assert!(prefix.lower() <= expected && expected <= upper);
+        assert!(prefix_width_leq(&prefix, &target_width_exp));
+        let refined_prefix = computable.prefix().expect("prefix should succeed");
+        let refined_upper = refined_prefix.upper();
+        assert!(refined_prefix.lower() <= expected && expected <= refined_upper);
     }
 
     #[test]
@@ -1230,7 +1171,7 @@ mod tests {
     fn refine_to_enforces_max_iterations() {
         let computable = Computable::new(
             0u32,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         );
         let target_width_exp = XI::from_i32(-1);
@@ -1241,34 +1182,34 @@ mod tests {
         ));
     }
 
-    // test the "normal case" where the bounds shrink but never meet
+    // test the "normal case" where the prefix shrinks but never becomes exact
     #[test]
     fn refine_to_handles_non_meeting_bounds() {
-        let interval_state = Bounds::new(xbin(0, 0), xbin(4, 0));
+        let interval_state = Prefix::from_lower_upper(xbin(0, 0), xbin(4, 0));
         let computable = Computable::new(
             interval_state,
-            |inner_state| Ok(interval_bounds(inner_state)),
+            |inner_state| Ok(interval_prefix(inner_state)),
             interval_refine_strict,
         );
         let target_width_exp = XI::from_i32(-1);
-        let bounds = computable
+        let prefix = computable
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
-        assert!(bounds.small() < bounds.large());
-        assert!(bounds_width_leq(&bounds, &target_width_exp));
-        assert_eq!(computable.bounds().expect("bounds should succeed"), bounds);
+        assert!(prefix.lower() < prefix.upper());
+        assert!(prefix_width_leq(&prefix, &target_width_exp));
+        assert_eq!(computable.prefix().expect("prefix should succeed"), prefix);
     }
 
     #[test]
     fn refine_to_rejects_worsened_bounds() {
-        let interval_state = Bounds::new(xbin(0, 0), xbin(1, 0));
+        let interval_state = Prefix::from_lower_upper(xbin(0, 0), xbin(1, 0));
         let computable = Computable::new(
             interval_state,
-            |inner_state| Ok(interval_bounds(inner_state)),
+            |inner_state| Ok(interval_prefix(inner_state)),
             |inner_state: IntervalState| {
-                let worse_upper = unwrap_finite(inner_state.large()).add(&bin(1, 0));
-                Ok(Bounds::new(
-                    inner_state.small().clone(),
+                let worse_upper = unwrap_finite(&inner_state.upper()).add(&bin(1, 0));
+                Ok(Prefix::from_lower_upper(
+                    inner_state.lower(),
                     XBinary::Finite(worse_upper),
                 ))
             },
@@ -1286,19 +1227,19 @@ mod tests {
         let cloned = original.clone();
         let target_width_exp = XI::from_i32(-12);
 
-        let _bounds = cloned
+        let _prefix = cloned
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
 
-        let bounds = original.bounds().expect("bounds should succeed");
-        assert!(bounds_width_leq(&bounds, &target_width_exp));
+        let prefix = original.prefix().expect("prefix should succeed");
+        assert!(prefix_width_leq(&prefix, &target_width_exp));
     }
 
     #[test]
     fn refine_to_propagates_refiner_error() {
         let computable = Computable::new(
             0u32,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |_| Err(ComputableError::DomainError),
         );
 
@@ -1311,12 +1252,12 @@ mod tests {
     fn refine_to_max_iterations_multiple_refiners() {
         let left = Computable::new(
             0u32,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         );
         let right = Computable::new(
             0u32,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         );
         let expr = left + right;
@@ -1332,9 +1273,9 @@ mod tests {
     fn refine_to_error_path_stops_refiners() {
         let stable = interval_midpoint_computable(0, 2);
         let faulty = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(1, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(1, 0)),
             |state| Ok(state.clone()),
-            |state| Ok(Bounds::new(state.small().clone(), xbin(2, 0))),
+            |state| Ok(Prefix::from_lower_upper(state.lower(), xbin(2, 0))),
         );
         let expr = stable + faulty;
         let target_width_exp = XI::from_i32(-4);
@@ -1343,18 +1284,17 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_bounds_reads_during_failed_refinement() {
+    fn concurrent_prefix_reads_during_failed_refinement() {
         let computable = Arc::new(Computable::new(
             0u32,
-            |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+            |_| Ok(Prefix::unbounded()),
             |state| Ok(state + 1),
         ));
         let target_width_exp = XI::from_i32(-6);
         let reader = Arc::clone(&computable);
         let handle = thread::spawn(move || {
             for _ in 0_i32..8_i32 {
-                let bounds = reader.bounds().expect("bounds should succeed");
-                assert_width_nonnegative(&bounds);
+                let _prefix = reader.prefix().expect("prefix should succeed");
             }
         });
 
@@ -1376,7 +1316,7 @@ mod tests {
         let slow_refiner = |concurrent: Arc<AtomicUsize>, max_conc: Arc<AtomicUsize>| {
             Computable::new(
                 0u32,
-                |_| Ok(Bounds::new(XBinary::NegInf, XBinary::PosInf)),
+                |_| Ok(Prefix::unbounded()),
                 move |state| {
                     let prev = concurrent.fetch_add(1, Ordering::SeqCst);
                     max_conc.fetch_max(prev + 1, Ordering::SeqCst);
@@ -1427,21 +1367,20 @@ mod tests {
         }
 
         barrier.wait();
-        let main_bounds = expression
+        let main_prefix = expression
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
-        let main_upper = main_bounds.large();
-        assert!(bounds_width_leq(&main_bounds, &target_width_exp));
+        let main_upper = main_prefix.upper();
+        assert!(prefix_width_leq(&main_prefix, &target_width_exp));
 
         for handle in handles {
-            let bounds = handle
+            let prefix = handle
                 .join()
                 .expect("thread should join")
                 .expect("refine_to should succeed");
-            assert_width_nonnegative(&bounds);
-            assert!(bounds_width_leq(&bounds, &target_width_exp));
-            assert!(bounds.small() <= main_upper);
-            assert!(main_bounds.small() <= bounds.large());
+            assert!(prefix_width_leq(&prefix, &target_width_exp));
+            assert!(prefix.lower() <= main_upper);
+            assert!(main_prefix.lower() <= prefix.upper());
         }
     }
 
@@ -1455,7 +1394,7 @@ mod tests {
         let shared_active = Arc::clone(&active_refines);
         let shared_overlap = Arc::clone(&saw_overlap);
         let computable = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(4, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(4, 0)),
             |state| Ok(state.clone()),
             move |state: IntervalState| {
                 let prior = shared_active.fetch_add(1, Ordering::SeqCst);
@@ -1486,25 +1425,24 @@ mod tests {
         }
 
         barrier.wait();
-        let main_bounds = shared
+        let main_prefix = shared
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
 
         for handle in handles {
-            let bounds = handle.join().expect("thread should join");
-            assert_width_nonnegative(&bounds);
+            let _prefix = handle.join().expect("thread should join");
         }
 
         assert!(!saw_overlap.load(Ordering::SeqCst));
-        assert!(bounds_width_leq(&main_bounds, &target_width_exp));
+        assert!(prefix_width_leq(&main_prefix, &target_width_exp));
     }
 
     #[test]
-    fn concurrent_bounds_reads_during_refinement() {
+    fn concurrent_prefix_reads_during_refinement() {
         let base_value = interval_midpoint_computable(0, 4);
         let shared_value = Arc::new(base_value);
         let target_width_exp = XI::from_i32(-8);
-        // Reader thread repeatedly calls bounds while refinement is running.
+        // Reader thread repeatedly calls prefix while refinement is running.
         let barrier = Arc::new(Barrier::new(2));
 
         let reader = {
@@ -1513,19 +1451,17 @@ mod tests {
             thread::spawn(move || {
                 reader_barrier.wait();
                 for _ in 0_i32..32_i32 {
-                    let bounds = reader_value.bounds().expect("bounds should succeed");
-                    assert_width_nonnegative(&bounds);
+                    let _prefix = reader_value.prefix().expect("prefix should succeed");
                 }
             })
         };
 
         barrier.wait();
-        let refined = shared_value
+        let _refined = shared_value
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
 
         reader.join().expect("reader should join");
-        assert_width_nonnegative(&refined);
     }
 
     /// Tests that propagated demand budgets correctly skip a precise refiner.
@@ -1545,7 +1481,7 @@ mod tests {
         // upper bound each step (width halves each round). No sleeps, so
         // convergence is fast but gradual — takes ~12 steps to reach width < 0.25.
         let x = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(1024, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(1024, 0)),
             |state| Ok(state.clone()),
             interval_refine_strict,
         );
@@ -1554,9 +1490,9 @@ mod tests {
         // propagated budget of ε/2 = 0.25, but above the old flat budget
         // of ε/4 = 0.125. Each step sleeps 1s — if stepped, the test is slow.
         let y = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(3, -4)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(3, -4)),
             |state| Ok(state.clone()),
-            move |state: Bounds| {
+            move |state: Prefix| {
                 thread::sleep(Duration::from_millis(SLOW_STEP_MS));
                 interval_refine(state)
             },
@@ -1566,14 +1502,14 @@ mod tests {
         let target_width_exp = XI::from_i32(-1); // target width ≤ 0.5
 
         let start = Instant::now();
-        let bounds = sum
+        let prefix = sum
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
         let elapsed = start.elapsed();
 
         assert!(
-            bounds_width_leq(&bounds, &target_width_exp),
-            "bounds should meet target precision"
+            prefix_width_leq(&prefix, &target_width_exp),
+            "prefix should meet target precision"
         );
         // With propagated budgets, y is correctly skipped (width 0.1875 ≤
         // budget 0.25), so refinement finishes fast — only x needs to converge.
@@ -1603,7 +1539,7 @@ mod tests {
         // x: fast refiner with wide initial bounds. Halves each step with no
         // sleep, so all ~20 needed steps complete in microseconds.
         let x = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(1024, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(1024, 0)),
             |state| Ok(state.clone()),
             interval_refine_strict,
         );
@@ -1611,9 +1547,9 @@ mod tests {
         // y: slow refiner with narrower initial bounds. Halves each step but
         // sleeps 200ms per step, so each step is expensive.
         let y = Computable::new(
-            Bounds::new(xbin(0, 0), xbin(4, 0)),
+            Prefix::from_lower_upper(xbin(0, 0), xbin(4, 0)),
             |state| Ok(state.clone()),
-            move |state: Bounds| {
+            move |state: Prefix| {
                 thread::sleep(Duration::from_millis(SLOW_STEP_MS));
                 interval_refine_strict(state)
             },
@@ -1623,14 +1559,14 @@ mod tests {
         let target_width_exp = XI::from_i32(0); // target width ≤ 1
 
         let start = Instant::now();
-        let bounds = sum
+        let prefix = sum
             .refine_to_default(target_width_exp)
             .expect("refine_to should succeed");
         let elapsed = start.elapsed();
 
         assert!(
-            bounds_width_leq(&bounds, &target_width_exp),
-            "bounds should meet target precision"
+            prefix_width_leq(&prefix, &target_width_exp),
+            "prefix should meet target precision"
         );
         // Event loop: ~600ms (3 y-steps of 200ms each, x runs concurrently).
         // A round-based model would need ~11 rounds × 200ms = ~2200ms.

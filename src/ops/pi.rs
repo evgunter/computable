@@ -18,7 +18,7 @@ use num_bigint::BigInt;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, XBinary,
+    Binary, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, XBinary,
     reciprocal_of_biguint,
 };
 use crate::prefix::Prefix;
@@ -93,7 +93,7 @@ fn precision_bits_for_num_terms(num_terms: U) -> U {
 pub fn pi() -> Computable {
     let node = Node::new(Arc::new(PiOp {
         num_terms: RwLock::new(INITIAL_PI_TERMS),
-        bounds_cache: RwLock::new(None),
+        prefix_cache: RwLock::new(None),
     }));
     Computable::from_node(node)
 }
@@ -120,29 +120,29 @@ pub fn pi_bounds_at_precision(precision_bits: U) -> (Binary, Binary) {
     compute_pi_bounds(num_terms, reciprocal_precision)
 }
 
-/// Cached inputs and result for `compute_bounds`, avoiding redundant Machin
-/// formula recomputation when `compute_bounds` is called multiple times at the
+/// Cached inputs and result for `compute_prefix`, avoiding redundant Machin
+/// formula recomputation when `compute_prefix` is called multiple times at the
 /// same `num_terms` (which happens between `refine_step` calls).
-pub struct PiBoundsCache {
+pub struct PiPrefixCache {
     num_terms: U,
-    result: Bounds,
+    result: Prefix,
 }
 
 /// Pi computation operation using Machin's formula.
 pub struct PiOp {
     pub num_terms: RwLock<U>,
-    /// Cache of the last `compute_bounds` result, keyed on `num_terms`.
-    /// Eliminates redundant Taylor series recomputation during bound propagation.
-    pub bounds_cache: RwLock<Option<PiBoundsCache>>,
+    /// Cache of the last `compute_prefix` result, keyed on `num_terms`.
+    /// Eliminates redundant Taylor series recomputation during prefix propagation.
+    pub prefix_cache: RwLock<Option<PiPrefixCache>>,
 }
 
 impl NodeOp for PiOp {
-    fn compute_bounds(&self) -> Result<Bounds, ComputableError> {
+    fn compute_prefix(&self) -> Result<Prefix, ComputableError> {
         let num_terms = *self.num_terms.read();
 
         // Check cache: if num_terms hasn't changed, return the cached result.
         {
-            let cache = self.bounds_cache.read();
+            let cache = self.prefix_cache.read();
             if let Some(cached) = cache.as_ref()
                 && cached.num_terms == num_terms
             {
@@ -153,13 +153,12 @@ impl NodeOp for PiOp {
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
         // Normalize to prefix form to prevent precision accumulation
-        let prefix = Prefix::from_lower_upper(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
-        let result = prefix.to_bounds();
+        let result = Prefix::from_lower_upper(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
 
         // Store in cache for future calls with the same num_terms.
         {
-            let mut cache = self.bounds_cache.write();
-            *cache = Some(PiBoundsCache {
+            let mut cache = self.prefix_cache.write();
+            *cache = Some(PiPrefixCache {
                 num_terms,
                 result: result.clone(),
             });
@@ -481,12 +480,12 @@ mod tests {
     fn pi_computable_refines() {
         let pi_comp = pi();
         let tolerance_exp = XI::from_i32(-20); // 2^-20 precision
-        let bounds = pi_comp
+        let prefix = pi_comp
             .refine_to_default(tolerance_exp)
             .expect("refine should succeed");
 
-        let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(bounds.large());
+        let lower = unwrap_finite(&prefix.lower());
+        let upper = unwrap_finite(&prefix.upper());
         let pi_f64 = pi_f64_binary();
 
         // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
@@ -551,12 +550,12 @@ mod tests {
     fn pi_computable_refines_beyond_128_bits() {
         let pi_comp = pi();
         let tolerance_exp = XI::from_i32(-128); // 2^-128 precision
-        let bounds = pi_comp
+        let prefix = pi_comp
             .refine_to_default(tolerance_exp)
             .expect("refine to 2^-128 should succeed");
 
-        let lower = unwrap_finite(bounds.small());
-        let upper = unwrap_finite(bounds.large());
+        let lower = unwrap_finite(&prefix.lower());
+        let upper = unwrap_finite(&prefix.upper());
 
         let width = upper.sub(&lower);
         let eps_binary = epsilon_as_binary(128);

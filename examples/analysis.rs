@@ -16,7 +16,7 @@ use std::num::NonZeroU32;
 use std::time::Instant;
 
 use computable::{
-    Binary, Bounds, Computable, FiniteBounds, XBinary, XI, pi, pi_bounds_at_precision,
+    Binary, Computable, FiniteBounds, Prefix, XBinary, XI, pi, pi_bounds_at_precision,
 };
 use num_bigint::BigInt;
 use num_traits::{Signed, Zero};
@@ -29,10 +29,10 @@ use common::balanced_sum;
 // Helpers (example-specific; balanced_sum comes from benches/common.rs)
 // ---------------------------------------------------------------------------
 
-fn try_finite_bounds(bounds: &Bounds) -> Option<FiniteBounds> {
-    match (bounds.small(), bounds.large()) {
+fn try_finite_prefix(prefix: &Prefix) -> Option<FiniteBounds> {
+    match (prefix.lower(), prefix.upper()) {
         (XBinary::Finite(lower), XBinary::Finite(upper)) => {
-            Some(FiniteBounds::new(lower.clone(), upper.clone()))
+            Some(FiniteBounds::new(lower, upper))
         }
         _ => None,
     }
@@ -86,8 +86,8 @@ fn complex_analysis(rng: &mut StdRng) {
         })
         .collect();
     let total = balanced_sum(terms);
-    let bounds = total.bounds().expect("bounds should succeed");
-    let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+    let prefix = total.prefix().expect("prefix should succeed");
+    let finite = try_finite_prefix(&prefix).expect("prefix should be finite");
     let comp_duration = comp_start.elapsed();
 
     let midpoint = finite.midpoint();
@@ -107,7 +107,7 @@ fn complex_analysis(rng: &mut StdRng) {
         Binary::from_f64(float_total).unwrap()
     );
     println!("computable midpoint: {midpoint}");
-    println!("computable width:    {}", bounds.width());
+    println!("computable width:    {}", prefix.width());
     println!("abs(float - midpoint): {error}");
 }
 
@@ -137,8 +137,8 @@ fn summation_analysis(rng: &mut StdRng) {
     terms.push(Computable::constant(Binary::from_f64(base).unwrap()));
     terms.extend(computable_inputs.iter().cloned());
     let total = balanced_sum(terms);
-    let bounds = total.bounds().expect("bounds should succeed");
-    let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+    let prefix = total.prefix().expect("prefix should succeed");
+    let finite = try_finite_prefix(&prefix).expect("prefix should be finite");
     let comp_duration = comp_start.elapsed();
 
     let midpoint = finite.midpoint();
@@ -146,8 +146,8 @@ fn summation_analysis(rng: &mut StdRng) {
     // True sum without base (computable, no cancellation)
     let baseless_sum_computable = {
         let sum = balanced_sum(computable_inputs.clone());
-        let b = sum.bounds().expect("bounds should succeed");
-        let f = try_finite_bounds(&b).expect("bounds should be finite");
+        let b = sum.prefix().expect("prefix should succeed");
+        let f = try_finite_prefix(&b).expect("prefix should be finite");
         f.midpoint()
     };
     let baseless_sum_float: f64 = inputs.iter().sum();
@@ -176,7 +176,7 @@ fn summation_analysis(rng: &mut StdRng) {
         Binary::from_f64(float_total).unwrap()
     );
     println!("computable midpoint: {midpoint}");
-    println!("computable width:    {}", bounds.width());
+    println!("computable width:    {}", prefix.width());
     println!();
     println!("After removing base value:");
     println!(
@@ -221,10 +221,10 @@ fn integer_roots_analysis(rng: &mut StdRng) {
         })
         .collect();
     let total = balanced_sum(terms);
-    let bounds = total
+    let prefix = total
         .refine_to_default(epsilon)
         .expect("refine_to should succeed");
-    let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+    let finite = try_finite_prefix(&prefix).expect("prefix should be finite");
     let comp_duration = comp_start.elapsed();
 
     let midpoint = finite.midpoint();
@@ -248,7 +248,7 @@ fn integer_roots_analysis(rng: &mut StdRng) {
         Binary::from_f64(float_total).unwrap()
     );
     println!("computable midpoint: {midpoint}");
-    println!("computable width:    {}", bounds.width());
+    println!("computable width:    {}", prefix.width());
     println!("abs(float - midpoint): {error}");
 }
 
@@ -272,10 +272,10 @@ fn inv_analysis(rng: &mut StdRng) {
         .map(|&x| Computable::constant(Binary::from_f64(x).unwrap()).inv())
         .collect();
     let total = balanced_sum(terms);
-    let bounds = total
+    let prefix = total
         .refine_to_default(epsilon)
         .expect("refine_to should succeed");
-    let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+    let finite = try_finite_prefix(&prefix).expect("prefix should be finite");
     let comp_duration = comp_start.elapsed();
 
     let midpoint = finite.midpoint();
@@ -298,7 +298,7 @@ fn inv_analysis(rng: &mut StdRng) {
         Binary::from_f64(float_sum).unwrap()
     );
     println!("computable midpoint: {midpoint}");
-    println!("computable width:    {}", bounds.width());
+    println!("computable width:    {}", prefix.width());
     println!("abs(float - midpoint): {error}");
 }
 
@@ -330,7 +330,7 @@ fn sin_analysis(rng: &mut StdRng) {
         .map(|&x| Computable::constant(Binary::from_f64(x).unwrap()).sin())
         .collect();
     let total = balanced_sum(terms);
-    let bounds = total
+    let prefix = total
         .refine_to_default(epsilon)
         .expect("refine_to should succeed");
     let comp_duration = comp_start.elapsed();
@@ -352,7 +352,7 @@ fn sin_analysis(rng: &mut StdRng) {
         Binary::from_f64(float_sum).unwrap()
     );
 
-    match try_finite_bounds(&bounds) {
+    match try_finite_prefix(&prefix) {
         Some(finite) => {
             let midpoint = finite.midpoint();
             let error = Binary::from_f64(float_sum)
@@ -360,11 +360,11 @@ fn sin_analysis(rng: &mut StdRng) {
                 .sub(&midpoint)
                 .magnitude();
             println!("computable midpoint: {midpoint}");
-            println!("computable width:    {}", bounds.width());
+            println!("computable width:    {}", prefix.width());
             println!("abs(float - midpoint): {error}");
         }
         None => {
-            println!("computable bounds: infinite (cannot compute midpoint)");
+            println!("computable prefix: infinite (cannot compute midpoint)");
         }
     }
 }
@@ -380,21 +380,21 @@ fn pi_analysis() {
         let epsilon = XI::from_i32(-(bits as i32));
 
         let start = Instant::now();
-        let bounds = pi()
+        let prefix = pi()
             .refine_to_default(epsilon)
             .expect("pi refinement should succeed");
         let duration = start.elapsed();
 
         print!(
             "  {bits:>4} bits: {duration:>12?}  width: {:<30}",
-            bounds.width()
+            prefix.width()
         );
-        if let Some(finite) = try_finite_bounds(&bounds) {
+        if let Some(finite) = try_finite_prefix(&prefix) {
             let mid = finite.midpoint();
             let error = mid.sub(&pi_f64).magnitude();
             println!("  |mid - pi_f64|: {error}");
         } else {
-            println!("  (infinite bounds)");
+            println!("  (infinite prefix)");
         }
     }
 
@@ -446,11 +446,11 @@ fn pi_analysis() {
     ] {
         let start = Instant::now();
         let expr = build_expr();
-        let bounds = expr
+        let prefix = expr
             .refine_to_default(pi_arith_epsilon)
             .expect("pi arithmetic should succeed");
         let duration = start.elapsed();
-        let finite = try_finite_bounds(&bounds).expect("bounds should be finite");
+        let finite = try_finite_prefix(&prefix).expect("prefix should be finite");
         let mid = finite.midpoint();
         let expected = Binary::from_f64(expected_f64).unwrap();
         println!("  {label:<5}: {duration:>10?}  midpoint: {mid}");
@@ -471,18 +471,18 @@ fn pi_analysis() {
         } else {
             Computable::constant(Binary::new(BigInt::from(multiplier), 0_i32)) * pi()
         };
-        let bounds = n_pi
+        let prefix = n_pi
             .sin()
             .refine_to_default(sin_pi_epsilon)
             .expect("sin(n*pi) should succeed");
         let duration = start.elapsed();
 
-        let lower = finite_binary(bounds.small());
-        let upper = finite_binary(&bounds.large());
+        let lower = finite_binary(&prefix.lower());
+        let upper = finite_binary(&prefix.upper());
         let contains_zero = lower.mantissa().is_negative() || lower.mantissa().is_zero();
         println!(
             "  sin({multiplier:>3}*pi): {duration:>10?}  bounds: [{lower}, {upper}]  width: {}  contains 0: {contains_zero}",
-            bounds.width()
+            prefix.width()
         );
     }
 
@@ -494,14 +494,14 @@ fn pi_analysis() {
     for &bits in &[2048u32, 4096, 8192] {
         let high_prec_epsilon = XI::from_i32(-(bits as i32));
         let start = Instant::now();
-        let bounds = pi()
+        let prefix = pi()
             .refine_to_default(high_prec_epsilon)
             .expect("high precision pi should succeed");
         let duration = start.elapsed();
         println!(
             "  {bits:>5} bits (~{} digits): {duration:>10?}  width: {}",
             (f64::from(bits) * 0.301).round() as u64,
-            bounds.width()
+            prefix.width()
         );
     }
 }
