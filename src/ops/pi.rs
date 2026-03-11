@@ -18,9 +18,10 @@ use num_bigint::BigInt;
 use parking_lot::RwLock;
 
 use crate::binary::{
-    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, reciprocal_of_biguint,
+    Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, XBinary,
+    reciprocal_of_biguint,
 };
-use crate::binary_utils::bisection::normalize_finite_to_bounds;
+use crate::prefix::Prefix;
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
@@ -152,8 +153,8 @@ impl NodeOp for PiOp {
         let precision_bits = precision_bits_for_num_terms(num_terms);
         let (pi_lo, pi_hi) = compute_pi_bounds(num_terms, precision_bits);
         // Normalize to prefix form to prevent precision accumulation
-        let finite = FiniteBounds::new(pi_lo, pi_hi);
-        let result = normalize_finite_to_bounds(&finite)?;
+        let prefix = Prefix::from_lower_upper(XBinary::Finite(pi_lo), XBinary::Finite(pi_hi));
+        let result = prefix.to_bounds();
 
         // Store in cache for future calls with the same num_terms.
         {
