@@ -495,13 +495,21 @@ mod tests {
         let upper = unwrap_finite(&prefix.upper());
         let pi_f64 = pi_f64_binary();
 
-        // With INITIAL_PI_TERMS=16 the initial computation gives ~77 bits of
-        // precision, so the bounds are much tighter than the 2^-20 target.
-        // The lower bound is between f64 pi and true pi, so we can only check
-        // upper >= f64 pi (since f64 pi < true pi < upper).
+        // upper >= f64 pi (since f64 pi < true pi < upper)
         assert!(
             upper >= pi_f64,
             "upper bound should be >= f64 pi approximation"
+        );
+
+        // upper should be close to true pi. f64 pi is ~2^-53 below true pi,
+        // and upper is above true pi by at most the prefix width. Check that
+        // the gap between upper and f64 pi is small (< 2^-50 accounts for
+        // both the f64 rounding error and the prefix width).
+        let gap = upper.sub(&pi_f64);
+        let f64_error_bound = bin(1, -50);
+        assert!(
+            gap < f64_error_bound,
+            "upper bound should be within 2^-50 of f64 pi"
         );
 
         // Check width is within epsilon
