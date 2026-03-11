@@ -28,7 +28,7 @@ use crate::node::{Node, NodeOp};
 use crate::sane::{Sane, U, XI};
 
 /// Initial number of Taylor series terms for pi computation.
-pub(crate) const INITIAL_PI_TERMS: U = 10;
+pub(crate) const INITIAL_PI_TERMS: U = 1;
 
 /// Returns the number of bits in the binary representation of `x`.
 ///
@@ -189,7 +189,7 @@ impl NodeOp for PiOp {
             }
             XI::Finite { .. } | XI::PosInf => {
                 // Coarse target (e >= 0) or unbounded: no precision needed.
-                // needed=1 ensures at least INITIAL_PI_TERMS terms suffice.
+                // needed=1 matches INITIAL_PI_TERMS, so no refinement occurs.
                 1
             }
         };
