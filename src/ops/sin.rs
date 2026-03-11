@@ -143,15 +143,10 @@ impl NodeOp for SinOp {
     }
 
     /// child 0 (input): |d(sin)/dθ| ≤ 1, so input budget = target.
-    /// child 1 (pi): range reduction subtracts k copies of 2π from the
-    /// input, where k depends on the input magnitude.  In `sin_prefix`,
-    /// the total pi-related error contribution is computed as
-    ///   `pi_error_contribution = max_abs(input) * pi_width`.
-    /// For the final result to meet the target width we need
-    ///   `max_abs(input) * pi_width ≤ target_width`,
-    /// i.e. `pi_width ≤ target_width / max_abs(input)`.
-    /// So the budget we hand to the pi child is
-    ///   `target_width / max_abs(input)`.
+    /// child 1 (pi): `sin_prefix` conservatively estimates pi-related error
+    /// as `max_abs(input) * pi_width` (the true error is ~π times smaller,
+    /// but the conservative check gates whether range reduction proceeds).
+    /// Matching that check: `pi_width ≤ target_width / max_abs(input)`.
     fn child_demand_budget(&self, target_width: &UXBinary, child_idx: bool) -> UXBinary {
         if !child_idx {
             // Input child: sin has derivative bounded by 1.
