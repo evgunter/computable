@@ -29,9 +29,9 @@ use crate::binary::UXBinary;
 use crate::binary::{
     Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, XBinary, reciprocal_of_biguint,
 };
-use crate::prefix::Prefix;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 use crate::sane::{I, U, XI};
 
 /// Cached inputs and result for `sin_bounds`, avoiding redundant Taylor series
@@ -228,7 +228,8 @@ fn sin_bounds(
         let sin_result = compute_sin_on_monotonic_interval(&input_interval, n);
         let clamped_lo = std::cmp::max(sin_result.lo().clone(), neg_one);
         let clamped_hi = std::cmp::min(sin_result.hi().clone(), pos_one);
-        let prefix = Prefix::from_lower_upper(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi));
+        let prefix =
+            Prefix::from_lower_upper(XBinary::Finite(clamped_lo), XBinary::Finite(clamped_hi));
         return Ok(prefix.to_bounds());
     }
 

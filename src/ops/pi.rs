@@ -21,10 +21,10 @@ use crate::binary::{
     Binary, Bounds, FiniteBounds, ReciprocalRounding, UBinary, UXBinary, XBinary,
     reciprocal_of_biguint,
 };
-use crate::prefix::Prefix;
 use crate::computable::Computable;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
+use crate::prefix::Prefix;
 use crate::sane::{Sane, U, XI};
 
 /// Initial number of Taylor series terms for pi computation.
