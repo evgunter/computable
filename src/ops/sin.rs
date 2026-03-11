@@ -146,14 +146,14 @@ impl NodeOp for SinOp {
     /// child 1 (pi): range reduction subtracts k ≈ |input|/(2π) copies of
     /// 2π. Each copy has width 2·pi_width, so the total pi-related error
     /// is k·2·pi_width = |input|·pi_width/π. For this to be ≤ target we
-    /// need pi_width ≤ target·π/|input|. Using 2 as a safe lower bound
-    /// for π (since π > 2): budget = 2·target/|input|.
+    /// need pi_width ≤ target·π/|input|. Using 3 as a safe lower bound
+    /// for π: budget = 3·target/|input|.
     fn child_demand_budget(&self, target_width: &UXBinary, child_idx: bool) -> UXBinary {
         if !child_idx {
             // Input child: sin has derivative bounded by 1.
             return target_width.clone();
         }
-        // Pi child: budget = 2 · target_width / max_abs(input).
+        // Pi child: budget = 3 · target_width / max_abs(input).
         let input_max_abs = match self.inner.cached_prefix() {
             Some(p) => {
                 let (lo, hi) = p.abs();
@@ -161,7 +161,9 @@ impl NodeOp for SinOp {
             }
             None => return UXBinary::zero(),
         };
-        (target_width.clone() << 1).div_floor(&input_max_abs)
+        // 3x = x + 2x = x + (x << 1)
+        let three_target = target_width.clone() + (target_width.clone() << 1);
+        three_target.div_floor(&input_max_abs)
     }
 
     fn budget_depends_on_bounds(&self) -> bool {
@@ -206,18 +208,12 @@ fn sin_prefix(
 
     let n = num_terms.max(1);
 
-    // Range reduction subtracts k * 2π from the input, introducing error
-    // proportional to max_abs(input) * width(π). When input is 0 this
-    // product is 0 * anything = 0 (Exact in UXBinary), so π's precision
-    // is irrelevant. Check the product, not π's precision in isolation.
+    // When the input is zero, range reduction subtracts 0 copies of 2π,
+    // so π's precision is irrelevant. Compute sin directly via Taylor series.
     let (input_abs_lo, input_abs_hi) = input_prefix.abs();
     let input_max_abs = std::cmp::max(input_abs_lo, input_abs_hi);
-    let pi_error_contribution = input_max_abs.mul(&pi_prefix.width());
 
-    if pi_error_contribution.is_zero() {
-        // Pi contributes no error to range reduction — the product
-        // max_abs(input) * width(π) is exact zero (e.g. input is zero).
-        // Compute sin directly via Taylor series; no range reduction needed.
+    if input_max_abs.is_zero() {
         let input_interval = FiniteBounds::new(lower_bin, upper_bin);
         let sin_result = compute_sin_on_monotonic_interval(&input_interval, n);
         let clamped_lo = std::cmp::max(sin_result.lo().clone(), neg_one);
