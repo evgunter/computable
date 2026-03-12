@@ -464,18 +464,16 @@ mod tests {
 
     #[test]
     fn coarse_epsilon_does_not_over_refine_pi() {
-        // pi * 2^80. Pi's initial 10 Taylor terms give a prefix width of
-        // ~2^(-47), so result width ≈ 2^(80-47) = 2^33.
-        // TODO(pi-initial-terms): INITIAL_PI_TERMS=10 gives ~47 bits of
-        // prefix precision regardless of what's requested. Once pi starts
-        // with fewer terms (e.g. 1), this test can use a tighter target
-        // and smaller multiplier.
-        let expr = crate::ops::pi::pi() * Computable::constant(bin(1, 80));
-        let target = XI::from_i32(36);
+        // Use 1 initial term so we can test coarse-target behavior.
+        // With 1 term, pi width is ~2^(-3.5), so pi * 2^6 has width
+        // ≈ 2^(6-3.5) = 2^2.5 ≈ 5.7. Target 2^4 = 16 is satisfied
+        // without any refinement.
+        let expr = crate::ops::pi::pi_with_initial_terms(1) * Computable::constant(bin(1, 6));
+        let target = XI::from_i32(4);
         let prefix = expr
             .refine_to_default(target)
             .expect("refine should succeed");
-        assert_coarse_not_over_refined(&prefix, target, XI::from_i32(30), "pi");
+        assert_coarse_not_over_refined(&prefix, target, XI::from_i32(0), "pi");
     }
 
     #[test]

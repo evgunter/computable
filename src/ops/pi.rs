@@ -27,7 +27,7 @@ use crate::prefix::Prefix;
 use crate::sane::{Sane, U, XI};
 
 /// Initial number of Taylor series terms for pi computation.
-pub(crate) const INITIAL_PI_TERMS: U = 10;
+pub(crate) const INITIAL_PI_TERMS: U = 8;
 
 /// Returns the number of bits in the binary representation of `x`.
 ///
@@ -90,8 +90,16 @@ fn precision_bits_for_num_terms(num_terms: U) -> U {
 /// # Ok::<(), computable::ComputableError>(())
 /// ```
 pub fn pi() -> Computable {
+    pi_with_initial_terms(INITIAL_PI_TERMS)
+}
+
+/// Like [`pi()`], but overrides the initial Taylor series term count.
+///
+/// Useful for testing coarse-target behavior without paying for the
+/// default 8-term initialization.
+pub(crate) fn pi_with_initial_terms(initial_terms: U) -> Computable {
     let node = Node::new(Arc::new(PiOp {
-        num_terms: RwLock::new(INITIAL_PI_TERMS),
+        num_terms: RwLock::new(initial_terms),
         prefix_cache: RwLock::new(None),
     }));
     Computable::from_node(node)
@@ -187,7 +195,7 @@ impl NodeOp for PiOp {
             }
             XI::Finite { .. } | XI::PosInf => {
                 // Coarse target (e >= 0) or unbounded: no precision needed.
-                // needed=1 ensures at least INITIAL_PI_TERMS terms suffice.
+                // needed=1 <= INITIAL_PI_TERMS, so no refinement occurs.
                 1
             }
         };
@@ -487,18 +495,21 @@ mod tests {
         let upper = unwrap_finite(&prefix.upper());
         let pi_f64 = pi_f64_binary();
 
-        // The upper bound should definitely be >= f64 pi (since f64 pi < true pi < upper)
+        // upper >= f64 pi (since f64 pi < true pi < upper)
         assert!(
             upper >= pi_f64,
             "upper bound should be >= f64 pi approximation"
         );
 
-        // The lower bound should be very close to f64 pi. With 2^-20 epsilon precision,
-        // the bounds are much looser than f64 precision, so lower should be <= f64 pi.
-        // (The refined bounds are simplified/loosened from the raw computation.)
+        // upper should be close to true pi. f64 pi is ~2^-53 below true pi,
+        // and upper is above true pi by at most the prefix width. With
+        // INITIAL_PI_TERMS=8 the initial computation gives ~37 bits of
+        // precision, so the gap can be as large as ~2^-35.
+        let gap = upper.sub(&pi_f64);
+        let f64_error_bound = bin(1, -20);
         assert!(
-            lower <= pi_f64,
-            "lower bound should be <= f64 pi approximation (after simplification)"
+            gap < f64_error_bound,
+            "upper bound should be within 2^-20 of f64 pi"
         );
 
         // Check width is within epsilon

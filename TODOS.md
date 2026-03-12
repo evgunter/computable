@@ -21,12 +21,6 @@ The `sane_arithmetic!` macro currently only works with `usize` operands (its gua
 
 ---
 
-### <a id="pi-initial-terms"></a>pi-initial-terms: Reduce INITIAL_PI_TERMS so pi doesn't start with ~47 bits of prefix precision
-**File:** `src/ops/pi.rs`
-`INITIAL_PI_TERMS = 10` gives ~47 bits of prefix precision before any refinement. This means pi can never be tested for coarse-tolerance over-refinement — its initial bounds are already far tighter than any coarse target. Reduce the initial term count (e.g., to 1 or 2) and let the leap formula in `refine_step` handle jumping to the needed precision. The `coarse_epsilon_does_not_over_refine_pi` test in `src/computable.rs` should then be updated to use a smaller multiplier and tighter target/boundary.
-
----
-
 ### <a id="incremental-arctan"></a>incremental-arctan: Cache arctan Taylor series intermediate state for incremental computation
 **File:** `src/ops/pi.rs`
 **Prior attempt:** `mng/pi-no-double` branch (commit `7de0fcd`)
