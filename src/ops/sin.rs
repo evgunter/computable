@@ -260,38 +260,24 @@ fn sin_prefix(
     // Scaling by 2 shifts exponent +1; scaling by 1/2 shifts exponent -1.
     // Using from_lower_and_width avoids the abs_distance re-computation in new().
     let pi_width = pi_interval.width();
+    let pi_lo_exp = pi_interval.lo().exponent();
     let two_pi_lo = Binary::new_normalized(
         pi_interval.lo().mantissa().clone(),
-        pi_interval
-            .lo()
-            .exponent()
-            .checked_add(1)
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
-            }),
+        crate::sane_i_arithmetic!(pi_lo_exp; pi_lo_exp + 1),
     );
+    let pi_w_exp = pi_width.exponent();
     let two_pi_width = UBinary::new_normalized(
         pi_width.mantissa().clone(),
-        pi_width.exponent().checked_add(1).unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
-        }),
+        crate::sane_i_arithmetic!(pi_w_exp; pi_w_exp + 1),
     );
     let two_pi_interval = FiniteBounds::from_lower_and_width(two_pi_lo, two_pi_width);
     let half_pi_lo = Binary::new_normalized(
         pi_interval.lo().mantissa().clone(),
-        pi_interval
-            .lo()
-            .exponent()
-            .checked_sub(1)
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
-            }),
+        crate::sane_i_arithmetic!(pi_lo_exp; pi_lo_exp - 1),
     );
     let half_pi_width = UBinary::new_normalized(
         pi_width.mantissa().clone(),
-        pi_width.exponent().checked_sub(1).unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in sin")
-        }),
+        crate::sane_i_arithmetic!(pi_w_exp; pi_w_exp - 1),
     );
     let half_pi_interval = FiniteBounds::from_lower_and_width(half_pi_lo, half_pi_width);
 
@@ -1003,17 +989,8 @@ fn taylor_sin_bounds_rational(x: &Binary, n: U, target_precision: U) -> (Binary,
 
     let common_exp: i64 = if e < 0 {
         // Last term (k=n-1) has smallest exponent: e*(2n-1)
-        let two_n_minus_1 = n_i64
-            .checked_mul(2)
-            .and_then(|v| v.checked_sub(1))
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("2n-1 overflow in taylor_sin")
-            });
-        e.checked_mul(two_n_minus_1).unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!(
-                "common exponent overflow in taylor_sin"
-            )
-        })
+        let two_n_minus_1 = crate::sane_i64_arithmetic!(n_i64; n_i64 * 2 - 1);
+        crate::sane_i64_arithmetic!(e, two_n_minus_1; e * two_n_minus_1)
     } else {
         e // For e >= 0, minimum exponent is e (first term)
     };
@@ -1082,21 +1059,9 @@ fn taylor_sin_bounds_rational(x: &Binary, n: U, target_precision: U) -> (Binary,
 
     // Error bound: |x|^(2n+1) / (2n+1)!
     power_m *= &m_sq; // advance to m^(2n+1)
-    let two_n = n_i64.checked_mul(2).unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!(
-            "2n overflow in taylor_sin_bounds_rational"
-        )
-    });
-    let two_n_plus_1 = two_n.checked_add(1).unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!(
-            "2n+1 overflow in taylor_sin_bounds_rational"
-        )
-    });
-    let error_exp = e.checked_mul(two_n_plus_1).unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!(
-            "error exponent overflow in taylor_sin_bounds_rational"
-        )
-    });
+    let two_n = crate::sane_i64_arithmetic!(n_i64; n_i64 * 2);
+    let two_n_plus_1 = crate::sane_i64_arithmetic!(two_n; two_n + 1);
+    let error_exp = crate::sane_i64_arithmetic!(e, two_n_plus_1; e * two_n_plus_1);
 
     let error_factorial = &common_factorial * two_n * two_n_plus_1;
 

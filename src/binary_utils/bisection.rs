@@ -93,13 +93,10 @@ impl PrefixBounds {
     /// Returns the midpoint: (2 * mantissa + 1) * 2^(exponent - 1).
     pub fn midpoint(&self) -> Binary {
         // 2*k + 1 is always odd, so skip normalization.
+        let exp = self.exponent;
         Binary::new_normalized(
             &self.mantissa * 2 + 1,
-            self.exponent.checked_sub(1).unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in PrefixBounds::midpoint"
-                )
-            }),
+            crate::sane_i_arithmetic!(exp; exp - 1),
         )
     }
 }
@@ -136,17 +133,16 @@ where
 {
     let mid = bounds.midpoint();
 
+    let exp = bounds.exponent;
+    let new_exp = crate::sane_i_arithmetic!(exp; exp - 1);
+
     match compare(&mid) {
         Ordering::Less => {
             // mid < target, so new interval is [mid, upper]
             // mid = (2m + 1) * 2^(e-1), so new mantissa = 2m + 1
             PrefixBisectionResult::Narrowed(PrefixBounds {
                 mantissa: &bounds.mantissa * 2 + 1,
-                exponent: bounds.exponent.checked_sub(1).unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent overflow in bisection_step"
-                    )
-                }),
+                exponent: new_exp,
             })
         }
         Ordering::Greater => {
@@ -154,11 +150,7 @@ where
             // lower at new exponent: m * 2^e = 2m * 2^(e-1), so new mantissa = 2m
             PrefixBisectionResult::Narrowed(PrefixBounds {
                 mantissa: &bounds.mantissa * 2,
-                exponent: bounds.exponent.checked_sub(1).unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent overflow in bisection_step"
-                    )
-                }),
+                exponent: new_exp,
             })
         }
         Ordering::Equal => PrefixBisectionResult::Exact(mid),

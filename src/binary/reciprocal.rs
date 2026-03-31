@@ -89,16 +89,8 @@ pub fn reciprocal_of_biguint(
             (&numerator + denominator - BigUint::one()).div_floor(denominator)
         }
     };
-    let precision_i = I::try_from(precision_bits).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!(
-            "precision_bits exceeds I::MAX in reciprocal_of_biguint"
-        )
-    });
-    let exponent = precision_i.checked_neg().unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!(
-            "exponent overflow in reciprocal_of_biguint"
-        )
-    });
+    let precision_i = crate::sane::u_as_i(precision_bits);
+    let exponent = crate::sane_i_arithmetic!(precision_i; -precision_i);
     Binary::new(BigInt::from(quotient), exponent)
 }
 
