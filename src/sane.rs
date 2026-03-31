@@ -325,8 +325,22 @@ macro_rules! impl_sane_neg {
 pub struct Sane(pub U);
 
 impl_sane_op!(Sane, u32, Add, add, checked_add, "Sane addition overflow");
-impl_sane_op!(Sane, u32, Sub, sub, checked_sub, "Sane subtraction underflow");
-impl_sane_op!(Sane, u32, Mul, mul, checked_mul, "Sane multiplication overflow");
+impl_sane_op!(
+    Sane,
+    u32,
+    Sub,
+    sub,
+    checked_sub,
+    "Sane subtraction underflow"
+);
+impl_sane_op!(
+    Sane,
+    u32,
+    Mul,
+    mul,
+    checked_mul,
+    "Sane multiplication overflow"
+);
 impl_sane_op!(Sane, u32, Div, div, checked_div, "Sane division by zero");
 
 /// Newtype for checked arithmetic on [`I`] (`i32`) exponent values.
@@ -339,8 +353,22 @@ impl_sane_op!(Sane, u32, Div, div, checked_div, "Sane division by zero");
 pub struct SaneI(pub I);
 
 impl_sane_op!(SaneI, i32, Add, add, checked_add, "SaneI addition overflow");
-impl_sane_op!(SaneI, i32, Sub, sub, checked_sub, "SaneI subtraction overflow");
-impl_sane_op!(SaneI, i32, Mul, mul, checked_mul, "SaneI multiplication overflow");
+impl_sane_op!(
+    SaneI,
+    i32,
+    Sub,
+    sub,
+    checked_sub,
+    "SaneI subtraction overflow"
+);
+impl_sane_op!(
+    SaneI,
+    i32,
+    Mul,
+    mul,
+    checked_mul,
+    "SaneI multiplication overflow"
+);
 impl_sane_op!(SaneI, i32, Div, div, checked_div, "SaneI division error");
 impl_sane_neg!(SaneI, "SaneI negation overflow");
 
@@ -353,10 +381,38 @@ impl_sane_neg!(SaneI, "SaneI negation overflow");
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SaneI64(pub i64);
 
-impl_sane_op!(SaneI64, i64, Add, add, checked_add, "SaneI64 addition overflow");
-impl_sane_op!(SaneI64, i64, Sub, sub, checked_sub, "SaneI64 subtraction overflow");
-impl_sane_op!(SaneI64, i64, Mul, mul, checked_mul, "SaneI64 multiplication overflow");
-impl_sane_op!(SaneI64, i64, Div, div, checked_div, "SaneI64 division error");
+impl_sane_op!(
+    SaneI64,
+    i64,
+    Add,
+    add,
+    checked_add,
+    "SaneI64 addition overflow"
+);
+impl_sane_op!(
+    SaneI64,
+    i64,
+    Sub,
+    sub,
+    checked_sub,
+    "SaneI64 subtraction overflow"
+);
+impl_sane_op!(
+    SaneI64,
+    i64,
+    Mul,
+    mul,
+    checked_mul,
+    "SaneI64 multiplication overflow"
+);
+impl_sane_op!(
+    SaneI64,
+    i64,
+    Div,
+    div,
+    checked_div,
+    "SaneI64 division error"
+);
 impl_sane_neg!(SaneI64, "SaneI64 negation overflow");
 
 /// Sign of an [`XI`] value, following `num_bigint::Sign` convention.

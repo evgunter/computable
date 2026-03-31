@@ -1126,7 +1126,8 @@ fn divide_bigint_directed(
     //   positive: if has_remainder, add 1 to quotient (round away from zero = toward +inf)
     //   negative: use quotient as-is (truncation = ceil for negative)
     let extra_shift_i64 = i64::from(extra_shift);
-    let result_exp = crate::sane_i64_arithmetic!(exponent, extra_shift_i64; exponent - extra_shift_i64);
+    let result_exp =
+        crate::sane_i64_arithmetic!(exponent, extra_shift_i64; exponent - extra_shift_i64);
 
     let floor_quotient = if is_negative && has_remainder {
         &quotient + 1u32
