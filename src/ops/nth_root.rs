@@ -148,10 +148,10 @@ impl NodeOp for NthRootOp {
         }
 
         // Convert target_width_exp to a precision cap in bits.
-        // This prevents unbounded precision growth: the refiner_loop calls
-        // refine_step up to 16 times per dispatch, and Newton doubles precision
-        // each step. Without a cap, 16 steps would escalate from 64 to
-        // 64 * 2^16 = 4M bits, making binary_pow astronomically expensive.
+        // Newton doubles precision each step (quadratic convergence), so
+        // the cap limits how many steps the inner loop performs. Without a
+        // cap, the loop would escalate mantissa sizes exponentially, making
+        // binary_pow astronomically expensive.
         //
         // The precision needed depends on both the target width exponent AND
         // the magnitude of the result. For a value of magnitude ~2^M, achieving
@@ -196,7 +196,11 @@ impl NodeOp for NthRootOp {
             }
         };
 
-        // Perform one Newton step
+        // Leap toward target: loop Newton steps until precision reaches
+        // the cap. Newton doubles precision each step (quadratic convergence),
+        // so reaching 256 bits from 64 takes only ~2 steps. This avoids the
+        // overhead of returning to the coordinator between each step (lock
+        // release/acquire, compute_prefix, prefix comparison).
         let mut write_guard = self.newton_state.write();
         let s = match write_guard.as_mut() {
             Some(s) => s,
@@ -209,7 +213,26 @@ impl NodeOp for NthRootOp {
         }
 
         let degree = self.degree.get();
-        let made_progress = newton_step_nth_root(s, degree, precision_cap);
+        let mut made_progress = false;
+        loop {
+            if s.exact_value.is_some() {
+                break;
+            }
+            // Stop when precision has reached or exceeded the cap — further
+            // steps would not improve bounds relative to the target.
+            if s.precision >= precision_cap {
+                // Do one final step at the capped precision to ensure bounds
+                // reflect the full precision budget, then stop.
+                if !made_progress {
+                    made_progress = newton_step_nth_root(s, degree, precision_cap);
+                }
+                break;
+            }
+            if !newton_step_nth_root(s, degree, precision_cap) {
+                break;
+            }
+            made_progress = true;
+        }
         Ok(made_progress)
     }
 

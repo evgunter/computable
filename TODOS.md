@@ -50,12 +50,6 @@ Enable a node's `refine_step` to return a recoverable error requesting that the 
 
 ---
 
-### <a id="nth-root-target-width"></a>nth-root-target-width: Investigate using target_width_exp in nth_root refine_step
-**File:** `src/ops/nth_root.rs:105`
-Currently `nth_root`'s `refine_step` ignores `target_width_exp` and does one bisection step at a time. Other ops (sin, inv, pi) use the target to leap toward the needed precision. Investigate whether nth_root could similarly use the target to skip bisection steps or switch to a Newton-Raphson strategy when the target is far from current precision.
-
----
-
 ## Blocked (Waiting on other items)
 
 ### <a id="nth-root-negative"></a>nth-root-negative: Handle negative inputs for even-degree roots
