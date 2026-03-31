@@ -261,80 +261,12 @@ pub fn sub_one(n: std::num::NonZeroU32) -> U {
     }
 }
 
-/// Newtype for checked arithmetic on computation-size values.
+/// Implements checked arithmetic operators for a sane newtype.
 ///
-/// Overloads `+`, `-`, `*`, `/` to use `checked_*` internally, panicking via
-/// [`detected_computable_would_exhaust_memory!`] on overflow. This makes it
-/// impossible to silently overflow when doing arithmetic on precision bits,
-/// term counts, etc.
-///
-/// Created automatically by the [`sane_arithmetic!`] macro — not intended for
-/// direct construction outside of that macro.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Sane(pub U);
-
-/// Implements checked arithmetic operators for [`Sane`].
-///
-/// Each invocation generates three impls: `Sane op Sane`, `Sane op u32`, and
-/// `u32 op Sane`. The `u32` variants construct `Sane` directly since [`U`] is `u32`.
-macro_rules! impl_sane_binary_op {
-    ($trait:ident, $method:ident, $checked:ident, $msg:literal) => {
-        impl core::ops::$trait for Sane {
-            type Output = Sane;
-            #[inline]
-            fn $method(self, rhs: Sane) -> Sane {
-                match self.0.$checked(rhs.0) {
-                    Some(r) => Sane(r),
-                    None => crate::detected_computable_would_exhaust_memory!($msg),
-                }
-            }
-        }
-
-        impl core::ops::$trait<u32> for Sane {
-            type Output = Sane;
-            #[inline]
-            fn $method(self, rhs: u32) -> Sane {
-                core::ops::$trait::$method(self, Sane(rhs))
-            }
-        }
-
-        impl core::ops::$trait<Sane> for u32 {
-            type Output = Sane;
-            #[inline]
-            fn $method(self, rhs: Sane) -> Sane {
-                core::ops::$trait::$method(Sane(self), rhs)
-            }
-        }
-    };
-}
-
-impl_sane_binary_op!(Add, add, checked_add, "Sane addition overflow");
-impl_sane_binary_op!(Sub, sub, checked_sub, "Sane subtraction underflow");
-impl_sane_binary_op!(Mul, mul, checked_mul, "Sane multiplication overflow");
-impl_sane_binary_op!(Div, div, checked_div, "Sane division by zero");
-
-/// Newtype for checked arithmetic on [`I`] (`i32`) exponent values.
-///
-/// Overloads `+`, `-`, `*`, `/`, and unary `-` to use `checked_*` internally,
-/// panicking via [`detected_computable_would_exhaust_memory!`] on overflow.
-///
-/// Created automatically by the [`sane_i_arithmetic!`] macro.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SaneI(pub I);
-
-/// Newtype for checked arithmetic on `i64` values.
-///
-/// Used in Taylor series computations (e.g., sin) where exponent arithmetic
-/// is widened to `i64` for intermediate precision.
-///
-/// Created automatically by the [`sane_i64_arithmetic!`] macro.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SaneI64(pub i64);
-
-/// Implements checked arithmetic operators for a signed sane newtype.
-///
-/// Generates impls for: `$name op $name`, `$name op $inner`, `$inner op $name`.
-macro_rules! impl_sane_signed_binary_op {
+/// Generates three impls per operator: `$name op $name`, `$name op $inner`,
+/// and `$inner op $name`. All use `checked_*` internally, panicking via
+/// [`detected_computable_would_exhaust_memory!`] on overflow.
+macro_rules! impl_sane_op {
     ($name:ident, $inner:ty, $trait:ident, $method:ident, $checked:ident, $msg:literal) => {
         impl core::ops::$trait for $name {
             type Output = $name;
@@ -365,37 +297,68 @@ macro_rules! impl_sane_signed_binary_op {
     };
 }
 
-impl_sane_signed_binary_op!(SaneI, i32, Add, add, checked_add, "SaneI addition overflow");
-impl_sane_signed_binary_op!(SaneI, i32, Sub, sub, checked_sub, "SaneI subtraction overflow");
-impl_sane_signed_binary_op!(SaneI, i32, Mul, mul, checked_mul, "SaneI multiplication overflow");
-impl_sane_signed_binary_op!(SaneI, i32, Div, div, checked_div, "SaneI division error");
-
-impl core::ops::Neg for SaneI {
-    type Output = SaneI;
-    #[inline]
-    fn neg(self) -> SaneI {
-        match self.0.checked_neg() {
-            Some(r) => SaneI(r),
-            None => crate::detected_computable_would_exhaust_memory!("SaneI negation overflow"),
+/// Implements checked `Neg` for a sane newtype.
+macro_rules! impl_sane_neg {
+    ($name:ident, $msg:literal) => {
+        impl core::ops::Neg for $name {
+            type Output = $name;
+            #[inline]
+            fn neg(self) -> $name {
+                match self.0.checked_neg() {
+                    Some(r) => $name(r),
+                    None => crate::detected_computable_would_exhaust_memory!($msg),
+                }
+            }
         }
-    }
+    };
 }
 
-impl_sane_signed_binary_op!(SaneI64, i64, Add, add, checked_add, "SaneI64 addition overflow");
-impl_sane_signed_binary_op!(SaneI64, i64, Sub, sub, checked_sub, "SaneI64 subtraction overflow");
-impl_sane_signed_binary_op!(SaneI64, i64, Mul, mul, checked_mul, "SaneI64 multiplication overflow");
-impl_sane_signed_binary_op!(SaneI64, i64, Div, div, checked_div, "SaneI64 division error");
+/// Newtype for checked arithmetic on computation-size values.
+///
+/// Overloads `+`, `-`, `*`, `/` to use `checked_*` internally, panicking via
+/// [`detected_computable_would_exhaust_memory!`] on overflow. This makes it
+/// impossible to silently overflow when doing arithmetic on precision bits,
+/// term counts, etc.
+///
+/// Created automatically by the [`sane_arithmetic!`] macro — not intended for
+/// direct construction outside of that macro.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Sane(pub U);
 
-impl core::ops::Neg for SaneI64 {
-    type Output = SaneI64;
-    #[inline]
-    fn neg(self) -> SaneI64 {
-        match self.0.checked_neg() {
-            Some(r) => SaneI64(r),
-            None => crate::detected_computable_would_exhaust_memory!("SaneI64 negation overflow"),
-        }
-    }
-}
+impl_sane_op!(Sane, u32, Add, add, checked_add, "Sane addition overflow");
+impl_sane_op!(Sane, u32, Sub, sub, checked_sub, "Sane subtraction underflow");
+impl_sane_op!(Sane, u32, Mul, mul, checked_mul, "Sane multiplication overflow");
+impl_sane_op!(Sane, u32, Div, div, checked_div, "Sane division by zero");
+
+/// Newtype for checked arithmetic on [`I`] (`i32`) exponent values.
+///
+/// Overloads `+`, `-`, `*`, `/`, and unary `-` to use `checked_*` internally,
+/// panicking via [`detected_computable_would_exhaust_memory!`] on overflow.
+///
+/// Created automatically by the [`sane_i_arithmetic!`] macro.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SaneI(pub I);
+
+impl_sane_op!(SaneI, i32, Add, add, checked_add, "SaneI addition overflow");
+impl_sane_op!(SaneI, i32, Sub, sub, checked_sub, "SaneI subtraction overflow");
+impl_sane_op!(SaneI, i32, Mul, mul, checked_mul, "SaneI multiplication overflow");
+impl_sane_op!(SaneI, i32, Div, div, checked_div, "SaneI division error");
+impl_sane_neg!(SaneI, "SaneI negation overflow");
+
+/// Newtype for checked arithmetic on `i64` values.
+///
+/// Used in Taylor series computations (e.g., sin) where exponent arithmetic
+/// is widened to `i64` for intermediate precision.
+///
+/// Created automatically by the [`sane_i64_arithmetic!`] macro.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SaneI64(pub i64);
+
+impl_sane_op!(SaneI64, i64, Add, add, checked_add, "SaneI64 addition overflow");
+impl_sane_op!(SaneI64, i64, Sub, sub, checked_sub, "SaneI64 subtraction overflow");
+impl_sane_op!(SaneI64, i64, Mul, mul, checked_mul, "SaneI64 multiplication overflow");
+impl_sane_op!(SaneI64, i64, Div, div, checked_div, "SaneI64 division error");
+impl_sane_neg!(SaneI64, "SaneI64 negation overflow");
 
 /// Sign of an [`XI`] value, following `num_bigint::Sign` convention.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
