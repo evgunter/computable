@@ -15,7 +15,6 @@ use crate::prefix::Prefix;
 use crate::refinement::{RefinementGraph, prefix_width_leq};
 use crate::sane::{U, XI};
 
-
 #[cfg(debug_assertions)]
 pub const DEFAULT_INV_MAX_REFINES: U = 64;
 #[cfg(not(debug_assertions))]
@@ -196,10 +195,7 @@ impl Computable {
                 Computable::constant(Binary::one())
             }
             Some(nonzero_exp) => {
-                let node = Node::new(Arc::new(PowOp::new(
-                    Arc::clone(&self.node),
-                    nonzero_exp,
-                )));
+                let node = Node::new(Arc::new(PowOp::new(Arc::clone(&self.node), nonzero_exp)));
                 Self { node }
             }
         }

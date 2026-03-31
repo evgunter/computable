@@ -134,10 +134,10 @@ pub struct PiPrefixCache {
 
 /// Pi computation operation using Machin's formula.
 pub struct PiOp {
-    pub(crate) num_terms: RwLock<U>,
+    num_terms: RwLock<U>,
     /// Cache of the last `compute_prefix` result, keyed on `num_terms`.
     /// Eliminates redundant Taylor series recomputation during prefix propagation.
-    pub(crate) prefix_cache: RwLock<Option<PiPrefixCache>>,
+    prefix_cache: RwLock<Option<PiPrefixCache>>,
 }
 
 impl PiOp {

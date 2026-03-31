@@ -10,7 +10,7 @@ use crate::sane::XI;
 
 /// Operation that wraps a user-defined base node.
 pub struct BaseOp {
-    pub(crate) base: Arc<dyn BaseNode>,
+    base: Arc<dyn BaseNode>,
 }
 
 impl BaseOp {

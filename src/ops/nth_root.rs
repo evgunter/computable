@@ -73,9 +73,9 @@ fn precision_for_target(magnitude_exp: i64, target_width_exp: i64) -> usize {
 /// - For odd n: supports all real x (negative values have negative roots)
 pub struct NthRootOp {
     /// The input node whose n-th root we're computing.
-    pub(crate) inner: Arc<Node>,
+    inner: Arc<Node>,
     /// The root degree (n in x^(1/n)). Guaranteed to be >= 1 by the type system.
-    pub(crate) degree: NonZeroU32,
+    degree: NonZeroU32,
     /// Newton-Raphson state. `None` until first `refine_step`.
     ///
     /// This is `None` until the first `refine_step` call, which initializes
@@ -84,7 +84,7 @@ pub struct NthRootOp {
     /// `nth_root()`) is not supposed to be fallible. By deferring initialization
     /// to the first call (which returns `Result`), we can propagate errors
     /// through the normal Result path.
-    pub(crate) newton_state: RwLock<Option<NthRootNewtonState>>,
+    newton_state: RwLock<Option<NthRootNewtonState>>,
 }
 
 impl NthRootOp {
