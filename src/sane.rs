@@ -89,6 +89,22 @@ macro_rules! detected_computable_would_exhaust_memory {
     };
 }
 
+/// Internal macro shared by the three user-facing `sane_*_arithmetic!` macros.
+/// Not part of the public API.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __sane_arithmetic_impl {
+    ($wrapper:ident, $($guard:ident),+ ; $expr:expr) => {{
+        $(
+            #[allow(clippy::shadow_reuse)]
+            let $guard = $crate::$wrapper($guard);
+        )+
+        #[allow(clippy::default_numeric_fallback)]
+        let $crate::$wrapper(__result) = { $expr };
+        __result
+    }};
+}
+
 /// Guards one or more [`U`] variables and evaluates an arithmetic expression using
 /// checked arithmetic via [`Sane`].
 ///
@@ -116,14 +132,9 @@ macro_rules! detected_computable_would_exhaust_memory {
 /// ```
 #[macro_export]
 macro_rules! sane_arithmetic {
-    ($($guard:ident),+ ; $expr:expr) => {{
-        $(
-            #[allow(clippy::shadow_reuse)]
-            let $guard = $crate::Sane($guard);
-        )+
-        let $crate::Sane(__result) = { $expr };
-        __result
-    }};
+    ($($guard:ident),+ ; $expr:expr) => {
+        $crate::__sane_arithmetic_impl!(Sane, $($guard),+ ; $expr)
+    };
 }
 
 /// Guards one or more [`I`] variables and evaluates an arithmetic expression using
@@ -146,15 +157,9 @@ macro_rules! sane_arithmetic {
 /// ```
 #[macro_export]
 macro_rules! sane_i_arithmetic {
-    ($($guard:ident),+ ; $expr:expr) => {{
-        $(
-            #[allow(clippy::shadow_reuse)]
-            let $guard = $crate::SaneI($guard);
-        )+
-        #[allow(clippy::default_numeric_fallback)]
-        let $crate::SaneI(__result) = { $expr };
-        __result
-    }};
+    ($($guard:ident),+ ; $expr:expr) => {
+        $crate::__sane_arithmetic_impl!(SaneI, $($guard),+ ; $expr)
+    };
 }
 
 /// Guards one or more `i64` variables and evaluates an arithmetic expression using
@@ -177,15 +182,9 @@ macro_rules! sane_i_arithmetic {
 /// ```
 #[macro_export]
 macro_rules! sane_i64_arithmetic {
-    ($($guard:ident),+ ; $expr:expr) => {{
-        $(
-            #[allow(clippy::shadow_reuse)]
-            let $guard = $crate::SaneI64($guard);
-        )+
-        #[allow(clippy::default_numeric_fallback)]
-        let $crate::SaneI64(__result) = { $expr };
-        __result
-    }};
+    ($($guard:ident),+ ; $expr:expr) => {
+        $crate::__sane_arithmetic_impl!(SaneI64, $($guard),+ ; $expr)
+    };
 }
 
 /// Converts a [`U`] (`u32`) to [`I`] (`i32`), panicking if the value
