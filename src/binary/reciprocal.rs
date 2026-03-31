@@ -8,7 +8,7 @@ use num_integer::Integer;
 use num_traits::One;
 
 use super::binary_impl::Binary;
-use crate::sane::{I, U};
+use crate::sane::U;
 
 /// Result of dividing `2^precision_bits` by a denominator, keeping both quotient and remainder.
 ///

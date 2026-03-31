@@ -36,7 +36,7 @@ use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::prefix::Prefix;
-use crate::sane::{self, I, U, XI};
+use crate::sane::{self, U, XI};
 
 /// Minimum seed precision bits for Newton-Raphson initialization.
 ///

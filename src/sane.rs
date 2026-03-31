@@ -151,6 +151,7 @@ macro_rules! sane_i_arithmetic {
             #[allow(clippy::shadow_reuse)]
             let $guard = $crate::SaneI($guard);
         )+
+        #[allow(clippy::default_numeric_fallback)]
         let $crate::SaneI(__result) = { $expr };
         __result
     }};
@@ -181,6 +182,7 @@ macro_rules! sane_i64_arithmetic {
             #[allow(clippy::shadow_reuse)]
             let $guard = $crate::SaneI64($guard);
         )+
+        #[allow(clippy::default_numeric_fallback)]
         let $crate::SaneI64(__result) = { $expr };
         __result
     }};
