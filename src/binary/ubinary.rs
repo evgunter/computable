@@ -94,14 +94,9 @@ impl UBinary {
         if self.mantissa.is_zero() || other.mantissa.is_zero() {
             return Self::zero();
         }
-        let exponent = self
-            .exponent
-            .checked_add(other.exponent)
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in UBinary::mul"
-                )
-            });
+        let self_exp = self.exponent;
+        let other_exp = other.exponent;
+        let exponent = crate::sane_i_arithmetic!(self_exp, other_exp; self_exp + other_exp);
         let mantissa = &self.mantissa * &other.mantissa;
         Self::new_normalized(mantissa, exponent)
     }
@@ -127,14 +122,9 @@ impl UBinary {
         // Since UBinary is odd-normalized, mantissa==1 means bits()==1.
         // Division is just exponent subtraction; self.mantissa is already odd.
         if other.mantissa.bits() == 1 {
-            let exponent = self
-                .exponent
-                .checked_sub(other.exponent)
-                .unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent overflow in UBinary::div_floor"
-                    )
-                });
+            let self_exp = self.exponent;
+            let other_exp = other.exponent;
+            let exponent = crate::sane_i_arithmetic!(self_exp, other_exp; self_exp - other_exp);
             return Self::new_normalized(self.mantissa.clone(), exponent);
         }
 
@@ -150,20 +140,10 @@ impl UBinary {
                 let quotient = shifted / u128::from(m_b);
                 (extra_bits, quotient)
             };
-            let extra_bits_i = I::try_from(extra_bits).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "extra_bits exceeds I::MAX in UBinary::div_floor"
-                )
-            });
-            let exponent = self
-                .exponent
-                .checked_sub(other.exponent)
-                .and_then(|e| e.checked_sub(extra_bits_i))
-                .unwrap_or_else(|| {
-                    crate::detected_computable_would_exhaust_memory!(
-                        "exponent overflow in UBinary::div_floor"
-                    )
-                });
+            let extra_bits_i = crate::sane::u_as_i(extra_bits);
+            let self_exp = self.exponent;
+            let other_exp = other.exponent;
+            let exponent = crate::sane_i_arithmetic!(self_exp, other_exp, extra_bits_i; self_exp - other_exp - extra_bits_i);
             // quotient may have trailing zeros, so normalize via Self::new.
             return Self::new(BigUint::from(quotient), exponent);
         }
@@ -176,15 +156,9 @@ impl UBinary {
         let shifted_num = &self.mantissa << extra_bits;
         let quotient = shifted_num / &other.mantissa;
         let extra_bits_i = crate::sane::bits_as_i(extra_bits);
-        let exponent = self
-            .exponent
-            .checked_sub(other.exponent)
-            .and_then(|e| e.checked_sub(extra_bits_i))
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in UBinary::div_floor"
-                )
-            });
+        let self_exp = self.exponent;
+        let other_exp = other.exponent;
+        let exponent = crate::sane_i_arithmetic!(self_exp, other_exp, extra_bits_i; self_exp - other_exp - extra_bits_i);
         Self::new(quotient, exponent)
     }
 
@@ -200,16 +174,8 @@ impl UBinary {
         if let Some(tz_u64) = mantissa.trailing_zeros() {
             let tz = crate::sane::bits_as_u(tz_u64);
             mantissa >>= tz;
-            let tz_i = I::try_from(tz).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "trailing zeros exceed I::MAX in UBinary::normalize"
-                )
-            });
-            exponent = exponent.checked_add(tz_i).unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in UBinary::normalize"
-                )
-            });
+            let tz_i = crate::sane::u_as_i(tz);
+            exponent = crate::sane_i_arithmetic!(exponent, tz_i; exponent + tz_i);
         }
 
         Self { mantissa, exponent }
@@ -315,16 +281,11 @@ impl Shl<u32> for UBinary {
         if self.mantissa.is_zero() {
             return self;
         }
-        let rhs_i = I::try_from(rhs).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("shift exceeds I::MAX in UBinary::shl")
-        });
+        let rhs_i = crate::sane::u_as_i(rhs);
+        let exp = self.exponent;
         Self::new_normalized(
             self.mantissa,
-            self.exponent.checked_add(rhs_i).unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in UBinary::shl"
-                )
-            }),
+            crate::sane_i_arithmetic!(exp, rhs_i; exp + rhs_i),
         )
     }
 }
@@ -337,16 +298,11 @@ impl Shr<u32> for UBinary {
         if self.mantissa.is_zero() {
             return self;
         }
-        let rhs_i = I::try_from(rhs).unwrap_or_else(|_| {
-            crate::detected_computable_would_exhaust_memory!("shift exceeds I::MAX in UBinary::shr")
-        });
+        let rhs_i = crate::sane::u_as_i(rhs);
+        let exp = self.exponent;
         Self::new_normalized(
             self.mantissa,
-            self.exponent.checked_sub(rhs_i).unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!(
-                    "exponent overflow in UBinary::shr"
-                )
-            }),
+            crate::sane_i_arithmetic!(exp, rhs_i; exp - rhs_i),
         )
     }
 }

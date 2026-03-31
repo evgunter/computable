@@ -122,11 +122,10 @@ impl FiniteInterval {
         if sum.mantissa().is_zero() {
             return Binary::zero();
         }
+        let exp = sum.exponent();
         Binary::new_normalized(
             sum.mantissa().clone(),
-            sum.exponent().checked_sub(1).unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow in midpoint")
-            }),
+            crate::sane_i_arithmetic!(exp; exp - 1),
         )
     }
 

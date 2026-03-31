@@ -44,9 +44,17 @@ arithmetic-side-effects-allowed = [
     "computable::XI",
     "computable::sane::XI",
     "sane::XI",
-    # Sane newtype (checked arithmetic, panics on overflow)
+    # Sane newtypes (checked arithmetic, panics on overflow)
     "Sane",
     "computable::Sane",
     "computable::sane::Sane",
     "sane::Sane",
+    "SaneI",
+    "computable::SaneI",
+    "computable::sane::SaneI",
+    "sane::SaneI",
+    "SaneI64",
+    "computable::SaneI64",
+    "computable::sane::SaneI64",
+    "sane::SaneI64",
 ]

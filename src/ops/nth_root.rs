@@ -36,7 +36,7 @@ use crate::binary_utils::power::binary_pow;
 use crate::error::ComputableError;
 use crate::node::{Node, NodeOp};
 use crate::prefix::Prefix;
-use crate::sane::{self, I, U, XI};
+use crate::sane::{self, U, XI};
 
 /// Minimum seed precision bits for Newton-Raphson initialization.
 ///
@@ -534,18 +534,10 @@ fn binary_div_floor(a: &Binary, b: &Binary, precision: usize) -> Binary {
     };
 
     // Exponent: a_exp - b_exp - shift
-    let shift_i = I::try_from(shift).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!("shift exceeds I in binary_div_floor")
-    });
-    let exp = a
-        .exponent()
-        .checked_sub(b.exponent())
-        .and_then(|e| e.checked_sub(shift_i))
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!(
-                "exponent overflow in binary_div_floor"
-            )
-        });
+    let shift_i = sane::usize_as_i(shift);
+    let a_exp = a.exponent();
+    let b_exp = b.exponent();
+    let exp = crate::sane_i_arithmetic!(a_exp, b_exp, shift_i; a_exp - b_exp - shift_i);
 
     let result = Binary::new(mantissa, exp);
     truncate_floor(&result, precision)
@@ -591,16 +583,10 @@ fn binary_div_ceil(a: &Binary, b: &Binary, precision: usize) -> Binary {
         BigInt::from(final_quotient)
     };
 
-    let shift_i = I::try_from(shift).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!("shift exceeds I in binary_div_ceil")
-    });
-    let exp = a
-        .exponent()
-        .checked_sub(b.exponent())
-        .and_then(|e| e.checked_sub(shift_i))
-        .unwrap_or_else(|| {
-            crate::detected_computable_would_exhaust_memory!("exponent overflow in binary_div_ceil")
-        });
+    let shift_i = sane::usize_as_i(shift);
+    let a_exp = a.exponent();
+    let b_exp = b.exponent();
+    let exp = crate::sane_i_arithmetic!(a_exp, b_exp, shift_i; a_exp - b_exp - shift_i);
 
     let result = Binary::new(mantissa, exp);
     truncate_ceil(&result, precision)
@@ -628,16 +614,9 @@ fn binary_div_ceil_by_u32(a: &Binary, divisor: u32, precision: usize) -> Binary 
         quotient
     };
 
-    let precision_i = I::try_from(precision).unwrap_or_else(|_| {
-        crate::detected_computable_would_exhaust_memory!(
-            "precision exceeds I in binary_div_ceil_by_u32"
-        )
-    });
-    let exp = a.exponent().checked_sub(precision_i).unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!(
-            "exponent overflow in binary_div_ceil_by_u32"
-        )
-    });
+    let precision_i = sane::usize_as_i(precision);
+    let a_exp = a.exponent();
+    let exp = crate::sane_i_arithmetic!(a_exp, precision_i; a_exp - precision_i);
 
     let result = Binary::new(final_quotient, exp);
     truncate_ceil(&result, precision)
@@ -665,15 +644,11 @@ fn truncate_floor(x: &Binary, precision_bits: usize) -> Binary {
         BigInt::from(shifted)
     };
 
+    let shift_i = sane::usize_as_i(shift);
+    let x_exp = x.exponent();
     Binary::new(
         signed,
-        x.exponent()
-            .checked_add(I::try_from(shift).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("shift exceeds I in truncate")
-            }))
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
-            }),
+        crate::sane_i_arithmetic!(x_exp, shift_i; x_exp + shift_i),
     )
 }
 
@@ -699,15 +674,11 @@ fn truncate_ceil(x: &Binary, precision_bits: usize) -> Binary {
         -BigInt::from(shifted)
     };
 
+    let shift_i = sane::usize_as_i(shift);
+    let x_exp = x.exponent();
     Binary::new(
         signed,
-        x.exponent()
-            .checked_add(I::try_from(shift).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("shift exceeds I in truncate")
-            }))
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow in truncate")
-            }),
+        crate::sane_i_arithmetic!(x_exp, shift_i; x_exp + shift_i),
     )
 }
 

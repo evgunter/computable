@@ -89,4 +89,4 @@ pub use error::ComputableError;
 pub use ops::{pi, pi_bounds_at_precision};
 pub use ordered_pair::{Interval, IntervalError};
 pub use prefix::Prefix;
-pub use sane::{I, Sane, Sign, U, XI, XU};
+pub use sane::{I, Sane, SaneI, SaneI64, Sign, U, XI, XU};
