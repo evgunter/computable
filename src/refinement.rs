@@ -193,9 +193,8 @@ impl RefinementGraph {
             .refiners
             .iter()
             .filter(|node| {
-                !node
-                    .cached_prefix()
-                    .is_some_and(|p| p.width_exponent() == XI::NegInf)
+                node.cached_prefix()
+                    .is_none_or(|p| p.width_exponent() != XI::NegInf)
             })
             .map(Arc::clone)
             .collect();
