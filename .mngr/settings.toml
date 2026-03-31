@@ -1,0 +1,12 @@
+[providers.modal]
+is_enabled = true
+default_cpu = 4
+default_memory = 8
+default_idle_timeout = 600
+default_sandbox_timeout = 7200
+
+[create_templates.modal]
+provider = "modal"
+build_arg = ["file=.mngr/Dockerfile"]
+extra_window = ["github_setup='ssh-keyscan github.com >> ~/.ssh/known_hosts && gh auth setup-git'"]
+agent_args = ["--dangerously-skip-permissions"]
