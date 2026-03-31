@@ -799,15 +799,11 @@ fn truncate_precision_directed(x: &Binary, precision_bits: U, dir: RoundingDirec
         BigInt::from(abs_result)
     };
 
+    let shift_i = crate::sane::usize_as_i(shift);
+    let exp = exponent;
     Binary::new(
         signed_result,
-        exponent
-            .checked_add(I::try_from(shift).unwrap_or_else(|_| {
-                crate::detected_computable_would_exhaust_memory!("shift exceeds I")
-            }))
-            .unwrap_or_else(|| {
-                crate::detected_computable_would_exhaust_memory!("exponent overflow")
-            }),
+        crate::sane_i_arithmetic!(exp, shift_i; exp + shift_i),
     )
 }
 
@@ -1130,11 +1126,7 @@ fn divide_bigint_directed(
     //   positive: if has_remainder, add 1 to quotient (round away from zero = toward +inf)
     //   negative: use quotient as-is (truncation = ceil for negative)
     let extra_shift_i64 = i64::from(extra_shift);
-    let result_exp = exponent.checked_sub(extra_shift_i64).unwrap_or_else(|| {
-        crate::detected_computable_would_exhaust_memory!(
-            "exponent overflow in divide_bigint_directed"
-        )
-    });
+    let result_exp = crate::sane_i64_arithmetic!(exponent, extra_shift_i64; exponent - extra_shift_i64);
 
     let floor_quotient = if is_negative && has_remainder {
         &quotient + 1u32
