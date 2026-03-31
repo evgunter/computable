@@ -10,7 +10,13 @@ use crate::sane::XI;
 
 /// Negation operation.
 pub struct NegOp {
-    pub inner: Arc<Node>,
+    pub(crate) inner: Arc<Node>,
+}
+
+impl NegOp {
+    pub fn new(inner: Arc<Node>) -> Self {
+        Self { inner }
+    }
 }
 
 impl NodeOp for NegOp {
@@ -43,8 +49,14 @@ impl NodeOp for NegOp {
 
 /// Addition operation.
 pub struct AddOp {
-    pub left: Arc<Node>,
-    pub right: Arc<Node>,
+    pub(crate) left: Arc<Node>,
+    pub(crate) right: Arc<Node>,
+}
+
+impl AddOp {
+    pub fn new(left: Arc<Node>, right: Arc<Node>) -> Self {
+        Self { left, right }
+    }
 }
 
 impl NodeOp for AddOp {
@@ -86,8 +98,14 @@ impl NodeOp for AddOp {
 
 /// Multiplication operation.
 pub struct MulOp {
-    pub left: Arc<Node>,
-    pub right: Arc<Node>,
+    pub(crate) left: Arc<Node>,
+    pub(crate) right: Arc<Node>,
+}
+
+impl MulOp {
+    pub fn new(left: Arc<Node>, right: Arc<Node>) -> Self {
+        Self { left, right }
+    }
 }
 
 impl NodeOp for MulOp {

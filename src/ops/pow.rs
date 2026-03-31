@@ -30,10 +30,16 @@ use crate::sane::XI;
 ///   - If interval spans zero: [0, max(|lower|^n, |upper|^n)]
 pub struct PowOp {
     /// The input node to raise to a power.
-    pub inner: Arc<Node>,
+    pub(crate) inner: Arc<Node>,
     /// The exponent (n in x^n). Uses `NonZeroU32` to ensure n >= 1
     /// (n=0 is handled at the Computable level).
-    pub exponent: NonZeroU32,
+    pub(crate) exponent: NonZeroU32,
+}
+
+impl PowOp {
+    pub fn new(inner: Arc<Node>, exponent: NonZeroU32) -> Self {
+        Self { inner, exponent }
+    }
 }
 
 impl NodeOp for PowOp {

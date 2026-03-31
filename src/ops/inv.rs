@@ -42,8 +42,17 @@ pub(crate) struct DivisionState {
 
 /// Inverse (reciprocal) operation with stable-prefix batched division.
 pub struct InvOp {
-    pub inner: Arc<Node>,
-    pub division_state: RwLock<Option<DivisionState>>,
+    pub(crate) inner: Arc<Node>,
+    pub(crate) division_state: RwLock<Option<DivisionState>>,
+}
+
+impl InvOp {
+    pub fn new(inner: Arc<Node>) -> Self {
+        Self {
+            inner,
+            division_state: RwLock::new(None),
+        }
+    }
 }
 
 /// Info extracted from the stable prefix of the inner interval endpoints.

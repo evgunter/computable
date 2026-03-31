@@ -98,10 +98,7 @@ pub fn pi() -> Computable {
 /// Useful for testing coarse-target behavior without paying for the
 /// default 8-term initialization.
 pub(crate) fn pi_with_initial_terms(initial_terms: U) -> Computable {
-    let node = Node::new(Arc::new(PiOp {
-        num_terms: RwLock::new(initial_terms),
-        prefix_cache: RwLock::new(None),
-    }));
+    let node = Node::new(Arc::new(PiOp::new(initial_terms)));
     Computable::from_node(node)
 }
 
@@ -137,10 +134,19 @@ pub struct PiPrefixCache {
 
 /// Pi computation operation using Machin's formula.
 pub struct PiOp {
-    pub num_terms: RwLock<U>,
+    pub(crate) num_terms: RwLock<U>,
     /// Cache of the last `compute_prefix` result, keyed on `num_terms`.
     /// Eliminates redundant Taylor series recomputation during prefix propagation.
-    pub prefix_cache: RwLock<Option<PiPrefixCache>>,
+    pub(crate) prefix_cache: RwLock<Option<PiPrefixCache>>,
+}
+
+impl PiOp {
+    pub fn new(initial_terms: U) -> Self {
+        Self {
+            num_terms: RwLock::new(initial_terms),
+            prefix_cache: RwLock::new(None),
+        }
+    }
 }
 
 impl NodeOp for PiOp {

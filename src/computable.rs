@@ -15,7 +15,6 @@ use crate::prefix::Prefix;
 use crate::refinement::{RefinementGraph, prefix_width_leq};
 use crate::sane::{U, XI};
 
-use parking_lot::RwLock;
 
 #[cfg(debug_assertions)]
 pub const DEFAULT_INV_MAX_REFINES: U = 64;
@@ -48,7 +47,7 @@ impl Computable {
     {
         let base_node_struct = TypedBaseNode::new(state, compute_prefix, refine);
         let base_node: Arc<dyn BaseNode> = Arc::new(base_node_struct);
-        let node = Node::new(Arc::new(BaseOp { base: base_node }));
+        let node = Node::new(Arc::new(BaseOp::new(base_node)));
         Self { node }
     }
 
@@ -118,10 +117,7 @@ impl Computable {
 
     /// Returns the multiplicative inverse of this computable.
     pub fn inv(self) -> Self {
-        let node = Node::new(Arc::new(InvOp {
-            inner: Arc::clone(&self.node),
-            division_state: RwLock::new(None),
-        }));
+        let node = Node::new(Arc::new(InvOp::new(Arc::clone(&self.node))));
         Self { node }
     }
 
@@ -133,16 +129,8 @@ impl Computable {
     /// The error bound |x|^(2n+1)/(2n+1)! is also computed conservatively (rounded up)
     /// to ensure the true value is always contained within the returned bounds.
     pub fn sin(self) -> Self {
-        let pi_node = Node::new(Arc::new(PiOp {
-            num_terms: RwLock::new(crate::ops::pi::INITIAL_PI_TERMS),
-            prefix_cache: RwLock::new(None),
-        }));
-        let node = Node::new(Arc::new(SinOp {
-            inner: Arc::clone(&self.node),
-            pi_node,
-            num_terms: RwLock::new(1),
-            prefix_cache: RwLock::new(None),
-        }));
+        let pi_node = Node::new(Arc::new(PiOp::new(crate::ops::pi::INITIAL_PI_TERMS)));
+        let node = Node::new(Arc::new(SinOp::new(Arc::clone(&self.node), pi_node)));
         Self { node }
     }
 
@@ -164,11 +152,7 @@ impl Computable {
     /// - `nth_root(NonZeroU32::new(3).unwrap())` computes the cube root
     /// - `nth_root(NonZeroU32::new(4).unwrap())` computes the fourth root
     pub fn nth_root(self, degree: NonZeroU32) -> Self {
-        let node = Node::new(Arc::new(NthRootOp {
-            inner: Arc::clone(&self.node),
-            degree,
-            newton_state: RwLock::new(None),
-        }));
+        let node = Node::new(Arc::new(NthRootOp::new(Arc::clone(&self.node), degree)));
         Self { node }
     }
 
@@ -212,10 +196,10 @@ impl Computable {
                 Computable::constant(Binary::one())
             }
             Some(nonzero_exp) => {
-                let node = Node::new(Arc::new(PowOp {
-                    inner: Arc::clone(&self.node),
-                    exponent: nonzero_exp,
-                }));
+                let node = Node::new(Arc::new(PowOp::new(
+                    Arc::clone(&self.node),
+                    nonzero_exp,
+                )));
                 Self { node }
             }
         }
@@ -245,9 +229,7 @@ impl std::ops::Neg for Computable {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        let node = Node::new(Arc::new(NegOp {
-            inner: Arc::clone(&self.node),
-        }));
+        let node = Node::new(Arc::new(NegOp::new(Arc::clone(&self.node))));
         Self { node }
     }
 }
@@ -256,10 +238,10 @@ impl std::ops::Add for Computable {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        let node = Node::new(Arc::new(AddOp {
-            left: Arc::clone(&self.node),
-            right: Arc::clone(&rhs.node),
-        }));
+        let node = Node::new(Arc::new(AddOp::new(
+            Arc::clone(&self.node),
+            Arc::clone(&rhs.node),
+        )));
         Self { node }
     }
 }
@@ -276,10 +258,10 @@ impl std::ops::Mul for Computable {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        let node = Node::new(Arc::new(MulOp {
-            left: Arc::clone(&self.node),
-            right: Arc::clone(&rhs.node),
-        }));
+        let node = Node::new(Arc::new(MulOp::new(
+            Arc::clone(&self.node),
+            Arc::clone(&rhs.node),
+        )));
         Self { node }
     }
 }

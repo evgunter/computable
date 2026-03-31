@@ -15,12 +15,6 @@ The `sane_arithmetic!` macro currently only works with `usize` operands (its gua
 
 ---
 
-### <a id="op-constructors"></a>op-constructors: Give ops proper constructors so callers don't couple to internal structure
-**File:** `src/computable.rs`
-`Computable::sin` currently reaches into `SinOp`, `InvOp`, `NthRootOp` etc. to construct them with internal `RwLock` fields. Each op should expose a constructor (e.g., `SinOp::new(inner, pi_node)`) that encapsulates initialization, so callers only depend on the public API.
-
----
-
 ### <a id="incremental-arctan"></a>incremental-arctan: Cache arctan Taylor series intermediate state for incremental computation
 **File:** `src/ops/pi.rs`
 **Prior attempt:** `mng/pi-no-double` branch (commit `7de0fcd`)

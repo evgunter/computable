@@ -45,12 +45,23 @@ pub struct SinPrefixCache {
 
 /// Sine operation with Taylor series refinement.
 pub struct SinOp {
-    pub inner: Arc<Node>,
-    pub pi_node: Arc<Node>,
-    pub num_terms: RwLock<U>,
+    pub(crate) inner: Arc<Node>,
+    pub(crate) pi_node: Arc<Node>,
+    pub(crate) num_terms: RwLock<U>,
     /// Cache of the last `compute_prefix` result, keyed on inputs.
     /// Eliminates redundant Taylor series recomputation during prefix propagation.
-    pub prefix_cache: RwLock<Option<SinPrefixCache>>,
+    pub(crate) prefix_cache: RwLock<Option<SinPrefixCache>>,
+}
+
+impl SinOp {
+    pub fn new(inner: Arc<Node>, pi_node: Arc<Node>) -> Self {
+        Self {
+            inner,
+            pi_node,
+            num_terms: RwLock::new(1),
+            prefix_cache: RwLock::new(None),
+        }
+    }
 }
 
 impl NodeOp for SinOp {
